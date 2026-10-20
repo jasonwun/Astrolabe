@@ -16,6 +16,7 @@ on branch `research/alacritty-gpui-path`): can a terminal emulator be built on
 cd spikes/terminal
 cargo run --release            # interactive: a real terminal running $SHELL
 SPIKE_AUTO=1 cargo run --release   # scripted suite vs /bin/sh, prints results, quits
+SPIKE_AUTO=log-flood cargo run --release  # 10k lines/s display-only log benchmark (60s)
 SPIKE_AUTO=1 SPIKE_STAY=1 cargo run --release  # suite, then keep window
 SPIKE_DUMP_GRID=/tmp/grid.txt SPIKE_AUTO=1 cargo run --release  # dump final grid
 SPIKE_LATENCY_PROBE=1 SPIKE_AUTO=1 cargo run --release  # + keystroke->paint probe
@@ -97,8 +98,14 @@ Research-doc §5 checklist status:
   params; bracketed paste per TermMode; application PtyWrite replies
   forwarded.
 - [x] display-only Term (log-stream reuse, §4): implemented as
-  `AlacrittyBackend::display_only` + `advance()` behind the same boundary;
-  it *is* the unit-test harness.
+  `AlacrittyBackend::display_only` + `feed_output()` behind the same
+  boundary; it *is* the unit-test harness, and it renders through the
+  same GPUI canvas pipeline as PTY sessions.
+- [x] High-throughput follow (simulated `kubectl logs -f` at 10k lines/s,
+  60 s sustained): UI responsive, memory bounded — see the throughput
+  section below.
+- [x] Split/truncated sequences: unit-tested, plus 60 s of 4 KiB chunks
+  splitting escape sequences at arbitrary byte offsets without a panic.
 
 Remaining for the human interactive pass:
 
@@ -126,6 +133,44 @@ Remaining for the human interactive pass:
   GPUI notifies (~10×), UI responsive, clean ctrl-c afterwards.
 - Scripted suite wall time (shell → vim → resize → flood → exit): ~13 s.
 
+### Log-stream throughput (`SPIKE_AUTO=log-flood`)
+
+Simulated `kubectl logs -f`: colored ANSI log lines (~110–140 B each) at a
+paced 10k lines/s for **60 s sustained**, fed to the **display-only
+backend (no PTY)** in 4 KiB chunks (arbitrary split points, so escape
+sequences cross chunk boundaries exactly like real pipes). Scrollback
+bound: **10,000 lines**. RESULT: PASS (0 failures).
+
+```
+[log-flood] fed: 599528 lines / 95.9 MiB in 60.0s = 9984 lines/s (1.6 MiB/s), 23981 chunks
+[log-flood] parse: feed_output total=4.13s avg=172.37µs/chunk max=2.51ms
+            -> engine parse throughput 23.2 MiB/s
+[log-flood] coalescing: 23981 wakeups -> 6411 notifies (3.7x)
+[log-flood] snapshot-under-load: n=29 avg=399.17µs max=2.24ms (grid 122x58);
+            post-flood burst max=617.00µs
+[log-flood] rss: before=66 MB after=99 MB (delta=33 MB), history=10000 lines (bound=10000)
+```
+
+Reading the numbers:
+
+- **Feed/parse**: the engine parses colored ANSI at **23 MiB/s** — 14×
+  headroom over the 1.6 MiB/s stream; parse consumed 6.9% of wall time on
+  the feeder thread. Slowest single 4 KiB feed: 2.51 ms (no feed stall).
+- **UI responsiveness** (window occluded here, so measured by proxy): a
+  timed `snapshot()` is exactly what the paint path does per frame; under
+  full load it averaged **399 µs** and peaked at **2.24 ms** — FairMutex
+  contention between feeder and render side never approached a 16 ms
+  frame. Post-flood burst max 617 µs.
+- **Coalescing**: 3.7× wakeup reduction at ~400 wakeups/s (the 4 ms
+  window batches less than during a burst flood; notifies ≈ 107/s, each
+  ~0.4 ms of work — idle-safe and busy-safe).
+- **Memory**: +33 MB over 60 s of 600k lines, plateaued exactly at the
+  10,000-line scrollback bound (history=10000 at the end). The retained
+  grid is ~10k × 122 cells; RSS stays bounded regardless of stream
+  duration. (No per-line heap leaks visible in the delta.)
+- The dumped grid tail shows clean, correctly soft-wrapped colored log
+  lines — no mangling from 60 s of mid-sequence chunk splits.
+
 ## Interface sketch (the deliverable for the real terminal issue)
 
 `src/backend/mod.rs` is the boundary; `src/backend/alacritty.rs` is the
@@ -141,6 +186,7 @@ pub trait TerminalBackend: Send + Sync + 'static {
     fn scroll_display(&self, delta_lines: i32);                // viewport only
     fn scroll_to_bottom(&self);
     fn snapshot(&self) -> RenderSnapshot;                      // render-ready copy
+    fn feed_output(&self, _bytes: &[u8]) {}                    // display-only: log stream in
     fn modes(&self) -> TerminalModes;                          // input-encoding modes
     fn respond_clipboard_load(&self, _text: &str) {}           // OSC 52 load reply
     fn stats(&self) -> BackendStats { .. }                     // wakeup/damage counters

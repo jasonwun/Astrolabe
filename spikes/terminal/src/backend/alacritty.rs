@@ -272,18 +272,29 @@ impl AlacrittyBackend {
     }
 
     /// Feed an ANSI byte stream into a display-only terminal.
+    /// Panics on a PTY-backed terminal (tests use this directly).
     pub fn advance(&self, bytes: &[u8]) {
+        assert!(
+            self.parser.lock().unwrap().is_some(),
+            "advance on a PTY-backed terminal"
+        );
+        self.feed_output(bytes);
+    }
+}
+
+impl TerminalBackend for AlacrittyBackend {
+    fn feed_output(&self, bytes: &[u8]) {
         let mut parser = self.parser.lock().unwrap();
-        let parser = parser.as_mut().expect("advance on a PTY-backed terminal");
+        let Some(parser) = parser.as_mut() else {
+            return;
+        };
         {
             let mut term = self.term.lock();
             parser.advance(&mut *term, bytes);
         }
         self.shared.emit(TerminalEvent::Wakeup);
     }
-}
 
-impl TerminalBackend for AlacrittyBackend {
     fn write_input(&self, bytes: &[u8]) {
         if let Some(io) = self.io.lock().unwrap().as_ref() {
             let _ = io.sender.send(Msg::Input(Cow::Owned(bytes.to_vec())));

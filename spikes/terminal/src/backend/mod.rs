@@ -56,6 +56,12 @@ pub trait TerminalBackend: Send + Sync + 'static {
     /// Copy out a render-ready snapshot of the visible grid.
     fn snapshot(&self) -> RenderSnapshot;
 
+    /// Feed an ANSI output byte stream into the terminal. Only meaningful
+    /// for display-only (no-PTY) backends — the log-stream use case
+    /// (`kubectl logs -f`); PTY sessions receive output from the child.
+    /// Default: no-op.
+    fn feed_output(&self, _bytes: &[u8]) {}
+
     /// Current terminal modes relevant to input encoding and rendering.
     fn modes(&self) -> TerminalModes;
 
