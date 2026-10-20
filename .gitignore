@@ -1,0 +1,27 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# Cargo: this is an application, so Cargo.lock is committed
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Profiling / coverage
+*.profraw
+/perf.data
+/flamegraph.svg
