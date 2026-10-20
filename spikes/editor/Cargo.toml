@@ -1,0 +1,25 @@
+# PROTOTYPE / THROWAWAY — performance spike, not production code.
+# Self-contained crate on purpose: the repo root stays workspace-free.
+[package]
+name = "editor-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Locked versions — do not bump. `profiler` turns on gpui's frame-timing trace
+# (gpui_kit::profiler::FrameTimingCollector) so the overlay can report real
+# draw/present timings; `tree-sitter-yaml` links the YAML grammar.
+gpui-kit = { version = "=0.8.0", features = ["profiler", "tree-sitter-yaml"] }
+# IndentationRules for the YAML LanguageConfig registration.
+regex = "1"
+# InputEdit for the standalone incremental-parse measurement; matches the
+# version in gpui-kit's lockfile.
+tree-sitter = "=0.26.13"
+# Used only for a mach task_info() RSS sample on macOS. Already in gpui's tree.
+libc = "0.2"
+# Timestamp type used by gpui's frame trace (FrameTiming::draw_start / present_end).
+web-time = "0.2"
+
+[profile.release]
+debug-assertions = false
