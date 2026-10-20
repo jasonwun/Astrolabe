@@ -1,5 +1,9 @@
 # Astrolabe
 
+## Language
+
+Reply to the user in Chinese. Everything else — code, comments, commits, issues, docs — in English.
+
 ## Agent skills
 
 ### Issue tracker
