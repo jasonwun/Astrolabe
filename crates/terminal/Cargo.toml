@@ -1,0 +1,8 @@
+[package]
+name = "astrolabe-terminal"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+alacritty_terminal.workspace = true

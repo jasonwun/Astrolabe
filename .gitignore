@@ -3,6 +3,9 @@
 **/*.rs.bk
 *.pdb
 
+# Spikes never land on the main branch; they live on their prototype/* branches
+/spikes/
+
 # Cargo: this is an application, so Cargo.lock is committed
 
 # Environment / secrets

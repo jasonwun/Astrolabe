@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Dependency-direction guard: the kube layer must stay gpui-free.
+      - name: astrolabe-kube must not depend on gpui
+        run: |
+          if cargo tree -p astrolabe-kube --locked | grep -qi gpui; then
+            echo "gpui found in astrolabe-kube's dependency tree" >&2
+            exit 1
+          fi
+
+  build-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --locked
+      - run: cargo test --workspace --locked

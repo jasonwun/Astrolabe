@@ -1,0 +1,8 @@
+[package]
+name = "astrolabe-kube"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+kube.workspace = true
+k8s-openapi.workspace = true
