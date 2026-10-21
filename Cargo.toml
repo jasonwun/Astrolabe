@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["crates/app", "crates/kube", "crates/terminal"]
+
+[workspace.package]
+edition = "2024"
+publish = false
+
+# All third-party versions are declared here, single point of truth;
+# members only write `workspace = true`. gpui-kit / alacritty_terminal /
+# k8s-openapi are exact (`=`) pins; kube follows the survey conclusion
+# ("4.0", ws + rustls-tls). `Cargo.lock` is committed on top. Upgrades
+# are explicit actions — see README "Dependency upgrades".
+[workspace.dependencies]
+gpui-kit = "=0.8.0"
+alacritty_terminal = "=0.26.0"
+k8s-openapi = { version = "=0.28", features = ["v1_36"] }
+kube = { version = "4.0", features = ["ws", "rustls-tls"] }

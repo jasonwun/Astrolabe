@@ -2,9 +2,15 @@
 
 A desktop application built with [gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui), the GPU-accelerated UI framework from Zed.
 
+## Layout
+
+- `crates/app` — `astrolabe` (binary): GPUI entry point; store and session entities live here
+- `crates/kube` — `astrolabe-kube` (library): kube-rs communication layer; must not depend on gpui
+- `crates/terminal` — `astrolabe-terminal` (library): `TerminalBackend` trait + alacritty implementation + GPUI view; alacritty types never leave the crate
+
 ## Requirements
 
-- Rust (stable, see `rust-toolchain.toml`)
+- Rust (pinned, see `rust-toolchain.toml`)
 - On Linux: gpui's system dependencies (see the gpui docs); on macOS, Xcode command line tools
 
 ## Development
@@ -12,3 +18,10 @@ A desktop application built with [gpui](https://github.com/zed-industries/zed/tr
 ```sh
 cargo run
 ```
+
+## Dependency upgrades
+
+Third-party versions are declared once in the root `[workspace.dependencies]` (exact `=` pins for `gpui-kit` / `alacritty_terminal` / `k8s-openapi`; `kube` follows the kube-rs survey's `"4.0"` + `ws`/`rustls-tls`), members only write `workspace = true`, and `Cargo.lock` is committed. Upgrades are explicit actions:
+
+- one dependency per PR, in its own PR — no batch bumps
+- the PR must attach regression numbers for the three spike benchmarks (DataTable watch, giant-YAML editor, terminal log-flood); the spikes live on their `prototype/*` branches and are run manually, not in CI
