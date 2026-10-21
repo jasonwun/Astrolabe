@@ -62,6 +62,9 @@ pub enum ApplyError {
 
 /// Classify and parse a failed apply's status body.
 pub fn parse_status(status: &Status) -> ApplyError {
+    if let Some(cause) = parse_typed_patch_failure(&status.message) {
+        return ApplyError::Validation(vec![cause]);
+    }
     match status.code {
         422 => {
             let causes = status
@@ -98,6 +101,24 @@ pub fn parse_status(status: &Status) -> ApplyError {
     }
 }
 
+/// SSA schema failures arrive as 500s, not 422s:
+/// `failed to create typed patch object (<ns>/<name>; <g/v>): <path>: field
+/// not declared in schema`. This is how unknown fields surface under
+/// server-side apply (the strict-decoding 422 path never runs for apply
+/// requests), and it fails real applies too — so map it to a hard,
+/// locatable field cause instead of the global error bar.
+fn parse_typed_patch_failure(message: &str) -> Option<FieldCause> {
+    let rest = message.strip_prefix("failed to create typed patch object (")?;
+    let rest = rest.split_once("): ").map(|(_, r)| r)?.trim();
+    let path = rest.strip_suffix(": field not declared in schema")?;
+    Some(FieldCause {
+        raw_field: path.to_string(),
+        path: parse_field_path(path).unwrap_or_default(),
+        message: "field not declared in schema".to_string(),
+        reason: "FieldValueInvalid".to_string(),
+    })
+}
+
 /// Layer 1 of conflict parsing: split the message into per-manager blocks.
 ///
 /// Real shapes (see golden tests):
@@ -128,7 +149,9 @@ fn find_conflict_marker(s: &str) -> Option<usize> {
         .min()
 }
 
-/// Layer 2: parse one `conflicts with "<manager>" using <g/v>: <fields>` block.
+/// Layer 2: parse one `conflicts with "<manager>" [using <g/v>]: <fields>`
+/// block. The `using <g/v>` clause is optional — some apiservers (e.g. the
+/// v1.32 kind node) omit it.
 fn parse_conflict_block(block: &str) -> Option<ManagerConflict> {
     let after_with = block
         .trim_start()
@@ -137,8 +160,13 @@ fn parse_conflict_block(block: &str) -> Option<ManagerConflict> {
     let manager_end = after_with.find('"')?;
     let manager = &after_with[..manager_end];
     let after_manager = after_with[manager_end + 1..].trim_start();
-    let gv_and_fields = after_manager.strip_prefix("using ")?;
-    let (group_version, fields) = gv_and_fields.split_once(':')?;
+    let (group_version, fields) = match after_manager.strip_prefix("using ") {
+        Some(gv_and_fields) => {
+            let (gv, fields) = gv_and_fields.split_once(':')?;
+            (gv.trim().to_string(), fields)
+        }
+        None => (String::new(), after_manager.strip_prefix(':')?),
+    };
 
     let causes = split_field_list(fields)
         .into_iter()
@@ -385,6 +413,64 @@ mod tests {
             ApplyError::Conflict(conflicts) => assert!(conflicts.is_empty()),
             other => panic!("expected Conflict, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn conflict_409_without_using_clause() {
+        // Golden captured from kind (v1.32) during #21 e2e: this apiserver
+        // omits the `using <g/v>` clause entirely.
+        let s = status(
+            409,
+            "Apply failed with 1 conflict: conflict with \"e2e-foreign\": .data.value",
+            vec![],
+        );
+        match parse_status(&s) {
+            ApplyError::Conflict(conflicts) => {
+                assert_eq!(conflicts.len(), 1);
+                let c = &conflicts[0];
+                assert_eq!(c.manager, "e2e-foreign");
+                assert_eq!(c.group_version, "");
+                assert_eq!(
+                    c.causes[0].path,
+                    vec![Segment::Key("data".into()), Segment::Key("value".into())]
+                );
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    // ---- typed patch failures (SSA schema errors) -----------------------
+
+    #[test]
+    fn typed_patch_undeclared_field_maps_to_field_cause() {
+        // Golden captured from kind (v1.32) during #21 e2e: an unknown field
+        // under SSA fails client-side-in-server with 500, not a strict-
+        // decoding 422 — and it fails real applies too, so the cause is a
+        // hard error, not a warning.
+        let s = status(
+            500,
+            "failed to create typed patch object (e2e-x/cm; /v1, Kind=ConfigMap): .unknownField: field not declared in schema",
+            vec![],
+        );
+        match parse_status(&s) {
+            ApplyError::Validation(causes) => {
+                assert_eq!(causes.len(), 1);
+                assert_eq!(causes[0].raw_field, ".unknownField");
+                assert_eq!(causes[0].path, vec![Segment::Key("unknownField".into())]);
+                assert!(!causes[0].is_strict_decoding());
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typed_patch_other_failures_degrade_to_global() {
+        let s = status(
+            500,
+            "failed to create typed patch object (default/nginx; apps/v1, Kind=Deployment): some other problem",
+            vec![],
+        );
+        assert!(matches!(parse_status(&s), ApplyError::Global { .. }));
     }
 
     // ---- other codes ---------------------------------------------------
