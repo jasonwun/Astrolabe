@@ -251,6 +251,40 @@ mod tests {
     }
 
     #[test]
+    fn quoted_open_bracket_does_not_swallow_following_dot() {
+        // A `[` inside a quoted selector value must not increment the
+        // nesting depth; the dot after the closing bracket still splits.
+        let path = parse_field_path(".spec.containers[name=\"a[b\"].image").unwrap();
+        assert_eq!(
+            path,
+            vec![
+                Segment::Key("spec".into()),
+                Segment::Key("containers".into()),
+                Segment::Selector(vec![("name".into(), "a[b".into())]),
+                Segment::Key("image".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn quoted_close_bracket_does_not_drop_nesting_depth() {
+        // A `]` inside a quoted selector value must not decrement the
+        // nesting depth; the comma between selector pairs is not a
+        // top-level split point.
+        let parts = split_top_level(
+            ".spec.ports[name=\"a]b\",protocol=\"TCP\"], .spec.replicas",
+            ',',
+        );
+        assert_eq!(
+            parts,
+            vec![
+                ".spec.ports[name=\"a]b\",protocol=\"TCP\"]",
+                " .spec.replicas"
+            ]
+        );
+    }
+
+    #[test]
     fn consecutive_brackets_attach_to_one_key() {
         // Two-dimensional-ish: `matrix[0][1]` shows up for nested lists.
         let path = parse_field_path("matrix[0][1]").unwrap();

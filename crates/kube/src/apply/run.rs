@@ -67,7 +67,15 @@ pub async fn apply_documents(
     if force {
         params = params.force();
     }
-    let outcomes = send_all(client, docs, snapshot, &params).await;
+    let outcomes = send_all(
+        docs,
+        snapshot,
+        &ClusterApply {
+            client,
+            params: &params,
+        },
+    )
+    .await;
     let ok = outcomes.iter().all(|o| o.result.is_ok());
     Ok(ApplyReport { outcomes, ok })
 }
@@ -83,20 +91,44 @@ pub async fn precheck_documents(
     let params = PatchParams::apply(FIELD_MANAGER)
         .dry_run()
         .validation_strict();
-    let outcomes = send_all(client, docs, snapshot, &params).await;
+    let outcomes = send_all(
+        docs,
+        snapshot,
+        &ClusterApply {
+            client,
+            params: &params,
+        },
+    )
+    .await;
     let ok = outcomes.iter().all(|o| o.result.is_ok());
     Ok(ApplyReport { outcomes, ok })
 }
 
-async fn send_all(
-    client: &Client,
-    docs: Vec<DocPayload>,
-    snapshot: &str,
-    params: &PatchParams,
-) -> Vec<DocOutcome> {
+/// Per-document apply operation: the seam between orchestration and the
+/// cluster call. Production uses [`ClusterApply`]; tests inject canned
+/// outcomes.
+trait DocApply {
+    async fn apply(&self, doc: &DocPayload) -> Result<(), ApplyError>;
+}
+
+/// Applies each document to the cluster with the given patch params.
+struct ClusterApply<'a> {
+    client: &'a Client,
+    params: &'a PatchParams,
+}
+
+impl DocApply for ClusterApply<'_> {
+    async fn apply(&self, doc: &DocPayload) -> Result<(), ApplyError> {
+        apply_one(self.client, doc, self.params).await
+    }
+}
+
+/// Send each document through `apply`, collecting every outcome
+/// (allSettled — one document's failure never blocks the others).
+async fn send_all(docs: Vec<DocPayload>, snapshot: &str, apply: &impl DocApply) -> Vec<DocOutcome> {
     let mut outcomes = Vec::with_capacity(docs.len());
     for doc in docs {
-        let result = apply_one(client, &doc, params).await.map_err(|error| {
+        let result = apply.apply(&doc).await.map_err(|error| {
             let causes = located_causes(&error, snapshot, doc.index);
             DocError { error, causes }
         });
@@ -226,5 +258,294 @@ data:
             message: "forbidden".into(),
         };
         assert!(located_causes(&error, DOC, 0).is_empty());
+    }
+
+    // ---- send_all orchestration (allSettled) -------------------------
+
+    const TWO_DOCS: &str = "\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: first
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: second
+data:
+  bad: value
+";
+
+    #[tokio::test]
+    async fn send_all_collects_every_outcome_all_settled() {
+        struct FakeApply;
+        impl DocApply for FakeApply {
+            async fn apply(&self, doc: &DocPayload) -> Result<(), ApplyError> {
+                if doc.name == "second" {
+                    Err(validation_error("data.bad", "Invalid value"))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        let docs = payload::parse_documents(TWO_DOCS).unwrap();
+        let outcomes = send_all(docs, TWO_DOCS, &FakeApply).await;
+        // One entry per document, in send order, even though one failed.
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].doc_index, 0);
+        assert_eq!(outcomes[0].doc, "v1 ConfigMap/first");
+        assert!(outcomes[0].result.is_ok());
+        assert_eq!(outcomes[1].doc_index, 1);
+        assert_eq!(outcomes[1].doc, "v1 ConfigMap/second");
+        let err = outcomes[1].result.as_ref().unwrap_err();
+        assert!(matches!(err.error, ApplyError::Validation(_)));
+        assert_eq!(err.causes.len(), 1);
+        assert_eq!(
+            err.causes[0].located.location,
+            super::super::locate::Location::Exact { line: 11 }
+        );
+    }
+
+    // ---- apply_one against a mock apiserver ---------------------------
+
+    fn json_response(code: u16, body: &str) -> http::Response<kube::client::Body> {
+        http::Response::builder()
+            .status(code)
+            .header("content-type", "application/json")
+            .body(kube::client::Body::from(body.as_bytes().to_vec()))
+            .unwrap()
+    }
+
+    fn unexpected_request() -> http::Response<kube::client::Body> {
+        json_response(
+            500,
+            r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":500,"reason":"InternalError","message":"unexpected request"}"#,
+        )
+    }
+
+    /// `Client` over a canned handler, plus a log of `METHOD path` pairs
+    /// for every request the client made.
+    fn mock_client(
+        handler: impl Fn(&http::Request<kube::client::Body>) -> http::Response<kube::client::Body>
+        + Send
+        + 'static,
+    ) -> (Client, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_in_handler = std::sync::Arc::clone(&seen);
+        let service = tower::service_fn(move |req: http::Request<kube::client::Body>| {
+            seen_in_handler
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", req.method(), req.uri().path()));
+            let resp = handler(&req);
+            std::future::ready(Ok::<_, std::convert::Infallible>(resp))
+        });
+        (Client::new(service, "default"), seen)
+    }
+
+    const DEPLOYMENTS_DISCOVERY: &str = r#"{
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "apps/v1",
+        "resources": [
+            {
+                "name": "deployments",
+                "singularName": "deployment",
+                "namespaced": true,
+                "kind": "Deployment",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }"#;
+
+    const DEPLOYMENT_OBJECT: &str = r#"{
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "nginx", "namespace": "default"}
+    }"#;
+
+    const NAMESPACES_DISCOVERY: &str = r#"{
+        "kind": "APIResourceList",
+        "apiVersion": "v1",
+        "groupVersion": "v1",
+        "resources": [
+            {
+                "name": "namespaces",
+                "singularName": "namespace",
+                "namespaced": false,
+                "kind": "Namespace",
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+            }
+        ]
+    }"#;
+
+    const NAMESPACE_OBJECT: &str = r#"{
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "cluster-wide"}
+    }"#;
+
+    fn only_doc(snapshot: &str) -> DocPayload {
+        payload::parse_documents(snapshot).unwrap().remove(0)
+    }
+
+    #[tokio::test]
+    async fn apply_one_rejects_api_version_with_empty_version() {
+        let (client, _) = mock_client(|_| unexpected_request());
+        let doc = only_doc("apiVersion: apps/\nkind: Deployment\nmetadata:\n  name: nginx\n");
+        let err = apply_one(&client, &doc, &PatchParams::apply("test"))
+            .await
+            .unwrap_err();
+        match err {
+            ApplyError::Global { message } => {
+                assert!(message.contains("apiVersion"), "unexpected: {message}")
+            }
+            other => panic!("expected Global, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_one_patches_namespaced_kind_under_its_namespace() {
+        let (client, seen) = mock_client(|req| match (req.method().as_str(), req.uri().path()) {
+            ("GET", "/apis/apps/v1") => json_response(200, DEPLOYMENTS_DISCOVERY),
+            ("PATCH", "/apis/apps/v1/namespaces/default/deployments/nginx") => {
+                json_response(200, DEPLOYMENT_OBJECT)
+            }
+            _ => unexpected_request(),
+        });
+        let doc = only_doc("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n");
+        apply_one(&client, &doc, &PatchParams::apply("test"))
+            .await
+            .unwrap();
+        let requests = seen.lock().unwrap();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r == "PATCH /apis/apps/v1/namespaces/default/deployments/nginx"),
+            "requests: {requests:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_one_patches_cluster_scoped_kind_without_namespace() {
+        let (client, seen) = mock_client(|req| match (req.method().as_str(), req.uri().path()) {
+            ("GET", "/api/v1") => json_response(200, NAMESPACES_DISCOVERY),
+            ("PATCH", "/api/v1/namespaces/cluster-wide") => json_response(200, NAMESPACE_OBJECT),
+            _ => unexpected_request(),
+        });
+        let doc = only_doc("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: cluster-wide\n");
+        apply_one(&client, &doc, &PatchParams::apply("test"))
+            .await
+            .unwrap();
+        let requests = seen.lock().unwrap();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r == "PATCH /api/v1/namespaces/cluster-wide"),
+            "requests: {requests:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_one_classifies_422_as_validation() {
+        let (client, _) = mock_client(|req| match (req.method().as_str(), req.uri().path()) {
+            ("GET", "/apis/apps/v1") => json_response(200, DEPLOYMENTS_DISCOVERY),
+            ("PATCH", _) => json_response(
+                422,
+                r#"{
+                    "kind": "Status",
+                    "apiVersion": "v1",
+                    "status": "Failure",
+                    "message": "Deployment.apps \"nginx\" is invalid",
+                    "reason": "Invalid",
+                    "details": {
+                        "name": "nginx",
+                        "group": "apps",
+                        "kind": "Deployment",
+                        "causes": [
+                            {
+                                "reason": "FieldValueInvalid",
+                                "message": "Invalid value: -1",
+                                "field": "spec.replicas"
+                            }
+                        ]
+                    },
+                    "code": 422
+                }"#,
+            ),
+            _ => unexpected_request(),
+        });
+        let doc = only_doc("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n");
+        let err = apply_one(&client, &doc, &PatchParams::apply("test"))
+            .await
+            .unwrap_err();
+        match err {
+            ApplyError::Validation(causes) => {
+                assert_eq!(causes.len(), 1);
+                assert_eq!(causes[0].raw_field, "spec.replicas");
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_documents_aggregates_per_doc_outcomes() {
+        let (client, _) = mock_client(|req| match (req.method().as_str(), req.uri().path()) {
+            ("GET", "/api/v1") => json_response(
+                200,
+                r#"{
+                    "kind": "APIResourceList",
+                    "apiVersion": "v1",
+                    "groupVersion": "v1",
+                    "resources": [
+                        {
+                            "name": "configmaps",
+                            "singularName": "configmap",
+                            "namespaced": true,
+                            "kind": "ConfigMap",
+                            "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+                        }
+                    ]
+                }"#,
+            ),
+            ("PATCH", "/api/v1/namespaces/default/configmaps/first") => json_response(
+                200,
+                r#"{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"first","namespace":"default"}}"#,
+            ),
+            ("PATCH", "/api/v1/namespaces/default/configmaps/second") => json_response(
+                422,
+                r#"{
+                    "kind": "Status",
+                    "apiVersion": "v1",
+                    "status": "Failure",
+                    "message": "ConfigMap \"second\" is invalid",
+                    "reason": "Invalid",
+                    "details": {
+                        "name": "second",
+                        "kind": "ConfigMap",
+                        "causes": [
+                            {
+                                "reason": "FieldValueInvalid",
+                                "message": "Invalid value",
+                                "field": "data.bad"
+                            }
+                        ]
+                    },
+                    "code": 422
+                }"#,
+            ),
+            _ => unexpected_request(),
+        });
+        let report = apply_documents(&client, TWO_DOCS, false).await.unwrap();
+        assert!(!report.ok);
+        assert_eq!(report.outcomes.len(), 2);
+        assert_eq!(report.outcomes[0].doc, "v1 ConfigMap/first");
+        assert!(report.outcomes[0].result.is_ok());
+        let err = report.outcomes[1].result.as_ref().unwrap_err();
+        assert!(matches!(err.error, ApplyError::Validation(_)));
+        assert_eq!(
+            err.causes[0].located.location,
+            super::super::locate::Location::Exact { line: 11 }
+        );
     }
 }

@@ -116,6 +116,14 @@ mod tests {
     }
 
     #[test]
+    fn describe_formats_api_version_kind_name() {
+        let docs =
+            parse_documents("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n")
+                .unwrap();
+        assert_eq!(docs[0].describe(), "apps/v1 Deployment/nginx");
+    }
+
+    #[test]
     fn multi_document_indices_follow_send_order() {
         let docs = parse_documents(
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: first\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: second\n",

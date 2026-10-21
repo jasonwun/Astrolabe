@@ -95,6 +95,18 @@ pub fn locate_field(snapshot: &str, doc_index: usize, path: &[Segment]) -> Locat
     let mut i = 0;
     while i < path.len() {
         match walker.step(&path[i..]) {
+            // A step must consume at least one segment; one that consumes
+            // nothing would loop forever, so degrade to an ancestor
+            // location instead.
+            Ok(0) => {
+                return Located {
+                    location: Location::Ancestor {
+                        line: walker.line,
+                        missing: path[i].to_string(),
+                    },
+                    anchor_note: walker.anchor_note,
+                };
+            }
             Ok(consumed) => i += consumed,
             Err(missing) => {
                 return Located {
@@ -336,6 +348,20 @@ spec:
     }
 
     #[test]
+    fn miss_below_a_key_on_the_header_line_is_ancestor_not_header() {
+        // `apiVersion` resolves but sits on the document's first line; a
+        // miss below it must still report Ancestor, not DocHeader.
+        let found = locate(DEPLOYMENT, 0, "apiVersion.bogus");
+        assert_eq!(
+            found.location,
+            Location::Ancestor {
+                line: 1,
+                missing: "bogus".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn out_of_bounds_index_lands_on_the_sequence() {
         let found = locate(DEPLOYMENT, 0, "spec.template.spec.containers[3].image");
         match found.location {
@@ -429,6 +455,67 @@ spec:
         let found = locate(buffer, 0, "spec.imagePullPolicy");
         assert_eq!(found.location, Location::Exact { line: 6 });
         assert_eq!(found.anchor_note.as_deref(), Some("base"));
+    }
+
+    #[test]
+    fn merge_key_sequence_of_aliases_later_entry_wins() {
+        let buffer = "\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+first: &first
+  priority: 1
+second: &second
+  priority: 2
+  restartPolicy: Never
+spec:
+  <<: [*first, *second]
+  containers: []
+";
+        // A field only present in a later merge entry is found by walking
+        // the merge sequence, not just a single aliased map.
+        let found = locate(buffer, 0, "spec.restartPolicy");
+        assert_eq!(found.location, Location::Exact { line: 9 });
+        // YAML merge semantics: later sequence entries override earlier
+        // ones, so `priority` lands on `second`.
+        let found = locate(buffer, 0, "spec.priority");
+        assert_eq!(found.location, Location::Exact { line: 8 });
+    }
+
+    #[test]
+    fn selector_matches_integer_listmapkey() {
+        let buffer = "\
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc
+spec:
+  ports:
+    - name: http
+      port: 80
+    - name: https
+      port: 443
+";
+        let found = locate(buffer, 0, ".spec.ports[port=\"443\"].name");
+        assert_eq!(found.location, Location::Exact { line: 9 });
+    }
+
+    #[test]
+    fn scalar_eq_matches_scalars_loosely() {
+        use saphyr::{Scalar, ScalarStyle, YamlData};
+        assert!(scalar_eq(&YamlData::Value(Scalar::Integer(80)), "80"));
+        assert!(!scalar_eq(&YamlData::Value(Scalar::Integer(80)), "81"));
+        assert!(scalar_eq(&YamlData::Value(Scalar::Boolean(true)), "true"));
+        assert!(!scalar_eq(&YamlData::Value(Scalar::Boolean(true)), "false"));
+        assert!(scalar_eq(
+            &YamlData::Representation("80".into(), ScalarStyle::Plain, None),
+            "80"
+        ));
+        assert!(!scalar_eq(
+            &YamlData::Representation("81".into(), ScalarStyle::Plain, None),
+            "80"
+        ));
     }
 
     #[test]

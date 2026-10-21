@@ -259,6 +259,24 @@ mod tests {
     }
 
     #[test]
+    fn non_strict_decoding_causes_are_not_flagged_as_warnings() {
+        let s = status(
+            422,
+            "Deployment.apps \"nginx\" is invalid",
+            vec![
+                cause("spec.replicas", "Invalid value: -1", "FieldValueInvalid"),
+                cause("spec.template", "Required value", "FieldValueRequired"),
+            ],
+        );
+        match parse_status(&s) {
+            ApplyError::Validation(causes) => {
+                assert!(causes.iter().all(|c| !c.is_strict_decoding()));
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn validation_422_without_causes_degrades_to_global() {
         let s = status(422, "something unparseable", vec![]);
         assert!(matches!(parse_status(&s), ApplyError::Global { .. }));
@@ -333,6 +351,28 @@ mod tests {
                         Segment::Key("image".into()),
                     ]
                 );
+            }
+            other => panic!("expected Conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn conflict_409_adjacent_blocks_keep_full_field_list() {
+        // Defensive: manager blocks concatenated without a whitespace
+        // separator. The block boundary must not eat the last character of
+        // the previous block's field list.
+        let s = status(
+            409,
+            "Apply failed with 2 conflicts: conflicts with \"a\" using v1: .spec.replicasconflicts with \"b\" using v1: .spec.paused",
+            vec![],
+        );
+        match parse_status(&s) {
+            ApplyError::Conflict(conflicts) => {
+                assert_eq!(conflicts.len(), 2);
+                assert_eq!(conflicts[0].manager, "a");
+                assert_eq!(conflicts[0].causes[0].raw_field, ".spec.replicas");
+                assert_eq!(conflicts[1].manager, "b");
+                assert_eq!(conflicts[1].causes[0].raw_field, ".spec.paused");
             }
             other => panic!("expected Conflict, got {other:?}"),
         }

@@ -313,12 +313,15 @@ dependencies = [
 name = "astrolabe-kube"
 version = "0.0.0"
 dependencies = [
+ "http",
  "k8s-openapi",
  "kube",
  "saphyr",
  "serde-saphyr 0.0.29",
  "serde_json",
  "thiserror 2.0.21",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
