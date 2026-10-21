@@ -4,4 +4,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = ["tree-sitter-yaml", "test-support"] }
+astrolabe-kube.workspace = true
+regex.workspace = true
+tokio.workspace = true
