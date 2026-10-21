@@ -4,6 +4,10 @@
 
 Reply to the user in Chinese. Everything else — code, comments, commits, issues, docs — in English.
 
+## Commits
+
+Commits created by the agent must end with the trailer `Co-Authored-By: Kimi Code <noreply@moonshot.ai>`.
+
 ## Agent skills
 
 ### Issue tracker
