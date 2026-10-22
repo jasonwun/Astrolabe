@@ -45,3 +45,24 @@ nothing, leaving the UI stale until a later event.
 Origin: the #26 review treated kube-rs stream recovery as equivalent to
 UI recovery; kind verification showed a silent resumption need not emit
 `InitDone` (#26/#27 retro).
+
+## Spec mandates and resource scope in review findings
+
+Before reporting a structure as Speculative Generality, the reviewer
+checks whether the spec or design resolution explicitly mandates it: a
+required abstraction is not speculative, however general its shape
+looks. Before reporting a watch-scope violation, the reviewer checks
+whether the Kubernetes resource is cluster-scoped or namespaced (e.g.
+via `kubectl api-resources`): watching a cluster-scoped resource such
+as Namespace across the cluster is not the same as aggregating
+namespaced resources across all namespaces, and the two are not
+interchangeable findings. Both checks are positive verification against
+the spec and the resource's actual scope, not pattern-matching on the
+shape of the code.
+
+Origin: the #26 review reported `WatchKey`/`ResourceKind` as
+Speculative Generality although the spec mandated the `(cluster, kind,
+namespace)` watch architecture, and reported `Api::<Namespace>::all` as
+prohibited cluster-wide watching although Namespace itself is
+cluster-scoped and the acceptance criteria require a live Namespaces
+list; both findings were withdrawn (#26/#27 retro).
