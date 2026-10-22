@@ -1,3 +1,14 @@
+use std::env;
+use std::ffi::OsString;
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
 use astrolabe::session::{ConnectionHealth, ResourceKind, Session};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -122,4 +133,289 @@ fn session_coalesces_queued_events_into_one_notification(cx: &mut TestAppContext
         assert_eq!(names(session.read(cx)).len(), 10);
         assert_eq!(notifications.get(), 1);
     });
+}
+
+/// Minimal scripted apiserver for the relist scenario. Served payloads are
+/// synthetic: hand-written minimal shapes, never captured from a real
+/// apiserver.
+struct ScriptedApiserver {
+    state: Arc<ServerState>,
+    port: u16,
+}
+
+#[derive(Default)]
+struct ServerState {
+    list_queries: Mutex<Vec<String>>,
+    watch_queries: Mutex<Vec<String>>,
+    fail_watch: (Mutex<bool>, Condvar),
+    shutdown: AtomicBool,
+    connections: Mutex<Vec<TcpStream>>,
+}
+
+impl ScriptedApiserver {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = Arc::new(ServerState::default());
+        let accept_state = state.clone();
+        thread::spawn(move || {
+            for connection in listener.incoming() {
+                if accept_state.shutdown.load(Ordering::SeqCst) {
+                    break;
+                }
+                let Ok(connection) = connection else { break };
+                let connection_state = accept_state.clone();
+                thread::spawn(move || handle_connection(connection, connection_state));
+            }
+        });
+        Self { state, port }
+    }
+
+    fn list_queries(&self) -> Vec<String> {
+        self.state.list_queries.lock().unwrap().clone()
+    }
+
+    fn watch_queries(&self) -> Vec<String> {
+        self.state.watch_queries.lock().unwrap().clone()
+    }
+
+    fn fail_active_watch(&self) {
+        let (triggered, condvar) = &self.state.fail_watch;
+        *triggered.lock().unwrap() = true;
+        condvar.notify_all();
+    }
+}
+
+impl Drop for ScriptedApiserver {
+    fn drop(&mut self) {
+        self.state.shutdown.store(true, Ordering::SeqCst);
+        self.fail_active_watch();
+        for connection in self.state.connections.lock().unwrap().drain(..) {
+            connection.shutdown(Shutdown::Both).ok();
+        }
+        // Wake the accept loop so it observes the shutdown flag and exits.
+        TcpStream::connect(("127.0.0.1", self.port)).ok();
+    }
+}
+
+fn handle_connection(stream: TcpStream, state: Arc<ServerState>) {
+    state
+        .connections
+        .lock()
+        .unwrap()
+        .push(stream.try_clone().unwrap());
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut writer = stream;
+    while let Some(target) = read_request(&mut reader) {
+        if target.contains("watch=true") {
+            let watch = {
+                let mut queries = state.watch_queries.lock().unwrap();
+                queries.push(target);
+                queries.len()
+            };
+            if write!(
+                writer,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n"
+            )
+            .is_err()
+            {
+                return;
+            }
+            if watch == 1 {
+                let (triggered, condvar) = &state.fail_watch;
+                let mut triggered = triggered.lock().unwrap();
+                while !*triggered {
+                    triggered = condvar.wait(triggered).unwrap();
+                }
+                drop(triggered);
+                write_chunk(&mut writer, WATCH_ERROR_EVENT);
+                write!(writer, "0\r\n\r\n").ok();
+                writer.flush().ok();
+                // Close the socket: the client must not pool this connection
+                // for the fresh LIST that follows the watch error.
+                writer.shutdown(Shutdown::Both).ok();
+                return;
+            }
+            // Later watches stay open and silent: the relist must complete
+            // from the fresh LIST alone, with no Apply/Delete events.
+            let mut discarded = [0; 1024];
+            while reader.read(&mut discarded).unwrap_or(0) > 0 {}
+            return;
+        }
+        let list = {
+            let mut queries = state.list_queries.lock().unwrap();
+            queries.push(target);
+            queries.len()
+        };
+        let (names, resource_version) = if list == 1 {
+            (vec!["default"], "1")
+        } else {
+            (vec!["kube-system"], "2")
+        };
+        let body = namespace_list(&names, resource_version);
+        if write!(
+            writer,
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .is_err()
+        {
+            return;
+        }
+        writer.flush().ok();
+    }
+}
+
+fn read_request(reader: &mut BufReader<TcpStream>) -> Option<String> {
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line).ok()?;
+    if request_line.is_empty() {
+        return None;
+    }
+    let target = request_line.split_whitespace().nth(1)?.to_string();
+    loop {
+        let mut header = String::new();
+        reader.read_line(&mut header).ok()?;
+        if header.trim().is_empty() {
+            break;
+        }
+    }
+    Some(target)
+}
+
+fn write_chunk(writer: &mut TcpStream, data: &str) {
+    write!(writer, "{:x}\r\n{}\r\n", data.len(), data).ok();
+    writer.flush().ok();
+}
+
+const WATCH_ERROR_EVENT: &str = concat!(
+    r#"{"type":"ERROR","object":{"kind":"Status","apiVersion":"v1","status":"Failure","#,
+    r#""message":"injected watch failure","reason":"InternalError","code":500}}"#,
+    "\n"
+);
+
+fn namespace_list(names: &[&str], resource_version: &str) -> String {
+    let items = names
+        .iter()
+        .map(|name| {
+            format!(r#"{{"apiVersion":"v1","kind":"Namespace","metadata":{{"name":"{name}"}}}}"#)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        r#"{{"apiVersion":"v1","kind":"NamespaceList","metadata":{{"resourceVersion":"{resource_version}"}},"items":[{items}]}}"#
+    )
+}
+
+struct KubeconfigGuard {
+    path: PathBuf,
+    previous: Option<OsString>,
+}
+
+impl KubeconfigGuard {
+    fn new(port: u16) -> Self {
+        let path = env::temp_dir().join(format!("astrolabe-session-{}.yaml", std::process::id()));
+        fs::write(
+            &path,
+            format!(
+                r#"apiVersion: v1
+kind: Config
+current-context: scripted
+clusters:
+- name: scripted
+  cluster:
+    server: http://127.0.0.1:{port}
+contexts:
+- name: scripted
+  context:
+    cluster: scripted
+    user: scripted
+users:
+- name: scripted
+  user: {{}}
+"#
+            ),
+        )
+        .unwrap();
+        let previous = env::var_os("KUBECONFIG");
+        unsafe { env::set_var("KUBECONFIG", &path) };
+        Self { path, previous }
+    }
+}
+
+impl Drop for KubeconfigGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.previous {
+            unsafe { env::set_var("KUBECONFIG", previous) };
+        } else {
+            unsafe { env::remove_var("KUBECONFIG") };
+        }
+        fs::remove_file(&self.path).ok();
+    }
+}
+
+fn pump_until(
+    cx: &mut TestAppContext,
+    what: &str,
+    mut condition: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        cx.run_until_parked();
+        if condition(cx) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[gpui_kit::test]
+fn session_watch_error_forces_complete_namespace_relist(cx: &mut TestAppContext) {
+    // Real network I/O on the cluster runtime wakes the foreground executor
+    // from tokio worker threads; allow parking so the test scheduler accepts
+    // that cross-thread activity.
+    cx.executor().allow_parking();
+    let server = ScriptedApiserver::spawn();
+    let _kubeconfig = KubeconfigGuard::new(server.port);
+    let session = cx.update(|cx| cx.new(|cx| Session::new("scripted", cx)));
+
+    // 1. Initial list/watch establishes a healthy snapshot.
+    pump_until(cx, "initial snapshot", |cx| {
+        cx.read(|cx| {
+            let session = session.read(cx);
+            names(session) == ["default"] && session.health() == ConnectionHealth::Healthy
+        })
+    });
+    pump_until(cx, "active watch", |_| !server.watch_queries().is_empty());
+    cx.read(|cx| assert!(!session.read(cx).show_stale_warning()));
+    assert_eq!(server.list_queries().len(), 1);
+
+    // 2. Fail the active watch: the old snapshot stays visible but stale.
+    server.fail_active_watch();
+    pump_until(cx, "stale state", |cx| {
+        cx.read(|cx| {
+            let session = session.read(cx);
+            session.health() == ConnectionHealth::Stale && session.show_stale_warning()
+        })
+    });
+    cx.read(|cx| assert_eq!(names(session.read(cx)), ["default"]));
+
+    // 3. Recovery starts a fresh LIST instead of silently resuming the watch.
+    pump_until(cx, "fresh LIST", |_| server.list_queries().len() == 2);
+
+    // 4./5. The relist completes without any Apply/Delete event: InitDone
+    // replaces the snapshot and clears the stale state.
+    pump_until(cx, "replaced snapshot", |cx| {
+        cx.read(|cx| {
+            let session = session.read(cx);
+            session.health() == ConnectionHealth::Healthy && !session.show_stale_warning()
+        })
+    });
+    cx.read(|cx| assert_eq!(names(session.read(cx)), ["kube-system"]));
+    pump_until(cx, "watch anchored to fresh list", |_| {
+        server.watch_queries().len() == 2
+    });
+    assert!(server.watch_queries()[1].contains("resourceVersion=2"));
 }
