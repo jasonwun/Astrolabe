@@ -790,6 +790,7 @@ impl Render for YamlEditorView {
         let mut root = v_flex()
             .relative()
             .size_full()
+            .bg(theme.background)
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::on_apply))
@@ -815,7 +816,12 @@ impl Render for YamlEditorView {
                     })),
             );
         }
-        root = root.child(div().flex_1().min_h_0().child(Editor::new(&self.state)));
+        root = root.child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(Editor::new(&self.state).h_full()),
+        );
         if let Some(panel) = self.render_panel(cx) {
             root = root.child(panel);
         }
