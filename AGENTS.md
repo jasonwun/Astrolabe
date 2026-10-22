@@ -21,3 +21,7 @@ Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `read
 ### Domain docs
 
 Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Testing
+
+Coverage, mutation testing, and cluster e2e commands: `docs/agents/testing.md`. Review-time judgement rules: `CODING_STANDARDS.md`.
