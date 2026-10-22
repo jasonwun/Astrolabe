@@ -45,6 +45,11 @@ impl Session {
             let client = match astrolabe_kube::client_for_context(&watch_cluster).await {
                 Ok(client) => client,
                 Err(error) => {
+                    tracing::warn!(
+                        cluster = %watch_cluster,
+                        error = %error,
+                        "namespace watch client setup failed"
+                    );
                     let _ = sender.send(Err(error.to_string())).await;
                     return;
                 }
@@ -55,6 +60,13 @@ impl Session {
                 let mut report_end = true;
                 while let Some(event) = events.next().await {
                     let failed = event.is_err();
+                    if let Err(error) = &event {
+                        tracing::warn!(
+                            cluster = %watch_cluster,
+                            error = %error,
+                            "namespace watch failed"
+                        );
+                    }
                     if sender
                         .send(event.map_err(|error| error.to_string()))
                         .await
@@ -75,6 +87,7 @@ impl Session {
                 {
                     return;
                 }
+                tracing::info!(cluster = %watch_cluster, "restarting namespace watch");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         });
@@ -133,7 +146,7 @@ impl Session {
                             }
                         }
                         if closed {
-                            session.health = ConnectionHealth::Stale;
+                            session.set_health(ConnectionHealth::Stale);
                             session.stale = session.has_snapshot;
                         }
                         cx.notify();
@@ -147,7 +160,7 @@ impl Session {
                 }
             }
             this.update(cx, |session, cx| {
-                session.health = ConnectionHealth::Stale;
+                session.set_health(ConnectionHealth::Stale);
                 session.stale = session.has_snapshot;
                 cx.notify();
             })
@@ -156,30 +169,50 @@ impl Session {
         .detach();
     }
 
+    fn set_health(&mut self, health: ConnectionHealth) {
+        if self.health != health {
+            tracing::info!(
+                cluster = %self.watch_key.cluster,
+                from = ?self.health,
+                to = ?health,
+                "namespace session health changed"
+            );
+            self.health = health;
+        }
+    }
+
     fn apply(&mut self, message: NamespaceWatchMessage) {
         match message {
             Ok(event) => {
+                let relist_completed = matches!(&event, Event::InitDone);
                 match &event {
                     Event::Init => {
-                        self.health = ConnectionHealth::Connecting;
+                        self.set_health(ConnectionHealth::Connecting);
                         self.stale = self.has_snapshot;
                     }
                     Event::InitApply(_) => {}
                     Event::InitDone => {
                         self.has_snapshot = true;
-                        self.health = ConnectionHealth::Healthy;
+                        self.set_health(ConnectionHealth::Healthy);
                         self.stale = false;
                     }
                     Event::Apply(_) | Event::Delete(_) => {
                         self.has_snapshot = true;
-                        self.health = ConnectionHealth::Healthy;
+                        self.set_health(ConnectionHealth::Healthy);
                         self.stale = false;
                     }
                 }
                 self.namespaces.apply(event);
+                if relist_completed {
+                    tracing::info!(
+                        cluster = %self.watch_key.cluster,
+                        namespaces = self.namespaces.snapshot().len(),
+                        "namespace snapshot replaced"
+                    );
+                }
             }
             Err(_) => {
-                self.health = ConnectionHealth::Stale;
+                self.set_health(ConnectionHealth::Stale);
                 self.stale = self.has_snapshot;
             }
         }
