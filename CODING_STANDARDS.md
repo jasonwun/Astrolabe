@@ -27,3 +27,21 @@ Origin: #10 named saphyr's `MarkedYamlOwned` (records no collection spans
 in 0.0.6) and assumed a gpui-component gutter API (absent in 0.8.0); both
 surfaced only mid-implementation, forcing deviations from the resolution
 (#21 retro).
+
+## Recovery claims in findings and design resolutions
+
+A review finding or recommendation that invokes a third-party recovery
+mechanism is verified against the pinned version's source or docs, as a
+design resolution would be (the "verified against <crate> <version>"
+note is required of resolutions, not findings). The claim names the
+consumer-visible event that demonstrates recovery completed, because
+reconnect, silent resume, and complete relist are distinct outcomes and
+are not interchangeable: a silent resume may emit no signal at all, so
+"the stream reconnected" is not evidence the consumer recovered. In the
+Namespace watch incident, the valid recovery signal was kube-rs's
+`InitDone` after a full relist; a silent watch resumption emits
+nothing, leaving the UI stale until a later event.
+
+Origin: the #26 review treated kube-rs stream recovery as equivalent to
+UI recovery; kind verification showed a silent resumption need not emit
+`InitDone` (#26/#27 retro).
