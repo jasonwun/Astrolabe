@@ -7,4 +7,5 @@ publish.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-yaml", "test-support"] }
 astrolabe-kube.workspace = true
 regex.workspace = true
+futures.workspace = true
 tokio.workspace = true

@@ -4,4 +4,9 @@
 //! (terminal engine + view) plug in here.
 
 pub mod kube_bridge;
+pub mod projection;
+pub mod session;
+mod session_view;
+pub mod store;
+pub mod workspace;
 pub mod yaml_editor;
