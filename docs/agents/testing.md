@@ -17,6 +17,37 @@ GitHub's macOS runners have no Docker, so kind cannot run there.
 cargo test -p astrolabe-kube --test e2e_cluster -- --ignored --test-threads=1
 ```
 
+### Manual Namespace recovery check (kind-astrolabe-dev)
+
+The automated e2e cannot prove timely full-relist recovery versus silent
+watch resumption; that needs a real GUI stop/start against the dev cluster.
+
+1. Identify the kind node (the kind CLI has no `stop` subcommand — use
+   Docker for the power cycle):
+
+   ```sh
+   kind get nodes --name astrolabe-dev    # prints astrolabe-dev-control-plane
+   ```
+
+2. Open Astrolabe on the `kind-astrolabe-dev` context, then stop and start
+   the control plane:
+
+   ```sh
+   docker stop astrolabe-dev-control-plane
+   docker start astrolabe-dev-control-plane
+   ```
+
+3. While the node is down, the cluster health indicator turns red
+   ("Stale") and a banner shows "connection lost, data may be stale"; the
+   existing Namespace rows stay visible.
+4. Once the node is Ready again, the banner clears and the indicator
+   returns to green ("Healthy") **without any additional Namespace
+   create/update/delete event** — recovery must come from the watch relist
+   alone, not from you touching resources.
+
+Cleanup: close Astrolabe and leave the kind cluster running unless you
+intend to tear it down.
+
 ## Coverage
 
 ```sh
