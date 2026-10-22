@@ -371,12 +371,45 @@ fn pump_until(
     }
 }
 
+/// Shared buffer behind a `tracing` subscriber, so tests can assert on the
+/// log lines a developer would see via RUST_LOG.
+#[derive(Clone, Default)]
+struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+impl LogCapture {
+    fn install(&self) {
+        let writer = self.clone();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("astrolabe=debug,astrolabe_kube=debug,kube_runtime=debug")
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .try_init();
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[gpui_kit::test]
 fn session_watch_error_forces_complete_namespace_relist(cx: &mut TestAppContext) {
     // Real network I/O on the cluster runtime wakes the foreground executor
     // from tokio worker threads; allow parking so the test scheduler accepts
     // that cross-thread activity.
     cx.executor().allow_parking();
+    let logs = LogCapture::default();
+    logs.install();
     let server = ScriptedApiserver::spawn();
     let _kubeconfig = KubeconfigGuard::new(server.port);
     let session = cx.update(|cx| cx.new(|cx| Session::new("scripted", cx)));
@@ -418,4 +451,34 @@ fn session_watch_error_forces_complete_namespace_relist(cx: &mut TestAppContext)
         server.watch_queries().len() == 2
     });
     assert!(server.watch_queries()[1].contains("resourceVersion=2"));
+
+    // The RUST_LOG-driven event trail covers the whole failure/recovery arc
+    // without ever logging a resource payload.
+    let text = logs.text();
+    assert!(
+        text.contains("namespace watch failed"),
+        "missing watch failure log:\n{text}"
+    );
+    assert!(
+        text.contains("restarting namespace watch"),
+        "missing recovery attempt log:\n{text}"
+    );
+    assert!(
+        text.contains("namespace session health changed"),
+        "missing health transition log:\n{text}"
+    );
+    assert!(
+        text.contains("namespace snapshot replaced"),
+        "missing snapshot replacement log:\n{text}"
+    );
+    // kube-rs emits its own watcher/backoff events at debug under the
+    // kube_runtime target (verified against kube-runtime 4.2).
+    assert!(
+        text.contains("kube_runtime"),
+        "missing kube-rs watcher/backoff events:\n{text}"
+    );
+    assert!(
+        !text.contains("NamespaceList"),
+        "log contains a resource payload:\n{text}"
+    );
 }

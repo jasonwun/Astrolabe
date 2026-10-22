@@ -8,5 +8,6 @@ use kube::{
 pub fn namespaces(
     client: &Client,
 ) -> impl Stream<Item = Result<watcher::Event<Namespace>, watcher::Error>> + Send {
+    tracing::debug!("starting namespace watch stream");
     watcher(Api::all(client.clone()), watcher::Config::default()).default_backoff()
 }

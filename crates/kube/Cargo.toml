@@ -11,6 +11,7 @@ saphyr.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 futures.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 http.workspace = true

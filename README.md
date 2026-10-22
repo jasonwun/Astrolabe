@@ -19,6 +19,16 @@ A desktop application built with [gpui](https://github.com/zed-industries/zed/tr
 cargo run
 ```
 
+### Watch recovery logs
+
+The app installs a `tracing` subscriber driven by `RUST_LOG` (default `warn`: watch failures surface, but there is no per-event flood). To follow Namespace watch failures, kube-rs backoff/relist transitions, and session health/snapshot changes during local development:
+
+```sh
+RUST_LOG=astrolabe=debug,astrolabe_kube=debug,kube_runtime=debug cargo run -p astrolabe
+```
+
+Only metadata is logged — cluster name, error summaries, object counts, health states — never kubeconfig contents, credentials, request headers, or full resource payloads.
+
 ## Dependency upgrades
 
 Third-party versions are declared once in the root `[workspace.dependencies]` (exact `=` pins for `gpui-kit` / `alacritty_terminal` / `k8s-openapi`; `kube` follows the kube-rs survey's `"4.0"` + `ws`/`rustls-tls`), members only write `workspace = true`, and `Cargo.lock` is committed. Upgrades are explicit actions:
