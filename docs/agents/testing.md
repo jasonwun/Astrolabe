@@ -33,6 +33,23 @@ cargo mutants -p astrolabe-kube -j 4        # full run, ~90s
 cargo mutants -p astrolabe-kube -f <file>   # scoped to one file
 ```
 
+## Scripted apiserver tests (gpui + real I/O)
+
+Tests that drive real network I/O (e.g. `Session::new` against a scripted
+localhost apiserver) inside a `#[gpui_kit::test]` — reference implementation:
+`session_watch_error_forces_complete_namespace_relist` in
+`crates/app/tests/session.rs`. Two gotchas:
+
+- Call `cx.executor().allow_parking()` first. Real I/O wakes the foreground
+  executor from tokio worker threads; without it the test scheduler fails the
+  test at teardown with "Your test is not deterministic".
+- `shutdown(Shutdown::Both)` every connection the server abandons. Returning
+  from a connection handler without shutdown leaves the socket open, and
+  hyper's client pool hands the dead connection to the next request, which
+  then hangs unread.
+
+Origin: #28 session, both hit mid-implementation.
+
 ## Cargo.lock sticky-pin conflicts
 
 When a pinned transitive dependency deadlocks resolution (e.g.
