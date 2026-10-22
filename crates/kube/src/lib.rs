@@ -6,7 +6,9 @@
 //! by `cargo tree` (no gpui in this crate's dependency closure).
 
 pub use k8s_openapi;
+pub use kube;
 
+pub mod apply;
 mod client;
 
 pub use client::default_client;

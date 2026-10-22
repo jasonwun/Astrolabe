@@ -28,3 +28,6 @@ Thumbs.db
 *.profraw
 /perf.data
 /flamegraph.svg
+
+# cargo-mutants
+mutants.out*/
