@@ -1,6 +1,7 @@
 //! Astrolabe desktop application: GPUI entry point.
 
-use astrolabe::yaml_editor::{self, ApplyManifest, RunPrecheck, TogglePalette, YamlEditorView};
+use astrolabe::workspace::WorkspaceView;
+use astrolabe::yaml_editor::{self, ApplyManifest, RunPrecheck, TogglePalette};
 use gpui_kit::*;
 
 fn main() {
@@ -18,7 +19,7 @@ fn main() {
         ]);
 
         cx.open_window(WindowOptions::default(), |window, cx| {
-            cx.new(|cx| YamlEditorView::new(window, cx, String::new()))
+            cx.new(|cx| WorkspaceView::new(window, cx))
         })
         .expect("failed to open window");
 

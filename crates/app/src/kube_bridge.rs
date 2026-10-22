@@ -1,9 +1,8 @@
 //! Bridge between the GPUI main thread and cluster I/O.
 //!
 //! `astrolabe-kube` is pure tokio-side code; the GPUI executor has no tokio
-//! reactor, so a dedicated multi-thread runtime lives here. Each operation
-//! runs on that runtime and reports back through a oneshot the view awaits
-//! inside `cx.spawn`.
+//! reactor, so a dedicated multi-thread runtime lives here. One-shot operations
+//! report through a oneshot; resident watchers use the returned task handle.
 
 use std::sync::OnceLock;
 
@@ -27,4 +26,10 @@ where
         let _ = tx.send(future.await);
     });
     rx
+}
+
+pub(crate) fn spawn_cluster_task(
+    future: impl std::future::Future<Output = ()> + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    runtime().spawn(future)
 }

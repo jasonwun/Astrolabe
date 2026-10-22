@@ -15,7 +15,7 @@ publish = false
 gpui-kit = "=0.8.0"
 alacritty_terminal = "=0.26.0"
 k8s-openapi = { version = "=0.28", features = ["v1_36"] }
-kube = { version = "4.0", features = ["ws", "rustls-tls"] }
+kube = { version = "4.0", features = ["runtime", "ws", "rustls-tls"] }
 # YAML payload parse for SSA apply (#21): same crate+version family
 # kube-client 4.x itself uses, so no new dependency family.
 serde-saphyr = "=0.0.29"
@@ -25,6 +25,7 @@ saphyr = "=0.0.6"
 serde_json = "1"
 thiserror = "2"
 regex = "1"
+futures = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # Dev-only: mock `kube::Client` services for apply orchestration tests.
 http = "1"

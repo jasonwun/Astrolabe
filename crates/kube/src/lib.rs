@@ -10,5 +10,6 @@ pub use kube;
 
 pub mod apply;
 mod client;
+pub mod watch;
 
-pub use client::default_client;
+pub use client::{client_for_context, context_names, default_client};

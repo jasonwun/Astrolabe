@@ -8,12 +8,17 @@
 //! cargo test -p astrolabe-kube --test e2e_cluster -- --ignored --test-threads=1
 //! ```
 
+use std::time::Duration;
+
 use astrolabe_kube::apply::{ApplyError, Location, apply_documents, precheck_documents};
 use astrolabe_kube::default_client;
+use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::kube;
-use astrolabe_kube::kube::api::{Api, DeleteParams};
+use astrolabe_kube::kube::api::{Api, DeleteParams, PostParams};
 use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::kube::runtime::watcher;
+use futures::StreamExt;
 
 /// Unique namespace per test run; deleted on drop-best-effort at the end.
 fn unique_ns() -> String {
@@ -77,6 +82,88 @@ async fn delete_ns(client: &kube::Client, ns: &str) {
     let gvk = GroupVersionKind::gvk("", "v1", "Namespace");
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &ApiResource::from_gvk(&gvk));
     let _ = api.delete(ns, &DeleteParams::default()).await;
+}
+
+/// Namespaces emit a complete initial list followed by raw live changes.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn namespace_watch_lists_then_streams_create_and_delete() {
+    let contexts = astrolabe_kube::context_names().unwrap();
+    assert!(!contexts.is_empty(), "kubeconfig must contain a context");
+    let client = astrolabe_kube::client_for_context(&contexts[0])
+        .await
+        .unwrap();
+    let events = astrolabe_kube::watch::namespaces(&client);
+    futures::pin_mut!(events);
+
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let mut saw_init = false;
+        let mut saw_init_apply = false;
+        loop {
+            match events
+                .next()
+                .await
+                .expect("watch ended during initial list")
+                .unwrap()
+            {
+                watcher::Event::Init => saw_init = true,
+                watcher::Event::InitApply(_) => saw_init_apply = true,
+                watcher::Event::InitDone => {
+                    assert!(saw_init, "initial list must start with Init");
+                    assert!(saw_init_apply, "initial list must contain objects");
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for the initial namespace list");
+
+    let api = Api::<Namespace>::all(client.clone());
+    let ns = unique_ns();
+    let namespace: Namespace = serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": { "name": ns },
+    }))
+    .unwrap();
+    api.create(&PostParams::default(), &namespace)
+        .await
+        .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let watcher::Event::Apply(namespace) = events
+                .next()
+                .await
+                .expect("watch ended before create")
+                .unwrap()
+                && namespace.metadata.name.as_deref() == Some(ns.as_str())
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for the namespace create event");
+
+    api.delete(&ns, &DeleteParams::default()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let watcher::Event::Delete(namespace) = events
+                .next()
+                .await
+                .expect("watch ended before delete")
+                .unwrap()
+                && namespace.metadata.name.as_deref() == Some(ns.as_str())
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for the namespace delete event");
 }
 
 /// Happy path: a multi-doc buffer (Namespace + ConfigMap + Deployment)
