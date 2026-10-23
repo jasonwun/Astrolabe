@@ -640,6 +640,10 @@ impl Session {
         self.namespaces.objects()
     }
 
+    pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
+        self.namespaces.get(None, name)
+    }
+
     pub fn crds(&self) -> &Watched<CustomResourceDefinition> {
         &self.crds
     }

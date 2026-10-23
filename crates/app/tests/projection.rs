@@ -38,6 +38,85 @@ fn namespaces_project_to_handwritten_columns() {
     );
 }
 
+mod namespace_detail {
+    use astrolabe::projection::{namespace_detail, object_yaml};
+    use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
+    use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+
+    fn now() -> Timestamp {
+        "2026-10-22T12:00:00Z".parse().unwrap()
+    }
+
+    /// Synthetic Namespace: plausible shape, not captured from a server.
+    fn terminating() -> Namespace {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "v1", "kind": "Namespace",
+            "metadata": {
+                "name": "old", "uid": "uid-ns",
+                "creationTimestamp": "2026-10-22T11:55:00Z",
+                "labels": {"team": "a"},
+                "annotations": {"note": "bye"},
+                "managedFields": [{"manager": "kubectl", "operation": "Update"}]
+            },
+            "spec": {"finalizers": ["kubernetes"]},
+            "status": {
+                "phase": "Terminating",
+                "conditions": [{
+                    "type": "NamespaceDeletionContentFailure", "status": "False",
+                    "reason": "ContentDeleted", "message": "All content successfully deleted"
+                }]
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn shows_phase_finalizers_and_conditions_on_the_generic_template() {
+        let namespace = terminating();
+
+        let detail = namespace_detail(&namespace, now());
+
+        assert_eq!(detail.title, "Namespace old");
+        assert_eq!(
+            detail.metadata,
+            [
+                ("Name", "old"),
+                ("UID", "uid-ns"),
+                ("Created", "2026-10-22T11:55:00Z (5m ago)"),
+            ]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+        );
+        assert_eq!(detail.labels, ["team=a"]);
+        assert_eq!(detail.annotations, ["note=bye"]);
+        assert_eq!(
+            detail.status,
+            [("Phase", "Terminating"), ("Finalizers", "kubernetes")]
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        );
+        assert_eq!(detail.conditions.len(), 1);
+        assert_eq!(detail.conditions[0].kind, "NamespaceDeletionContentFailure");
+        assert_eq!(detail.conditions[0].status, "False");
+        assert_eq!(detail.conditions[0].reason, "ContentDeleted");
+        assert_eq!(detail.yaml, object_yaml(&namespace));
+        assert!(detail.yaml.contains("phase: Terminating"));
+        assert!(!detail.yaml.contains("managedFields"));
+    }
+
+    #[test]
+    fn a_bare_namespace_has_empty_status_rows_and_no_conditions() {
+        let bare: Namespace =
+            serde_json::from_value(serde_json::json!({"metadata": {"name": "new"}})).unwrap();
+
+        let detail = namespace_detail(&bare, now());
+
+        assert_eq!(
+            detail.status,
+            [("Phase", ""), ("Finalizers", "")].map(|(k, v)| (k.to_string(), v.to_string()))
+        );
+        assert!(detail.conditions.is_empty());
+    }
+}
+
 mod custom {
     use std::collections::BTreeSet;
 

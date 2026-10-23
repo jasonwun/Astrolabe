@@ -221,6 +221,28 @@ pub fn definition_detail(crd: &CustomResourceDefinition, now: Timestamp) -> Deta
     detail("CustomResourceDefinition", crd, &value, status, now)
 }
 
+/// Status summary = phase + finalizers; `status.conditions` fill the
+/// conditions block.
+pub fn namespace_detail(namespace: &Namespace, now: Timestamp) -> DetailModel {
+    let phase = namespace
+        .status
+        .as_ref()
+        .and_then(|status| status.phase.clone())
+        .unwrap_or_default();
+    let finalizers = namespace
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.finalizers.clone())
+        .unwrap_or_default()
+        .join(", ");
+    let status = vec![
+        ("Phase".to_string(), phase),
+        ("Finalizers".to_string(), finalizers),
+    ];
+    let value = serde_json::to_value(namespace).unwrap_or_default();
+    detail("Namespace", namespace, &value, status, now)
+}
+
 /// YAML for preview and editing: `managedFields` stripped, as an SSA
 /// payload must not carry them.
 pub fn object_yaml<K: Resource + Clone + Serialize>(object: &K) -> String {
