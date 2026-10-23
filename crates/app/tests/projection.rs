@@ -39,7 +39,7 @@ fn namespaces_project_to_handwritten_columns() {
 }
 
 mod namespace_detail {
-    use astrolabe::projection::namespace_detail;
+    use astrolabe::projection::{namespace_detail, object_yaml};
     use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
     use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
@@ -72,7 +72,9 @@ mod namespace_detail {
 
     #[test]
     fn shows_phase_finalizers_and_conditions_on_the_generic_template() {
-        let detail = namespace_detail(&terminating(), now());
+        let namespace = terminating();
+
+        let detail = namespace_detail(&namespace, now());
 
         assert_eq!(detail.title, "Namespace old");
         assert_eq!(
@@ -95,6 +97,7 @@ mod namespace_detail {
         assert_eq!(detail.conditions[0].kind, "NamespaceDeletionContentFailure");
         assert_eq!(detail.conditions[0].status, "False");
         assert_eq!(detail.conditions[0].reason, "ContentDeleted");
+        assert_eq!(detail.yaml, object_yaml(&namespace));
         assert!(detail.yaml.contains("phase: Terminating"));
         assert!(!detail.yaml.contains("managedFields"));
     }

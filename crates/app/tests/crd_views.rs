@@ -378,7 +378,11 @@ fn namespace_rows_open_a_live_detail_tab_with_delete(cx: &mut TestAppContext) {
     ui.frame(|window, cx| window.click("row-old", cx));
     ui.settle();
     ui.frame(|window, _| {
-        assert!(window.try_find_by_label("Namespace old").is_some());
+        assert!(
+            window
+                .try_find("detail-tab")
+                .is_some_and(|tab| tab.label() == Some("Namespace old"))
+        );
         let status = window.within("detail-status");
         assert!(status.try_find_by_label("Phase: Active").is_some());
         assert!(status.try_find_by_label("Finalizers: kubernetes").is_some());
