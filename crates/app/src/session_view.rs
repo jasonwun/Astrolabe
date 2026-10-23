@@ -162,6 +162,8 @@ impl SessionView {
                 this.child(deferred(
                     v_flex()
                         .id("namespace-menu")
+                        // The menu overlaps the dock's tab bar; keep clicks off it.
+                        .occlude()
                         .absolute()
                         .top(px(32.))
                         .left_0()

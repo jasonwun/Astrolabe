@@ -487,7 +487,7 @@ impl Session {
     fn rebuild_catalog(&mut self, cx: &mut Context<Self>) {
         self.catalog = crd::catalog(&self.crds.objects(), self.discovery.served());
         if let Some(id) = self.viewing.clone() {
-            self.ensure_custom_watch(&id, cx);
+            self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
         }
     }
 
@@ -500,7 +500,21 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
         self.viewing = Some(id.clone());
-        self.ensure_custom_watch(id, cx)
+        self.ensure_custom_watch(id, Some(self.namespace.clone()), cx)
+    }
+
+    /// Ensure the watch an object of kind `id` in `namespace` (`None` when
+    /// cluster-scoped) is read from, at the kind's current preferred
+    /// version, whatever the namespace selection (#41). Shares the list's
+    /// lazy-start path, so the watch stays resident. `None` while the kind
+    /// is unknown or not served.
+    pub fn watch_custom_object(
+        &mut self,
+        id: &CustomKindId,
+        namespace: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<WatchKey> {
+        self.ensure_custom_watch(id, namespace, cx)
     }
 
     /// Leave the instance lists (another view is shown).
@@ -511,6 +525,7 @@ impl Session {
     fn ensure_custom_watch(
         &mut self,
         id: &CustomKindId,
+        namespace: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
         let kind = self.custom_kind(id)?;
@@ -518,7 +533,7 @@ impl Session {
             return None;
         };
         let resource = resource.clone();
-        let key = self.custom_watch_key(kind);
+        let key = self.custom_object_watch_key(kind, namespace.as_deref());
         if self.custom.contains_key(&key) {
             return Some(key);
         }
@@ -572,6 +587,12 @@ impl Session {
     /// The watch a kind's list reads for the current namespace selection:
     /// namespaced kinds follow it, cluster-scoped kinds ignore it.
     pub fn custom_watch_key(&self, kind: &CustomKind) -> WatchKey {
+        self.custom_object_watch_key(kind, Some(&self.namespace))
+    }
+
+    /// The watch holding `kind`'s objects in `namespace`, at its preferred
+    /// version; cluster-scoped kinds ignore `namespace`.
+    pub fn custom_object_watch_key(&self, kind: &CustomKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.watch_key.cluster.clone(),
             kind: ResourceKind::Custom {
@@ -579,7 +600,7 @@ impl Session {
                 version: kind.version.clone(),
                 kind: kind.kind.clone(),
             },
-            namespace: kind.namespaced.then(|| self.namespace.clone()),
+            namespace: namespace.filter(|_| kind.namespaced).map(str::to_string),
         }
     }
 
@@ -589,7 +610,7 @@ impl Session {
         }
         self.namespace = namespace;
         if let Some(id) = self.viewing.clone() {
-            self.ensure_custom_watch(&id, cx);
+            self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
         }
         cx.notify();
     }

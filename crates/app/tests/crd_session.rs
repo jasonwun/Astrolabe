@@ -425,3 +425,63 @@ fn unserved_kinds_start_no_watch(cx: &mut TestAppContext) {
         )
     });
 }
+
+#[gpui_kit::test]
+fn an_object_watch_ignores_the_namespace_selection_and_list(cx: &mut TestAppContext) {
+    let (mut team_a, team_a_events) = mpsc::channel(32);
+    let mut h = harness(
+        cx,
+        vec![(custom_key(Some("team-a"), "CronTab"), team_a_events)],
+    );
+    *h.discovery.borrow_mut() = Ok(ServedResources::new([
+        served("stable.example.com", "CronTab", true),
+        served("stable.example.com", "Backup", false),
+    ]));
+    snapshot(
+        &mut h.crds,
+        vec![
+            crd("stable.example.com", "CronTab", "Namespaced"),
+            crd("stable.example.com", "Backup", "Cluster"),
+        ],
+    );
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+
+    let key = h.session.update(cx, |session, cx| {
+        session.watch_custom_object(&crontab_id(), Some("team-a".to_string()), cx)
+    });
+    assert_eq!(key, Some(custom_key(Some("team-a"), "CronTab")));
+    snapshot(&mut team_a, vec![object(Some("team-a"), "nightly")]);
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let session = h.session.read(cx);
+        assert_eq!(session.namespace(), "default");
+        let watch = session
+            .custom_watch(&custom_key(Some("team-a"), "CronTab"))
+            .unwrap();
+        assert!(watch.get(Some("team-a"), "nightly").is_some());
+    });
+
+    // Not a list visit: a namespace switch starts no watch.
+    h.session.update(cx, |session, cx| {
+        session.set_namespace("team-b".to_string(), cx)
+    });
+    cx.read(|cx| {
+        assert!(
+            h.session
+                .read(cx)
+                .custom_watch(&custom_key(Some("team-b"), "CronTab"))
+                .is_none()
+        )
+    });
+
+    let backup = CustomKindId {
+        group: "stable.example.com".to_string(),
+        kind: "Backup".to_string(),
+    };
+    let key = h.session.update(cx, |session, cx| {
+        session.watch_custom_object(&backup, None, cx)
+    });
+    assert_eq!(key, Some(custom_key(None, "Backup")));
+}
