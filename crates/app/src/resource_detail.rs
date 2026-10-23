@@ -15,10 +15,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::projection::{DetailModel, custom_resource_detail, definition_detail, namespace_detail};
-use crate::session::{CustomKindId, Session, WatchKey};
+use crate::session::{CustomKindId, Session};
 use crate::yaml_editor::YamlEditorView;
 
 /// What a detail tab shows: one object, addressed in its list's store.
+/// Custom resources are version-free (#41): each resolve reads the watch at
+/// the kind's current preferred version, so a version change keeps the tab.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DetailTarget {
     Namespace {
@@ -29,7 +31,7 @@ pub enum DetailTarget {
     },
     Custom {
         id: CustomKindId,
-        watch: WatchKey,
+        /// The object's own namespace; `None` when cluster-scoped.
         namespace: Option<String>,
         name: String,
     },
@@ -58,7 +60,17 @@ struct Resolved {
 
 impl ResourceDetailPanel {
     pub fn new(session: Entity<Session>, target: DetailTarget, cx: &mut Context<Self>) -> Self {
-        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        cx.observe(&session, |panel, session, cx| {
+            // A preferred version change needs the new version's watch, even
+            // with the kind's list closed.
+            if let DetailTarget::Custom { id, namespace, .. } = &panel.target {
+                session.update(cx, |session, cx| {
+                    session.watch_custom_object(id, namespace.clone(), cx)
+                });
+            }
+            cx.notify();
+        })
+        .detach();
         Self {
             session,
             target,
@@ -93,7 +105,6 @@ impl ResourceDetailPanel {
             }
             DetailTarget::Custom {
                 id,
-                watch,
                 namespace,
                 name,
             } => {
@@ -101,8 +112,9 @@ impl ResourceDetailPanel {
                 let KindResource::Served(resource) = &kind.resource else {
                     return None;
                 };
+                let watch = session.custom_object_watch_key(kind, namespace.as_deref());
                 let object = session
-                    .custom_watch(watch)?
+                    .custom_watch(&watch)?
                     .get(namespace.as_deref(), name)?;
                 Some(Resolved {
                     model: custom_resource_detail(kind, object, now),
@@ -122,7 +134,6 @@ impl ResourceDetailPanel {
                 id,
                 namespace,
                 name,
-                ..
             } => match namespace {
                 Some(namespace) => format!("{} {namespace}/{name}", id.kind),
                 None => format!("{} {name}", id.kind),

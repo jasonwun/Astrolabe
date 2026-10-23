@@ -35,11 +35,36 @@ fn crontab_crd(served_flag: bool) -> CustomResourceDefinition {
     .unwrap()
 }
 
-fn crontab_resource() -> ApiResource {
+/// Synthetic CRD serving v1 and v2 (plausible shape, not captured from a
+/// server); `storage` picks the preferred version. The versions read the
+/// detail-only `Owner` printer column from different fields.
+fn crontab_crd_versions(storage: &str) -> CustomResourceDefinition {
+    let version = |name: &str, owner_path: &str| {
+        serde_json::json!({
+            "name": name, "served": true, "storage": name == storage,
+            "additionalPrinterColumns": [
+                {"name": "Owner", "type": "string", "jsonPath": owner_path, "priority": 1}
+            ]
+        })
+    };
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {"name": "crontabs.stable.example.com", "creationTimestamp": "2026-01-01T00:00:00Z"},
+        "spec": {
+            "group": "stable.example.com", "scope": "Namespaced",
+            "names": {"kind": "CronTab", "plural": "crontabs"},
+            "versions": [version("v1", ".spec.owner"), version("v2", ".spec.team")]
+        }
+    }))
+    .unwrap()
+}
+
+fn crontab_resource_at(version: &str) -> ApiResource {
     ApiResource {
         group: "stable.example.com".to_string(),
-        version: "v1".to_string(),
-        api_version: "stable.example.com/v1".to_string(),
+        version: version.to_string(),
+        api_version: format!("stable.example.com/{version}"),
         kind: "CronTab".to_string(),
         plural: "crontabs".to_string(),
     }
@@ -56,15 +81,31 @@ fn crontab(name: &str, schedule: &str) -> DynamicObject {
     .unwrap()
 }
 
+/// Synthetic custom resource at `version` (plausible shape, not captured
+/// from a server).
+fn crontab_at(version: &str, namespace: &str, spec: serde_json::Value) -> DynamicObject {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": format!("stable.example.com/{version}"), "kind": "CronTab",
+        "metadata": {"name": "nightly", "namespace": namespace, "uid": "uid-1",
+                     "creationTimestamp": "2026-01-01T00:00:00Z"},
+        "spec": spec
+    }))
+    .unwrap()
+}
+
 fn default_key() -> WatchKey {
+    key_at("v1", "default")
+}
+
+fn key_at(version: &str, namespace: &str) -> WatchKey {
     WatchKey {
         cluster: "kind-a".to_string(),
         kind: ResourceKind::Custom {
             group: "stable.example.com".to_string(),
-            version: "v1".to_string(),
+            version: version.to_string(),
             kind: "CronTab".to_string(),
         },
-        namespace: Some("default".to_string()),
+        namespace: Some(namespace.to_string()),
     }
 }
 
@@ -96,16 +137,18 @@ fn open(
     let mut cluster = ScriptedCluster::new(namespace_events)
         .crds(crd_events)
         .discover(|| {
-            Ok(ServedResources::new([ServedResource {
-                resource: crontab_resource(),
-                namespaced: true,
-            }]))
+            Ok(ServedResources::new(["v1", "v2"].map(|version| {
+                ServedResource {
+                    resource: crontab_resource_at(version),
+                    namespaced: true,
+                }
+            })))
         })
         .delete({
             let deleted = deleted.clone();
             move |resource, namespace, name| {
                 deleted.borrow_mut().push((
-                    resource.kind.clone(),
+                    format!("{}/{}", resource.api_version, resource.kind),
                     namespace.map(str::to_string),
                     name.to_string(),
                 ));
@@ -131,6 +174,25 @@ impl Ui<'_> {
         self.cx.run_until_parked();
         self.cx.executor().advance_clock(Duration::from_millis(400));
         self.cx.run_until_parked();
+    }
+
+    fn namespaces(&mut self, names: &[&str]) {
+        let namespaces = names
+            .iter()
+            .map(|name| {
+                serde_json::from_value(serde_json::json!({"metadata": {"name": name}})).unwrap()
+            })
+            .collect();
+        snapshot(&mut self.namespaces, namespaces);
+    }
+
+    /// The definition's storage version moves; the CRD update reruns
+    /// discovery after the debounce.
+    fn prefer(&mut self, version: &str) {
+        self.crds
+            .try_send(Ok(Event::Apply(crontab_crd_versions(version))))
+            .unwrap();
+        self.settle();
     }
 
     fn frame<R>(&mut self, f: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> R) -> R {
@@ -236,7 +298,7 @@ fn crd_kinds_navigate_to_live_lists_and_details_with_delete(cx: &mut TestAppCont
     assert_eq!(
         *ui.deleted.borrow(),
         [(
-            "CronTab".to_string(),
+            "stable.example.com/v1/CronTab".to_string(),
             Some("default".to_string()),
             "nightly".to_string()
         )]
@@ -352,6 +414,143 @@ fn namespace_selection_switches_namespaced_lists(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui_kit::test]
+fn detail_tab_follows_a_preferred_version_change(cx: &mut TestAppContext) {
+    let (mut v1, v1_events) = mpsc::channel(32);
+    let (mut v2, v2_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![
+            (key_at("v1", "default"), v1_events),
+            (key_at("v2", "default"), v2_events),
+        ],
+    );
+    ui.namespaces(&["default"]);
+    snapshot(&mut ui.crds, vec![crontab_crd_versions("v1")]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-kind-stable.example.com-CronTab", cx));
+    snapshot(
+        &mut v1,
+        vec![crontab_at(
+            "v1",
+            "default",
+            serde_json::json!({"owner": "alice"}),
+        )],
+    );
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/nightly", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        let status = window.within("detail-status");
+        assert!(status.try_find_by_label("Owner: alice").is_some());
+    });
+    // Leave the CronTab list, then bring the detail tab back in front: only
+    // the tab can start the v2 watch now.
+    ui.frame(|window, cx| window.click("nav-definitions", cx));
+    ui.frame(|window, cx| {
+        window
+            .within("tabs-inner")
+            .click(gpui_kit::ElementId::Integer(1), cx)
+    });
+    ui.frame(|window, _| assert!(window.try_find("detail-status").is_some()));
+
+    ui.prefer("v2");
+    // The v2 store has not listed the object yet: same as a missing object.
+    ui.frame(|window, _| assert!(window.try_find("detail-gone").is_some()));
+    snapshot(
+        &mut v2,
+        vec![crontab_at(
+            "v2",
+            "default",
+            serde_json::json!({"team": "platform"}),
+        )],
+    );
+    ui.settle();
+    ui.frame(|window, cx| {
+        let status = window.within("detail-status");
+        assert!(status.try_find_by_label("Owner: platform").is_some());
+        assert!(
+            !window
+                .find_all_by_label("apiVersion: stable.example.com/v2")
+                .is_empty()
+        );
+        window.click("detail-delete", cx);
+    });
+
+    // Re-activating the row focuses the same tab: its open confirm survives.
+    ui.frame(|window, cx| window.click("nav-kind-stable.example.com-CronTab", cx));
+    ui.frame(|window, cx| window.click("row-default/nightly", cx));
+    ui.settle();
+    ui.frame(|window, cx| {
+        assert!(window.try_find("delete-confirm").is_some());
+        window.click("delete-confirm-yes", cx);
+    });
+    ui.settle();
+    assert_eq!(
+        *ui.deleted.borrow(),
+        [(
+            "stable.example.com/v2/CronTab".to_string(),
+            Some("default".to_string()),
+            "nightly".to_string()
+        )]
+    );
+}
+
+#[gpui_kit::test]
+fn detail_tab_follows_the_version_in_its_object_namespace(cx: &mut TestAppContext) {
+    let (mut v1, v1_events) = mpsc::channel(32);
+    let (mut v2_a, v2_a_events) = mpsc::channel(32);
+    let (mut v2_b, v2_b_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![
+            (key_at("v1", "team-a"), v1_events),
+            (key_at("v2", "team-a"), v2_a_events),
+            (key_at("v2", "team-b"), v2_b_events),
+        ],
+    );
+    ui.namespaces(&["default", "team-a", "team-b"]);
+    snapshot(&mut ui.crds, vec![crontab_crd_versions("v1")]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-kind-stable.example.com-CronTab", cx));
+    ui.frame(|window, cx| window.click("namespace-select", cx));
+    ui.frame(|window, cx| window.click("namespace-option-team-a", cx));
+    snapshot(
+        &mut v1,
+        vec![crontab_at(
+            "v1",
+            "team-a",
+            serde_json::json!({"owner": "alice"}),
+        )],
+    );
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-team-a/nightly", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        let status = window.within("detail-status");
+        assert!(status.try_find_by_label("Owner: alice").is_some());
+    });
+
+    // The detail stays in front; the list behind it follows team-b.
+    ui.frame(|window, cx| window.click("namespace-select", cx));
+    ui.frame(|window, cx| window.click("namespace-option-team-b", cx));
+    ui.prefer("v2");
+    snapshot(&mut v2_b, Vec::new());
+    snapshot(
+        &mut v2_a,
+        vec![crontab_at(
+            "v2",
+            "team-a",
+            serde_json::json!({"team": "platform"}),
+        )],
+    );
+    ui.settle();
+    ui.frame(|window, _| {
+        let status = window.within("detail-status");
+        assert!(status.try_find_by_label("Owner: platform").is_some());
+    });
+}
+
 /// Synthetic Namespace (plausible shape, not captured from a server).
 fn namespace_in_phase(
     name: &str,
@@ -424,7 +623,7 @@ fn namespace_rows_open_a_live_detail_tab_with_delete(cx: &mut TestAppContext) {
     ui.settle();
     assert_eq!(
         *ui.deleted.borrow(),
-        [("Namespace".to_string(), None, "old".to_string())]
+        [("v1/Namespace".to_string(), None, "old".to_string())]
     );
 
     ui.namespaces

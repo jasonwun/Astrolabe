@@ -112,18 +112,11 @@ impl ResourceListPanel {
         let target = match &self.view {
             ListView::Namespaces => DetailTarget::Namespace { name },
             ListView::Definitions => DetailTarget::Definition { name },
-            ListView::Custom(id) => {
-                let session = self.session.read(cx);
-                let Some(kind) = session.custom_kind(id) else {
-                    return;
-                };
-                DetailTarget::Custom {
-                    id: id.clone(),
-                    watch: session.custom_watch_key(kind),
-                    namespace,
-                    name,
-                }
-            }
+            ListView::Custom(id) => DetailTarget::Custom {
+                id: id.clone(),
+                namespace,
+                name,
+            },
         };
         cx.emit(OpenDetail(target));
     }
