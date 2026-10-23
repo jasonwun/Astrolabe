@@ -356,6 +356,19 @@ fn int_or_string(value: &IntOrString) -> String {
     }
 }
 
+/// Every container a Pod runs, init containers first, in spec order.
+pub fn pod_containers(pod: &Pod) -> Vec<String> {
+    let Some(spec) = &pod.spec else {
+        return Vec::new();
+    };
+    spec.init_containers
+        .iter()
+        .flatten()
+        .chain(&spec.containers)
+        .map(|container| container.name.clone())
+        .collect()
+}
+
 /// Whether `labels` satisfy `selector`, with `LabelSelectorAsSelector`'s
 /// semantics: every term must hold, an empty selector matches everything,
 /// and an unknown operator matches nothing.

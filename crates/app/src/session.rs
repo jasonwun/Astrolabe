@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 
 use crate::builtin::BuiltinKind;
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{ScriptedCluster, SharedClient};
+pub use crate::cluster_io::{LogChunk, LogStream, ScriptedCluster, SharedClient};
 use crate::store::{ObjectKey, Store};
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
@@ -249,6 +249,13 @@ pub struct ObjectRef {
 pub enum Operation {
     Scale { key: ObjectKey, replicas: i32 },
     RolloutRestart { key: ObjectKey },
+}
+
+/// Follow `container`'s log in Pod `pod` (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogRequest {
+    pub pod: ObjectKey,
+    pub container: String,
 }
 
 pub struct Session {
@@ -570,6 +577,11 @@ impl Session {
     }
 
     /// Run one operation; resolves with the server's answer.
+    /// Follow one container's log, from a bounded tail.
+    pub fn logs(&mut self, request: LogRequest) -> LogStream {
+        self.io.logs(request)
+    }
+
     pub fn operate(&mut self, operation: Operation) -> oneshot::Receiver<Result<(), String>> {
         self.io.operate(operation)
     }

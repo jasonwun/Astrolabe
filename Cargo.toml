@@ -36,3 +36,6 @@ tower = { version = "0.5", features = ["util"] }
 
 [workspace.dependencies.astrolabe-kube]
 path = "crates/kube"
+
+[workspace.dependencies.astrolabe-terminal]
+path = "crates/terminal"

@@ -5,10 +5,11 @@
 //! through their registration (#17).
 
 use astrolabe_kube::crd::KindResource;
-use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
+use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::discovery::ApiResource;
+use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -18,12 +19,13 @@ use gpui_kit::*;
 use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use crate::projection::workloads::pod_containers;
 use crate::projection::{
     DetailModel, ReplicaCounts, ResourceTable, SummaryTable, custom_resource_detail,
     definition_detail, namespace_detail,
 };
 use crate::resource_list::OpenDetail;
-use crate::session::{CustomKindId, ObjectRef, Operation, Session};
+use crate::session::{CustomKindId, LogRequest, ObjectRef, Operation, Session};
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
 
@@ -38,6 +40,12 @@ pub enum DetailTarget {
     Custom { id: CustomKindId, key: ObjectKey },
 }
 
+/// Logs was pressed: open a Logs tab following this container.
+pub struct OpenLogs {
+    pub title: String,
+    pub request: LogRequest,
+}
+
 /// Edit YAML was pressed: open an editor tab on this text.
 pub struct OpenEditor {
     pub title: String,
@@ -50,8 +58,16 @@ pub struct ResourceDetailPanel {
     confirm_delete: bool,
     /// The Scale field, while open.
     scale: Option<Entity<InputState>>,
+    /// The container picker, while a Pod action waits for a container.
+    picking: Option<PodAction>,
     notice: Option<String>,
     focus_handle: FocusHandle,
+}
+
+/// A Pod action that runs in one container.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PodAction {
+    Logs,
 }
 
 /// The object as of this render, with what its actions need.
@@ -99,6 +115,7 @@ impl ResourceDetailPanel {
             target,
             confirm_delete: false,
             scale: None,
+            picking: None,
             notice: None,
             focus_handle: cx.focus_handle(),
         }
@@ -283,6 +300,91 @@ impl ResourceDetailPanel {
         );
     }
 
+    /// The shown Pod's containers, init containers first.
+    fn containers(&self, cx: &App) -> Vec<String> {
+        let DetailTarget::Builtin { kind, key } = &self.target else {
+            return Vec::new();
+        };
+        let Some(namespace) = key.namespace.as_deref() else {
+            return Vec::new();
+        };
+        let session = self.session.read(cx);
+        session
+            .object_watch(&session.builtin_watch_key(*kind, namespace))
+            .and_then(|watch| watch.get(Some(namespace), &key.name))
+            .and_then(|object| object.clone().try_parse::<Pod>().ok())
+            .map(|pod| pod_containers(&pod))
+            .unwrap_or_default()
+    }
+
+    /// Run `action` in the only container, or ask which one.
+    fn pick_container(&mut self, action: PodAction, cx: &mut Context<Self>) {
+        match self.containers(cx).as_slice() {
+            [only] => self.run_in(action, only.clone(), cx),
+            _ => {
+                self.picking = Some(action);
+                cx.notify();
+            }
+        }
+    }
+
+    fn run_in(&mut self, action: PodAction, container: String, cx: &mut Context<Self>) {
+        self.picking = None;
+        cx.notify();
+        let DetailTarget::Builtin { key, .. } = &self.target else {
+            return;
+        };
+        match action {
+            PodAction::Logs => cx.emit(OpenLogs {
+                title: format!("Logs {key} ({container})"),
+                request: LogRequest {
+                    pod: key.clone(),
+                    container,
+                },
+            }),
+        }
+    }
+
+    fn render_picker(&self, action: PodAction, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let prompt = match action {
+            PodAction::Logs => "Logs: choose a container",
+        };
+        h_flex()
+            .id("container-picker")
+            .test_support()
+            .gap_2()
+            .p_2()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id("picker-prompt")
+                    .aria_label(prompt)
+                    .test_support()
+                    .text_sm()
+                    .child(prompt),
+            )
+            .children(self.containers(cx).into_iter().map(|container| {
+                button(
+                    SharedString::from(format!("pick-container-{container}")),
+                    container.clone(),
+                    theme.border,
+                )
+                .on_click(
+                    cx.listener(move |panel, _, _, cx| panel.run_in(action, container.clone(), cx)),
+                )
+            }))
+            .child(
+                button("picker-cancel", "Cancel", theme.border).on_click(cx.listener(
+                    |panel, _, _, cx| {
+                        panel.picking = None;
+                        cx.notify();
+                    },
+                )),
+            )
+    }
+
     fn show_notice(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
         self.notice = Some(notice.into());
         cx.notify();
@@ -320,20 +422,8 @@ impl ResourceDetailPanel {
 
     fn render_toolbar(&self, actions: &[Action], cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .aria_label(label)
-                .test_support()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .cursor_pointer()
-                .text_sm()
-                .child(label)
-        };
+        let border = theme.border;
+        let button = |id: &'static str, label: &'static str| button(id, label, border);
         h_flex()
             .gap_2()
             .p_2()
@@ -341,6 +431,9 @@ impl ResourceDetailPanel {
             .border_color(theme.border)
             .children(actions.iter().map(|action| {
                 match action {
+                    Action::Logs => button("detail-logs", "Logs").on_click(
+                        cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Logs, cx)),
+                    ),
                     Action::Scale => button("detail-scale", "Scale")
                         .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
                     Action::RolloutRestart => button("detail-restart", "Rollout Restart")
@@ -379,20 +472,8 @@ impl ResourceDetailPanel {
             Some(counts) => format!("Replicas (now {})", counts.desired),
             None => "Replicas".to_string(),
         };
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .aria_label(label)
-                .test_support()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .cursor_pointer()
-                .text_sm()
-                .child(label)
-        };
+        let border = theme.border;
+        let button = |id: &'static str, label: &'static str| button(id, label, border);
         h_flex()
             .id("scale-form")
             .gap_2()
@@ -582,6 +663,26 @@ impl ResourceDetailPanel {
     }
 }
 
+fn button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    border: Hsla,
+) -> Observed<Stateful<Div>> {
+    let label = label.into();
+    div()
+        .id(id)
+        .aria_label(label.clone())
+        .test_support()
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(border)
+        .cursor_pointer()
+        .text_sm()
+        .child(label)
+}
+
 fn section(
     id: &'static str,
     title: &'static str,
@@ -706,6 +807,7 @@ fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
 
 impl EventEmitter<OpenEditor> for ResourceDetailPanel {}
 impl EventEmitter<OpenDetail> for ResourceDetailPanel {}
+impl EventEmitter<OpenLogs> for ResourceDetailPanel {}
 impl EventEmitter<PanelEvent> for ResourceDetailPanel {}
 
 impl Focusable for ResourceDetailPanel {
@@ -811,6 +913,9 @@ impl Render for ResourceDetailPanel {
             .test_support()
             .size_full()
             .child(self.render_toolbar(resolved.actions, cx))
+            .when_some(self.picking, |this, action| {
+                this.child(self.render_picker(action, cx))
+            })
             .when_some(self.scale.clone(), |this, input| {
                 this.child(self.render_scale(&input, replicas, cx))
             })

@@ -12,6 +12,7 @@ pub mod apply;
 mod client;
 pub mod crd;
 pub mod discovery;
+pub mod pod;
 pub mod resource;
 pub mod watch;
 

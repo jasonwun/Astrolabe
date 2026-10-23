@@ -16,8 +16,8 @@ use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
-    CrdWatchMessage, NamespaceWatchMessage, ObjectRef, ObjectWatchMessage, Operation, WatchError,
-    WatchKey, WatchMessage,
+    CrdWatchMessage, LogRequest, NamespaceWatchMessage, ObjectRef, ObjectWatchMessage, Operation,
+    WatchError, WatchKey, WatchMessage,
 };
 
 /// Retry interval for a watch the apiserver refused with 403.
@@ -26,9 +26,34 @@ const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, String>>;
 type DeleteFn = Box<dyn FnMut(&ObjectRef) -> Result<(), String>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
+type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
+
+/// A piece of a log stream, or why the stream stopped.
+pub type LogChunk = Result<Vec<u8>, String>;
+
+/// A followed container log; dropping it stops the stream.
+pub struct LogStream {
+    chunks: mpsc::UnboundedReceiver<LogChunk>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl LogStream {
+    /// The next chunk; `None` once the server closed the stream.
+    pub async fn next(&mut self) -> Option<LogChunk> {
+        self.chunks.next().await
+    }
+}
+
+impl Drop for LogStream {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
 
 /// Hand-fed cluster I/O for tests and demos: watch events come from
-/// channels, discovery, delete and operations from closures.
+/// channels, discovery, delete, operations and log chunks from closures.
 pub struct ScriptedCluster {
     pub(crate) namespaces: Option<mpsc::Receiver<NamespaceWatchMessage>>,
     pub(crate) crds: Option<mpsc::Receiver<CrdWatchMessage>>,
@@ -36,6 +61,7 @@ pub struct ScriptedCluster {
     discover: DiscoverFn,
     delete: DeleteFn,
     operate: OperateFn,
+    logs: LogsFn,
 }
 
 impl ScriptedCluster {
@@ -47,6 +73,7 @@ impl ScriptedCluster {
             discover: Box::new(|| Ok(ServedResources::default())),
             delete: Box::new(|_| Ok(())),
             operate: Box::new(|_| Ok(())),
+            logs: Box::new(|_| Vec::new()),
         }
     }
 
@@ -83,6 +110,12 @@ impl ScriptedCluster {
         operate: impl FnMut(&Operation) -> Result<(), String> + 'static,
     ) -> Self {
         self.operate = Box::new(operate);
+        self
+    }
+
+    /// The chunks a log request streams before the stream closes.
+    pub fn logs(mut self, logs: impl FnMut(&LogRequest) -> Vec<LogChunk> + 'static) -> Self {
+        self.logs = Box::new(logs);
         self
     }
 }
@@ -222,6 +255,55 @@ impl ClusterIo {
                     };
                     result.map_err(|error| error.to_string())
                 })
+            }
+        }
+    }
+
+    /// Follow one container's log.
+    pub(crate) fn logs(&mut self, request: LogRequest) -> LogStream {
+        let (sender, chunks) = mpsc::unbounded();
+        match self {
+            Self::Scripted(cluster) => {
+                for chunk in (cluster.logs)(&request) {
+                    let _ = sender.unbounded_send(chunk);
+                }
+                LogStream { chunks, task: None }
+            }
+            Self::Live { client, .. } => {
+                let client = client.clone();
+                let task = spawn_cluster_task(async move {
+                    let failed = |error: String| {
+                        let _ = sender.unbounded_send(Err(error));
+                    };
+                    let client = match client.await {
+                        Ok(client) => client,
+                        Err(error) => return failed(error),
+                    };
+                    let pod = &request.pod;
+                    let stream = astrolabe_kube::pod::logs(
+                        &client,
+                        pod.namespace.as_deref().unwrap_or_default(),
+                        &pod.name,
+                        &request.container,
+                    )
+                    .await;
+                    let stream = match stream {
+                        Ok(stream) => stream,
+                        Err(error) => return failed(error.to_string()),
+                    };
+                    futures::pin_mut!(stream);
+                    while let Some(chunk) = stream.next().await {
+                        let chunk = chunk.map_err(|error| error.to_string());
+                        let stop = chunk.is_err();
+                        if sender.unbounded_send(chunk).is_err() || stop {
+                            return;
+                        }
+                    }
+                });
+                LogStream {
+                    chunks,
+                    task: Some(task),
+                }
             }
         }
     }

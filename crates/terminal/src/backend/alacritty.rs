@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::task::{Poll, Waker};
 use std::thread::JoinHandle;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -36,6 +37,8 @@ type ClipboardFormatter = Arc<dyn Fn(&str) -> String + Sync + Send + 'static>;
 /// Shared state between the engine's event listener(s) and the backend.
 struct Shared {
     tx: Sender<TerminalEvent>,
+    /// The task waiting in [`EventStream::next`], if any.
+    waker: Arc<Mutex<Option<Waker>>>,
     pending_clipboard: Mutex<Option<(ClipboardKind, ClipboardFormatter)>>,
     wakeups: AtomicU64,
     damage_full: AtomicU64,
@@ -44,9 +47,10 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(tx: Sender<TerminalEvent>) -> Self {
+    fn new(tx: Sender<TerminalEvent>, waker: Arc<Mutex<Option<Waker>>>) -> Self {
         Self {
             tx,
+            waker,
             pending_clipboard: Mutex::new(None),
             wakeups: AtomicU64::new(0),
             damage_full: AtomicU64::new(0),
@@ -61,6 +65,9 @@ impl Shared {
         }
         // A dead UI must never wedge the PTY reader thread.
         let _ = self.tx.send(event);
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
     }
 }
 
@@ -133,13 +140,36 @@ fn convert_exit_status(status: std::process::ExitStatus) -> ExitStatus {
 
 /// Receiving end of the session's event stream (own event type only).
 ///
-/// `recv` blocks and must be called from a background thread; `try_recv`
-/// is for the coalescing drain on the UI side.
+/// `recv` blocks and must be called from a background thread; `next`
+/// waits without blocking a thread; `try_recv` is for the coalescing drain
+/// on the UI side.
 pub struct EventStream {
     rx: Mutex<Receiver<TerminalEvent>>,
+    waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl EventStream {
+    /// Wait for the next event without blocking a thread; `None` when the
+    /// session is gone.
+    pub async fn next(&self) -> Option<TerminalEvent> {
+        std::future::poll_fn(|cx| {
+            match self.rx.lock().unwrap().try_recv() {
+                Ok(event) => return Poll::Ready(Some(event)),
+                Err(mpsc::TryRecvError::Disconnected) => return Poll::Ready(None),
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            *self.waker.lock().unwrap() = Some(cx.waker().clone());
+            // An event sent between the check and the registration found
+            // no waker to wake: look again.
+            match self.rx.lock().unwrap().try_recv() {
+                Ok(event) => Poll::Ready(Some(event)),
+                Err(mpsc::TryRecvError::Disconnected) => Poll::Ready(None),
+                Err(mpsc::TryRecvError::Empty) => Poll::Pending,
+            }
+        })
+        .await
+    }
+
     /// Block until the next event; `None` when the session is gone.
     pub fn recv(&self) -> Option<TerminalEvent> {
         self.rx.lock().unwrap().recv().ok()
@@ -194,7 +224,8 @@ fn make_term(
     EventStream,
 ) {
     let (tx, rx) = mpsc::channel();
-    let shared = Arc::new(Shared::new(tx));
+    let waker = Arc::new(Mutex::new(None));
+    let shared = Arc::new(Shared::new(tx, waker.clone()));
     let listener = SharedListener {
         shared: shared.clone(),
     };
@@ -206,7 +237,10 @@ fn make_term(
     (
         Arc::new(FairMutex::new(term)),
         shared,
-        EventStream { rx: Mutex::new(rx) },
+        EventStream {
+            rx: Mutex::new(rx),
+            waker,
+        },
     )
 }
 

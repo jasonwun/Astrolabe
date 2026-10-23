@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{
-    ObjectRef, ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    LogRequest, ObjectRef, ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster,
+    WatchError, WatchKey,
 };
 use astrolabe::store::ObjectKey;
 use astrolabe::workspace::WorkspaceView;
@@ -73,12 +74,14 @@ fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
 
 type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
 type Operated = Rc<RefCell<Vec<Operation>>>;
+type Logged = Rc<RefCell<Vec<LogRequest>>>;
 
 struct Ui<'a> {
     cx: &'a mut VisualTestContext,
     namespaces: Sender<Namespace>,
     deleted: Deleted,
     operated: Operated,
+    logged: Logged,
 }
 
 fn open(
@@ -89,6 +92,7 @@ fn open(
     let (namespaces, namespace_events) = mpsc::channel(32);
     let deleted: Deleted = Rc::default();
     let operated: Operated = Rc::default();
+    let logged: Logged = Rc::default();
     let mut cluster = ScriptedCluster::new(namespace_events)
         .delete({
             let deleted = deleted.clone();
@@ -111,6 +115,13 @@ fn open(
                     _ => Ok(()),
                 }
             }
+        })
+        .logs({
+            let logged = logged.clone();
+            move |request: &LogRequest| {
+                logged.borrow_mut().push(request.clone());
+                vec![Ok(b"starting\n".to_vec()), Err("stream reset".to_string())]
+            }
         });
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
@@ -123,6 +134,7 @@ fn open(
         namespaces,
         deleted,
         operated,
+        logged,
     }
 }
 
@@ -506,4 +518,89 @@ fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
     });
     ui.settle();
     ui.frame(|window, _| assert!(window.try_find_by_label("Pod default/web-1").is_some()));
+}
+
+/// Synthetic Pod (plausible shape, not captured from a server).
+fn sidecar_pod() -> DynamicObject {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {
+            "initContainers": [{"name": "migrate", "image": "busybox"}],
+            "containers": [{"name": "app", "image": "nginx"}, {"name": "sidecar", "image": "envoy"}]
+        },
+        "status": {"phase": "Running"}
+    }))
+    .unwrap()
+}
+
+fn open_pod_detail(ui: &mut Ui<'_>, pods: &mut Sender<DynamicObject>, pod: DynamicObject) {
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-pods", cx));
+    snapshot(pods, vec![pod]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    ui.settle();
+}
+
+#[gpui_kit::test]
+fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_pod_detail(&mut ui, &mut pods, sidecar_pod());
+
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.frame(|window, cx| {
+        let picker = window.within("container-picker");
+        assert!(
+            picker
+                .try_find_by_label("Logs: choose a container")
+                .is_some()
+        );
+        assert!(picker.try_find("pick-container-migrate").is_some());
+        assert!(picker.try_find("pick-container-sidecar").is_some());
+        window.click("pick-container-app", cx);
+    });
+    ui.settle();
+
+    ui.frame(|window, _| {
+        assert!(window.try_find("container-picker").is_none());
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (app)")
+                .is_some()
+        );
+        assert!(
+            window
+                .try_find_by_label("Stream failed: stream reset")
+                .is_some()
+        );
+    });
+    assert_eq!(
+        *ui.logged.borrow(),
+        [LogRequest {
+            pod: ObjectKey::new(Some("default".into()), "web-1"),
+            container: "app".to_string(),
+        }]
+    );
+}
+
+#[gpui_kit::test]
+fn a_single_container_pod_opens_its_logs_directly(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_pod_detail(&mut ui, &mut pods, crashing_pod("default"));
+
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(window.try_find("container-picker").is_none());
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (app)")
+                .is_some()
+        );
+    });
+    assert_eq!(ui.logged.borrow().len(), 1);
 }

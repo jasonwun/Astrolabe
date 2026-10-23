@@ -30,6 +30,8 @@ pub enum BuiltinKind {
 /// A detail-tab toolbar action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    /// Follow a container's log (container picked when several).
+    Logs,
     /// Set a Deployment's desired replicas.
     Scale,
     RolloutRestart,
@@ -84,7 +86,7 @@ static PODS: Registration = Registration {
     resource: || ApiResource::erase::<Pod>(&()),
     list: |objects, now| typed_list(objects, now, project_pods),
     detail: |object, now| Some(pod_detail(&parse::<Pod>(object)?, now)),
-    actions: DEFAULT_ACTIONS,
+    actions: &[Action::Logs, Action::Edit, Action::Delete],
     cascade: "A controller that owns this Pod will create a replacement.",
     related: Some(Related {
         title: "Events",
