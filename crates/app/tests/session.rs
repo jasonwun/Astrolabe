@@ -9,7 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use astrolabe::session::{ConnectionHealth, ResourceKind, Session};
+use astrolabe::session::{ConnectionHealth, ResourceKind, Session, WatchError};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -61,7 +61,9 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
         assert!(!session.show_stale_warning());
     });
 
-    sender.try_send(Err("connection lost".to_string())).unwrap();
+    sender
+        .try_send(Err(WatchError::new("connection lost")))
+        .unwrap();
     cx.run_until_parked();
     cx.read(|cx| {
         let session = session.read(cx);
@@ -207,6 +209,34 @@ fn handle_connection(stream: TcpStream, state: Arc<ServerState>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = stream;
     while let Some(target) = read_request(&mut reader) {
+        if !target.starts_with("/api/v1/namespaces") {
+            // Session also discovers APIs and watches CRDs on connect:
+            // answer those with an empty cluster, holding CRD watches open.
+            if target.contains("watch=true") {
+                write!(
+                    writer,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\n\r\n"
+                )
+                .ok();
+                writer.flush().ok();
+                let mut discarded = [0; 1024];
+                while reader.read(&mut discarded).unwrap_or(0) > 0 {}
+                return;
+            }
+            let body = other_response(&target);
+            if write!(
+                writer,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .is_err()
+            {
+                return;
+            }
+            writer.flush().ok();
+            continue;
+        }
         if target.contains("watch=true") {
             let watch = {
                 let mut queries = state.watch_queries.lock().unwrap();
@@ -264,6 +294,22 @@ fn handle_connection(stream: TcpStream, state: Arc<ServerState>) {
             return;
         }
         writer.flush().ok();
+    }
+}
+
+/// Discovery and CRD list answers for a cluster with no CRDs. A plain
+/// `APIGroupList` sends discovery down the per-group fallback path.
+fn other_response(target: &str) -> &'static str {
+    let path = target.split('?').next().unwrap_or(target);
+    match path {
+        "/api" => r#"{"kind":"APIVersions","versions":["v1"],"serverAddressByClientCIDRs":[]}"#,
+        "/api/v1" => {
+            r#"{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"v1","resources":[{"name":"namespaces","singularName":"namespace","namespaced":false,"kind":"Namespace","verbs":["list","watch"]}]}"#
+        }
+        "/apis" => r#"{"kind":"APIGroupList","apiVersion":"v1","groups":[]}"#,
+        _ => {
+            r#"{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinitionList","metadata":{"resourceVersion":"1"},"items":[]}"#
+        }
     }
 }
 

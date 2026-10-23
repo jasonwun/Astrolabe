@@ -5,7 +5,7 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::kube_bridge::spawn_cluster;
-use crate::session::{ConnectionHealth, NamespaceWatchMessage};
+use crate::session::{ConnectionHealth, NamespaceWatchMessage, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
 
@@ -13,7 +13,7 @@ pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
 
 pub struct WorkspaceView {
     clusters: Vec<String>,
-    sources: BTreeMap<String, Option<mpsc::Receiver<NamespaceWatchMessage>>>,
+    sources: BTreeMap<String, Option<ScriptedCluster>>,
     sessions: BTreeMap<String, Entity<SessionView>>,
     selected_cluster: Option<String>,
     yaml: Entity<YamlEditorView>,
@@ -42,10 +42,25 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let clusters: Vec<String> = events.iter().map(|(cluster, _)| cluster.clone()).collect();
-        let sources = events
+        let clusters = events
             .into_iter()
-            .map(|(cluster, receiver)| (cluster, Some(receiver)))
+            .map(|(cluster, receiver)| (cluster, ScriptedCluster::new(receiver)))
+            .collect();
+        Self::from_clusters(clusters, window, cx)
+    }
+
+    pub fn from_clusters(
+        scripted: Vec<(String, ScriptedCluster)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let clusters: Vec<String> = scripted
+            .iter()
+            .map(|(cluster, _)| cluster.clone())
+            .collect();
+        let sources = scripted
+            .into_iter()
+            .map(|(cluster, scripted)| (cluster, Some(scripted)))
             .collect();
         let yaml = cx.new(|cx| YamlEditorView::without_cluster(window, cx, String::new()));
         let mut workspace = Self {
@@ -101,8 +116,8 @@ impl WorkspaceView {
                 .get_mut(&cluster)
                 .and_then(|source| source.take())
             {
-                Some(receiver) => {
-                    cx.new(|cx| SessionView::from_events(cluster.clone(), receiver, window, cx))
+                Some(scripted) => {
+                    cx.new(|cx| SessionView::scripted(cluster.clone(), scripted, window, cx))
                 }
                 None => cx.new(|cx| SessionView::new(cluster.clone(), window, cx)),
             };

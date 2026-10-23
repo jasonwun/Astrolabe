@@ -388,3 +388,136 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
 
     delete_ns(&client, &ns).await;
 }
+
+/// The #16 CRD pipeline end to end: a fresh CRD shows up in the CRD watch,
+/// discovery serves its preferred version once established, the catalog
+/// resolves it, a per-namespace instance watch streams it, and delete
+/// removes it.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn crd_kind_is_discovered_watched_and_deleted() {
+    use astrolabe_kube::crd::{KindResource, catalog};
+    use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+
+    let client = default_client().await.unwrap();
+    let ns = unique_ns();
+    let group = format!("{ns}.astrolabe.dev");
+    let crd_name = format!("widgets.{group}");
+    let crd_doc = format!(
+        r#"apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: {crd_name}
+spec:
+  group: {group}
+  scope: Namespaced
+  names: {{kind: Widget, plural: widgets, singular: widget}}
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        x-kubernetes-preserve-unknown-fields: true
+    additionalPrinterColumns:
+    - {{name: Size, type: string, jsonPath: .spec.size}}
+"#
+    );
+    let report = apply_documents(&client, &join_docs(&[ns_doc(&ns), crd_doc]), false)
+        .await
+        .unwrap();
+    assert!(report.ok, "{:?}", report.outcomes);
+
+    let crds: Api<CustomResourceDefinition> = Api::all(client.clone());
+    let crd = crds.get(&crd_name).await.unwrap();
+
+    // Discovery serves the kind only once the CRD is established.
+    let served = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let served = astrolabe_kube::discovery::discover(&client).await.unwrap();
+            if served.resolve(&group, "v1", "Widget").is_some() {
+                break served;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .expect("CRD never became discoverable");
+    assert!(served.resolve("", "v1", "Namespace").is_some());
+
+    let groups = catalog(&[&crd], Some(&served));
+    let kind = &groups[0].kinds[0];
+    assert!(kind.namespaced);
+    assert_eq!(kind.columns[0].name, "Size");
+    let KindResource::Served(resource) = &kind.resource else {
+        panic!("Widget not served: {:?}", kind.resource);
+    };
+    assert_eq!(resource.plural, "widgets");
+
+    let events = astrolabe_kube::watch::custom_resources(&client, resource, Some(&ns));
+    futures::pin_mut!(events);
+    let widget = format!(
+        "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"
+    );
+    assert!(apply_documents(&client, &widget, false).await.unwrap().ok);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match events.next().await.expect("watch ended").unwrap() {
+                watcher::Event::Apply(object) | watcher::Event::InitApply(object)
+                    if object.metadata.name.as_deref() == Some("w1") =>
+                {
+                    assert_eq!(object.data["spec"]["size"], "large");
+                    break;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for the Widget");
+
+    astrolabe_kube::resource::delete(&client, resource, Some(&ns), "w1")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let watcher::Event::Delete(object) =
+                events.next().await.expect("watch ended").unwrap()
+                && object.metadata.name.as_deref() == Some("w1")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for the Widget delete");
+
+    let _ = crds.delete(&crd_name, &DeleteParams::default()).await;
+    delete_ns(&client, &ns).await;
+}
+
+/// RBAC denial is told apart from other watch failures (#16 empty state):
+/// impersonating a user with no permissions, the CRD list fails with 403.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn crd_watch_without_rbac_reports_forbidden() {
+    let mut config = kube::Config::infer().await.unwrap();
+    config.auth_info.impersonate = Some("astrolabe-e2e-nobody".to_string());
+    let client = kube::Client::try_from(config).unwrap();
+    let events = astrolabe_kube::watch::custom_resource_definitions(&client);
+    futures::pin_mut!(events);
+    // The watcher announces `Init` before its LIST; the LIST then fails.
+    let error = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match events.next().await.expect("watch ended") {
+                Ok(watcher::Event::Init) => {}
+                Ok(event) => panic!("an unprivileged user must not list CRDs: {event:?}"),
+                Err(error) => break error,
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for the CRD list");
+    assert!(astrolabe_kube::watch::is_forbidden(&error), "{error}");
+}

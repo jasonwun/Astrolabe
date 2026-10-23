@@ -23,6 +23,7 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
 use crate::kube_bridge::spawn_cluster;
+use crate::session::SharedClient;
 
 gpui_kit::actions!(
     astrolabe,
@@ -144,9 +145,36 @@ pub struct YamlEditorView {
 
 impl YamlEditorView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
+        let rx = spawn_cluster(async move {
+            astrolabe_kube::default_client()
+                .await
+                .map_err(|e| e.to_string())
+        });
+        Self::connecting(window, cx, initial, async move {
+            rx.await.unwrap_or(Err("cluster task dropped".to_string()))
+        })
+    }
+
+    /// Editor on a session's shared client (#16 Edit YAML tabs), so it
+    /// applies to that session's cluster rather than the ambient default.
+    pub fn with_client(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        initial: String,
+        client: SharedClient,
+    ) -> Self {
+        Self::connecting(window, cx, initial, client)
+    }
+
+    fn connecting(
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        initial: String,
+        client: impl std::future::Future<Output = Result<kube::Client, String>> + 'static,
+    ) -> Self {
         let mut view = Self::without_cluster(window, cx, initial);
         view.status_line = "connecting to cluster…".to_string();
-        view.connect(cx);
+        view.connect(client, cx);
         view
     }
 
@@ -201,14 +229,13 @@ impl YamlEditorView {
 
     // ------------------------------------------------------------ cluster I/O
 
-    fn connect(&mut self, cx: &mut Context<Self>) {
-        let rx = spawn_cluster(async move {
-            astrolabe_kube::default_client()
-                .await
-                .map_err(|e| e.to_string())
-        });
+    fn connect(
+        &mut self,
+        client: impl std::future::Future<Output = Result<kube::Client, String>> + 'static,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn(async move |view, cx| {
-            let result = rx.await.unwrap_or(Err("cluster task dropped".to_string()));
+            let result = client.await;
             view.update(cx, |this, cx| {
                 this.status_line = match &result {
                     Ok(_) => "connected".to_string(),

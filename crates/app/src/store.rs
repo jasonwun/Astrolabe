@@ -34,6 +34,11 @@ impl<K: ResourceExt> Store<K> {
     pub fn snapshot(&self) -> Vec<&K> {
         self.committed.values().collect()
     }
+
+    pub fn get(&self, namespace: Option<&str>, name: &str) -> Option<&K> {
+        self.committed
+            .get(&(namespace.map(str::to_string), name.to_string()))
+    }
 }
 
 impl<K: ResourceExt> Default for Store<K> {

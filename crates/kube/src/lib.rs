@@ -10,6 +10,9 @@ pub use kube;
 
 pub mod apply;
 mod client;
+pub mod crd;
+pub mod discovery;
+pub mod resource;
 pub mod watch;
 
 pub use client::{client_for_context, context_names, default_client};

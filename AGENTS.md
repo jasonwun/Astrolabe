@@ -6,7 +6,7 @@ Reply to the user in Chinese. Everything else — code, comments, commits, issue
 
 ## Commits
 
-Commits created by the agent must end with the trailer `Co-Authored-By: Kimi Code <noreply@moonshot.ai>`.
+Commits created by an agent must end with a `Co-Authored-By:` trailer naming the agent that actually did the work (e.g. `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, `Co-Authored-By: Kimi Code <noreply@moonshot.ai>`). Never copy another agent's trailer.
 
 ## Agent skills
 
