@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use astrolabe::session::{CustomWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey};
+use astrolabe::session::{
+    CustomWatchMessage, ObjectRef, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+};
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
@@ -146,11 +148,12 @@ fn open(
         })
         .delete({
             let deleted = deleted.clone();
-            move |resource, namespace, name| {
+            move |object: &ObjectRef| {
+                let resource = &object.resource;
                 deleted.borrow_mut().push((
                     format!("{}/{}", resource.api_version, resource.kind),
-                    namespace.map(str::to_string),
-                    name.to_string(),
+                    object.key.namespace.clone(),
+                    object.key.name.clone(),
                 ));
                 Ok(())
             }

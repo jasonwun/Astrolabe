@@ -1,4 +1,4 @@
-use astrolabe::store::Store;
+use astrolabe::store::{ObjectKey, Store};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -36,4 +36,13 @@ fn relist_keeps_the_old_snapshot_until_the_complete_replacement() {
 
     store.apply(Event::InitDone);
     assert_eq!(names(&store), ["default"]);
+}
+
+#[test]
+fn object_keys_render_as_namespace_slash_name() {
+    assert_eq!(
+        ObjectKey::new(Some("team-a".to_string()), "nightly").to_string(),
+        "team-a/nightly"
+    );
+    assert_eq!(ObjectKey::cluster_scoped("default").to_string(), "default");
 }

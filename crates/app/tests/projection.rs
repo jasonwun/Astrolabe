@@ -1,4 +1,5 @@
 use astrolabe::projection::{ResourceRow, project_namespaces};
+use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
@@ -27,11 +28,11 @@ fn namespaces_project_to_handwritten_columns() {
         rows,
         vec![
             ResourceRow {
-                key: "default".to_string(),
+                key: ObjectKey::cluster_scoped("default"),
                 cells: vec!["default".to_string(), "Active".to_string()],
             },
             ResourceRow {
-                key: "old".to_string(),
+                key: ObjectKey::cluster_scoped("old"),
                 cells: vec!["old".to_string(), "Terminating".to_string()],
             },
         ]
@@ -124,6 +125,7 @@ mod custom {
         ResourceRow, custom_resource_detail, definition_detail, format_age,
         project_custom_resources, project_definitions,
     };
+    use astrolabe::store::ObjectKey;
     use astrolabe_kube::crd::{CustomKind, catalog};
     use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
     use astrolabe_kube::k8s_openapi::jiff::{SignedDuration, Timestamp};
@@ -210,7 +212,7 @@ mod custom {
         assert_eq!(
             table.rows,
             [ResourceRow {
-                key: "team-a/nightly".to_string(),
+                key: ObjectKey::new(Some("team-a".to_string()), "nightly"),
                 cells: ["nightly", "team-a", "*/5 * * * *", "2", "3h", "5m"]
                     .map(String::from)
                     .to_vec(),
@@ -260,7 +262,7 @@ mod custom {
         let filter = BTreeSet::from(["acme.io".to_string()]);
         let filtered = project_definitions(&[&crontab, &other], &filter, now());
         assert_eq!(filtered.rows.len(), 1);
-        assert_eq!(filtered.rows[0].key, "backups.acme.io");
+        assert_eq!(filtered.rows[0].key.to_string(), "backups.acme.io");
     }
 
     #[test]

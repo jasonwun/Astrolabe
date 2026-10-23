@@ -13,10 +13,11 @@ use astrolabe_kube::kube::core::DynamicObject;
 use serde_json::Value;
 
 use crate::jsonpath;
+use crate::store::ObjectKey;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRow {
-    pub key: String,
+    pub key: ObjectKey,
     pub cells: Vec<String>,
 }
 
@@ -38,20 +39,11 @@ pub fn project_namespaces(namespaces: &[&Namespace]) -> Vec<ResourceRow> {
                 .and_then(|status| status.phase.clone())
                 .unwrap_or_else(|| "Unknown".to_string());
             ResourceRow {
-                key: name.clone(),
+                key: ObjectKey::of(*namespace),
                 cells: vec![name, phase],
             }
         })
         .collect()
-}
-
-/// Store key of an object, as rows and detail tabs address it.
-pub fn object_key(meta: &ObjectMeta) -> String {
-    let name = meta.name.clone().unwrap_or_default();
-    match &meta.namespace {
-        Some(namespace) => format!("{namespace}/{name}"),
-        None => name,
-    }
 }
 
 /// Name / Namespace (namespaced kinds only) / the preferred version's
@@ -90,7 +82,7 @@ pub fn project_custom_resources(
             );
             cells.push(age_of(meta, now));
             ResourceRow {
-                key: object_key(meta),
+                key: ObjectKey::of(*object),
                 cells,
             }
         })
@@ -113,7 +105,7 @@ pub fn project_definitions(
         .map(|crd| {
             let spec = &crd.spec;
             ResourceRow {
-                key: object_key(&crd.metadata),
+                key: ObjectKey::of(*crd),
                 cells: vec![
                     spec.names.kind.clone(),
                     spec.group.clone(),
@@ -277,7 +269,7 @@ fn detail<K: Resource + Clone + Serialize>(
             .collect()
     };
     DetailModel {
-        title: format!("{kind} {}", object_key(meta)),
+        title: format!("{kind} {}", ObjectKey::of(object)),
         metadata,
         labels: pairs(&meta.labels),
         annotations: pairs(&meta.annotations),

@@ -18,6 +18,7 @@ use crate::projection::{
 };
 use crate::resource_detail::DetailTarget;
 use crate::session::{CustomKindId, Session};
+use crate::store::ObjectKey;
 use crate::workspace::STALE_MESSAGE;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,9 +53,8 @@ impl ResourceListPanel {
     pub fn new(session: Entity<Session>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let open_row: OpenRow = {
             let panel = cx.entity().downgrade();
-            Rc::new(move |key: &str, cx: &mut App| {
-                let key = key.to_string();
-                panel.update(cx, |panel, cx| panel.open_row(&key, cx)).ok();
+            Rc::new(move |key: &ObjectKey, cx: &mut App| {
+                panel.update(cx, |panel, cx| panel.open_row(key, cx)).ok();
             })
         };
         let table = cx.new(|cx| {
@@ -104,18 +104,17 @@ impl ResourceListPanel {
         self.refresh(cx);
     }
 
-    fn open_row(&mut self, key: &str, cx: &mut Context<Self>) {
-        let (namespace, name) = match key.split_once('/') {
-            Some((namespace, name)) => (Some(namespace.to_string()), name.to_string()),
-            None => (None, key.to_string()),
-        };
+    fn open_row(&mut self, key: &ObjectKey, cx: &mut Context<Self>) {
         let target = match &self.view {
-            ListView::Namespaces => DetailTarget::Namespace { name },
-            ListView::Definitions => DetailTarget::Definition { name },
+            ListView::Namespaces => DetailTarget::Namespace {
+                name: key.name.clone(),
+            },
+            ListView::Definitions => DetailTarget::Definition {
+                name: key.name.clone(),
+            },
             ListView::Custom(id) => DetailTarget::Custom {
                 id: id.clone(),
-                namespace,
-                name,
+                key: key.clone(),
             },
         };
         cx.emit(OpenDetail(target));
@@ -327,7 +326,7 @@ impl Render for ResourceListPanel {
     }
 }
 
-type OpenRow = Rc<dyn Fn(&str, &mut App)>;
+type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 
 /// Table delegate over a projected [`ResourceTable`]; the first cell of
 /// each row opens its detail.
