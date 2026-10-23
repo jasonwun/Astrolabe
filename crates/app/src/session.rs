@@ -14,6 +14,7 @@ use futures::{Stream, StreamExt, channel::mpsc};
 use gpui_kit::Context;
 use tokio::sync::oneshot;
 
+use crate::builtin::BuiltinKind;
 use crate::cluster_io::ClusterIo;
 pub use crate::cluster_io::{ScriptedCluster, SharedClient};
 use crate::store::{ObjectKey, Store};
@@ -58,12 +59,14 @@ impl WatchError {
 pub type WatchMessage<K> = Result<Event<K>, WatchError>;
 pub type NamespaceWatchMessage = WatchMessage<Namespace>;
 pub type CrdWatchMessage = WatchMessage<CustomResourceDefinition>;
-pub type CustomWatchMessage = WatchMessage<DynamicObject>;
+pub type ObjectWatchMessage = WatchMessage<DynamicObject>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ResourceKind {
     Namespaces,
     CustomResourceDefinitions,
+    /// A built-in kind with a registered view (#17).
+    Builtin(BuiltinKind),
     /// A CRD kind at its preferred version.
     Custom {
         group: String,
@@ -96,6 +99,13 @@ impl CustomKindId {
             kind: kind.kind.clone(),
         }
     }
+}
+
+/// The list on screen, whose watch follows the namespace selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Viewing {
+    Builtin(BuiltinKind),
+    Custom(CustomKindId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,9 +254,9 @@ pub struct Session {
     crd_generation: u64,
     discovery_runs: u64,
     catalog: Vec<CustomGroup>,
-    custom: BTreeMap<WatchKey, Watched<DynamicObject>>,
+    objects: BTreeMap<WatchKey, Watched<DynamicObject>>,
     namespace: String,
-    viewing: Option<CustomKindId>,
+    viewing: Option<Viewing>,
     io: ClusterIo,
 }
 
@@ -287,7 +297,7 @@ impl Session {
             crd_generation: 0,
             discovery_runs: 0,
             catalog: Vec::new(),
-            custom: BTreeMap::new(),
+            objects: BTreeMap::new(),
             namespace: "default".to_string(),
             viewing: None,
             io,
@@ -405,7 +415,7 @@ impl Session {
 
     fn rebuild_catalog(&mut self, cx: &mut Context<Self>) {
         self.catalog = crd::catalog(&self.crds.objects(), self.discovery.served());
-        if let Some(id) = self.viewing.clone() {
+        if let Some(Viewing::Custom(id)) = self.viewing.clone() {
             self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
         }
     }
@@ -418,8 +428,38 @@ impl Session {
         id: &CustomKindId,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
-        self.viewing = Some(id.clone());
+        self.viewing = Some(Viewing::Custom(id.clone()));
         self.ensure_custom_watch(id, Some(self.namespace.clone()), cx)
+    }
+
+    /// Enter a built-in kind's list: starts its watch for the current
+    /// namespace on first visit (lazy, then resident for the session).
+    pub fn open_builtin_list(&mut self, kind: BuiltinKind, cx: &mut Context<Self>) -> WatchKey {
+        self.viewing = Some(Viewing::Builtin(kind));
+        self.watch_builtin(kind, &self.namespace.clone(), cx)
+    }
+
+    /// Ensure the watch holding `kind`'s objects in `namespace`, whatever
+    /// the namespace selection (a detail tab or related section reads it).
+    pub fn watch_builtin(
+        &mut self,
+        kind: BuiltinKind,
+        namespace: &str,
+        cx: &mut Context<Self>,
+    ) -> WatchKey {
+        let key = self.builtin_watch_key(kind, namespace);
+        self.ensure_watch(key.clone(), (kind.registration().resource)(), cx);
+        key
+    }
+
+    /// The watch holding `kind`'s objects in `namespace` (every registered
+    /// built-in kind is namespaced).
+    pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: &str) -> WatchKey {
+        WatchKey {
+            cluster: self.watch_key.cluster.clone(),
+            kind: ResourceKind::Builtin(kind),
+            namespace: Some(namespace.to_string()),
+        }
     }
 
     /// Ensure the watch an object of kind `id` in `namespace` (`None` when
@@ -436,8 +476,8 @@ impl Session {
         self.ensure_custom_watch(id, namespace, cx)
     }
 
-    /// Leave the instance lists (another view is shown).
-    pub fn close_custom_list(&mut self) {
+    /// Leave the watched lists (Namespaces or Definitions is shown).
+    pub fn close_list(&mut self) {
         self.viewing = None;
     }
 
@@ -453,10 +493,16 @@ impl Session {
         };
         let resource = resource.clone();
         let key = self.custom_object_watch_key(kind, namespace.as_deref());
-        if self.custom.contains_key(&key) {
-            return Some(key);
+        self.ensure_watch(key.clone(), resource, cx);
+        Some(key)
+    }
+
+    /// Start the object watch `key` on `resource` unless it runs already.
+    fn ensure_watch(&mut self, key: WatchKey, resource: ApiResource, cx: &mut Context<Self>) {
+        if self.objects.contains_key(&key) {
+            return;
         }
-        self.custom.insert(
+        self.objects.insert(
             key.clone(),
             Watched::new(key.cluster.clone(), resource.kind.clone()),
         );
@@ -464,17 +510,14 @@ impl Session {
         let watched_key = key.clone();
         let namespace = key.namespace.clone();
         self.start_watch(
-            "custom resource",
-            move |scripted| scripted.custom.remove(&scripted_key),
-            move |client| {
-                astrolabe_kube::watch::custom_resources(client, &resource, namespace.as_deref())
-            },
-            move |session| session.custom.get_mut(&watched_key),
+            "object",
+            move |scripted| scripted.watches.remove(&scripted_key),
+            move |client| astrolabe_kube::watch::objects(client, &resource, namespace.as_deref()),
+            move |session| session.objects.get_mut(&watched_key),
             |_, _, _| {},
             cx,
         );
         cx.notify();
-        Some(key)
     }
 
     /// The watch a kind's list reads for the current namespace selection:
@@ -502,8 +545,14 @@ impl Session {
             return;
         }
         self.namespace = namespace;
-        if let Some(id) = self.viewing.clone() {
-            self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
+        match self.viewing.clone() {
+            Some(Viewing::Custom(id)) => {
+                self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
+            }
+            Some(Viewing::Builtin(kind)) => {
+                self.watch_builtin(kind, &self.namespace.clone(), cx);
+            }
+            None => {}
         }
         cx.notify();
     }
@@ -553,8 +602,8 @@ impl Session {
             .find(|kind| kind.kind == id.kind)
     }
 
-    pub fn custom_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
-        self.custom.get(key)
+    pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
+        self.objects.get(key)
     }
 
     pub fn namespace(&self) -> &str {

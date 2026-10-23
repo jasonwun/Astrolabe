@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
-    CrdWatchMessage, CustomWatchMessage, NamespaceWatchMessage, ObjectRef, WatchError, WatchKey,
+    CrdWatchMessage, NamespaceWatchMessage, ObjectRef, ObjectWatchMessage, WatchError, WatchKey,
     WatchMessage,
 };
 
@@ -31,7 +31,7 @@ type DeleteFn = Box<dyn FnMut(&ObjectRef) -> Result<(), String>>;
 pub struct ScriptedCluster {
     pub(crate) namespaces: Option<mpsc::Receiver<NamespaceWatchMessage>>,
     pub(crate) crds: Option<mpsc::Receiver<CrdWatchMessage>>,
-    pub(crate) custom: HashMap<WatchKey, mpsc::Receiver<CustomWatchMessage>>,
+    pub(crate) watches: HashMap<WatchKey, mpsc::Receiver<ObjectWatchMessage>>,
     discover: DiscoverFn,
     delete: DeleteFn,
 }
@@ -41,7 +41,7 @@ impl ScriptedCluster {
         Self {
             namespaces: Some(namespaces),
             crds: None,
-            custom: HashMap::new(),
+            watches: HashMap::new(),
             discover: Box::new(|| Ok(ServedResources::default())),
             delete: Box::new(|_| Ok(())),
         }
@@ -52,9 +52,10 @@ impl ScriptedCluster {
         self
     }
 
-    /// Events for the custom resource watch `key`, once a view opens it.
-    pub fn custom(mut self, key: WatchKey, events: mpsc::Receiver<CustomWatchMessage>) -> Self {
-        self.custom.insert(key, events);
+    /// Events for the object watch `key` (a custom resource or built-in
+    /// kind), once a view opens it.
+    pub fn watch(mut self, key: WatchKey, events: mpsc::Receiver<ObjectWatchMessage>) -> Self {
+        self.watches.insert(key, events);
         self
     }
 

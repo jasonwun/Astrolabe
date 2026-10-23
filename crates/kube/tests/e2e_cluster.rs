@@ -455,7 +455,7 @@ spec:
     };
     assert_eq!(resource.plural, "widgets");
 
-    let events = astrolabe_kube::watch::custom_resources(&client, resource, Some(&ns));
+    let events = astrolabe_kube::watch::objects(&client, resource, Some(&ns));
     futures::pin_mut!(events);
     let widget = format!(
         "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"

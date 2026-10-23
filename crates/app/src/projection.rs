@@ -15,6 +15,8 @@ use serde_json::Value;
 use crate::jsonpath;
 use crate::store::ObjectKey;
 
+pub mod workloads;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceRow {
     pub key: ObjectKey,
@@ -134,8 +136,27 @@ pub struct ConditionRow {
     pub message: String,
 }
 
+/// A small table inside a detail's status summary (e.g. a Pod's
+/// containers).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SummaryTable {
+    pub title: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// A workload's replica counts, drawn as the status summary's replica bar.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReplicaCounts {
+    pub desired: i32,
+    pub updated: i32,
+    pub available: i32,
+    pub unavailable: i32,
+}
+
 /// The generic detail page (#11): metadata summary, status summary, YAML.
-/// Built-in kinds reuse the same structure.
+/// Built-in kinds reuse the same structure; their registration may add
+/// summary tables and a replica bar to the status summary (#17).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DetailModel {
     pub title: String,
@@ -144,6 +165,8 @@ pub struct DetailModel {
     pub annotations: Vec<String>,
     pub owners: Vec<String>,
     pub status: Vec<(String, String)>,
+    pub replicas: Option<ReplicaCounts>,
+    pub tables: Vec<SummaryTable>,
     pub conditions: Vec<ConditionRow>,
     pub yaml: String,
 }
@@ -243,7 +266,7 @@ pub fn object_yaml<K: Resource + Clone + Serialize>(object: &K) -> String {
     serde_saphyr::to_string(&object).unwrap_or_else(|error| format!("# {error}"))
 }
 
-fn detail<K: Resource + Clone + Serialize>(
+pub(crate) fn detail<K: Resource + Clone + Serialize>(
     kind: &str,
     object: &K,
     value: &Value,
@@ -280,6 +303,8 @@ fn detail<K: Resource + Clone + Serialize>(
             .map(|owner| format!("{} {}", owner.kind, owner.name))
             .collect(),
         status,
+        replicas: None,
+        tables: Vec::new(),
         conditions: conditions(value),
         yaml: object_yaml(object),
     }
@@ -323,7 +348,7 @@ fn scalar_text(value: &Value) -> String {
     }
 }
 
-fn age_of(meta: &ObjectMeta, now: Timestamp) -> String {
+pub(crate) fn age_of(meta: &ObjectMeta, now: Timestamp) -> String {
     meta.creation_timestamp
         .as_ref()
         .map(|created| format_age(created.0, now))

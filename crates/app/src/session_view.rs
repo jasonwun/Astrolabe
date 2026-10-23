@@ -7,6 +7,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::builtin::BuiltinKind;
 use crate::resource_detail::{DetailTarget, EditorPanel, OpenEditor, ResourceDetailPanel};
 use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
 use crate::session::{ConnectionHealth, CustomKindId, ScriptedCluster, Session};
@@ -261,6 +262,19 @@ impl SessionView {
                     cx.listener(|this, _, window, cx| this.show(ListView::Namespaces, window, cx)),
                 ),
             )
+            .child(heading("Workloads"))
+            .children(BuiltinKind::ALL.map(|kind| {
+                let label = kind.registration().label;
+                item(
+                    format!("nav-{}", label.to_lowercase()).into(),
+                    label.to_string(),
+                    0,
+                    current == ListView::Builtin(kind),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.show(ListView::Builtin(kind), window, cx)
+                }))
+            }))
             // Custom Resources sits after the built-in resource sections.
             .child(heading("Custom Resources"))
             .child(

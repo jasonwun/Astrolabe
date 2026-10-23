@@ -1,5 +1,6 @@
 //! The list tab: one fixed center-dock panel whose content follows the
-//! navigation selection (Namespaces, CRD Definitions, or a CRD kind).
+//! navigation selection (Namespaces, a built-in kind, CRD Definitions, or a
+//! CRD kind).
 
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -13,6 +14,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::builtin::BuiltinKind;
 use crate::projection::{
     ResourceRow, ResourceTable, project_custom_resources, project_definitions, project_namespaces,
 };
@@ -24,6 +26,7 @@ use crate::workspace::STALE_MESSAGE;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListView {
     Namespaces,
+    Builtin(BuiltinKind),
     Definitions,
     Custom(CustomKindId),
 }
@@ -95,10 +98,13 @@ impl ResourceListPanel {
 
     pub fn show(&mut self, view: ListView, cx: &mut Context<Self>) {
         self.session.update(cx, |session, cx| match &view {
+            ListView::Builtin(kind) => {
+                session.open_builtin_list(*kind, cx);
+            }
             ListView::Custom(id) => {
                 session.open_custom_list(id, cx);
             }
-            _ => session.close_custom_list(),
+            ListView::Namespaces | ListView::Definitions => session.close_list(),
         });
         self.view = view;
         self.refresh(cx);
@@ -108,6 +114,10 @@ impl ResourceListPanel {
         let target = match &self.view {
             ListView::Namespaces => DetailTarget::Namespace {
                 name: key.name.clone(),
+            },
+            ListView::Builtin(kind) => DetailTarget::Builtin {
+                kind: *kind,
+                key: key.clone(),
             },
             ListView::Definitions => DetailTarget::Definition {
                 name: key.name.clone(),
@@ -139,6 +149,24 @@ impl ResourceListPanel {
                 ListState::Table,
                 false,
             ),
+            ListView::Builtin(kind) => {
+                let registration = kind.registration();
+                let watch =
+                    session.object_watch(&session.builtin_watch_key(*kind, session.namespace()));
+                let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
+                let state = match watch {
+                    Some(watch) if watch.forbidden() => ListState::Message(format!(
+                        "No permission to list {} here",
+                        registration.label.to_lowercase()
+                    )),
+                    _ => ListState::Table,
+                };
+                (
+                    (registration.list)(&objects, now),
+                    state,
+                    watch.is_some_and(|watch| watch.show_stale_warning()),
+                )
+            }
             ListView::Definitions => {
                 let crds = session.crds();
                 let state = if session.crd_access_denied() {
@@ -176,7 +204,7 @@ impl ResourceListPanel {
                         false,
                     ),
                     KindResource::Served(_) => {
-                        let watch = session.custom_watch(&session.custom_watch_key(kind));
+                        let watch = session.object_watch(&session.custom_watch_key(kind));
                         let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                         let state = match watch {
                             Some(watch) if watch.forbidden() => ListState::Message(format!(
@@ -266,6 +294,7 @@ impl Panel for ResourceListPanel {
     fn tab_name(&self, _: &App) -> Option<SharedString> {
         Some(match &self.view {
             ListView::Namespaces => "Namespaces".into(),
+            ListView::Builtin(kind) => kind.registration().label.into(),
             ListView::Definitions => "Definitions".into(),
             ListView::Custom(id) => id.kind.clone().into(),
         })

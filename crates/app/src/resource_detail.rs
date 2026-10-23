@@ -1,7 +1,8 @@
 //! Generic detail tab (#11): metadata summary, status summary, read-only
 //! YAML; toolbar Edit YAML (separate editor tab, SSA) and Delete. It reads
 //! the object out of the list watch's store, so it refreshes with the watch
-//! and issues no GET/watch of its own. Built-in kinds reuse this template.
+//! and issues no GET/watch of its own. Built-in kinds reuse this template
+//! through their registration (#17).
 
 use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -14,7 +15,11 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::projection::{DetailModel, custom_resource_detail, definition_detail, namespace_detail};
+use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use crate::projection::{
+    DetailModel, ReplicaCounts, SummaryTable, custom_resource_detail, definition_detail,
+    namespace_detail,
+};
 use crate::session::{CustomKindId, ObjectRef, Session};
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
@@ -26,6 +31,7 @@ use crate::yaml_editor::YamlEditorView;
 pub enum DetailTarget {
     Namespace { name: String },
     Definition { name: String },
+    Builtin { kind: BuiltinKind, key: ObjectKey },
     Custom { id: CustomKindId, key: ObjectKey },
 }
 
@@ -43,15 +49,23 @@ pub struct ResourceDetailPanel {
     focus_handle: FocusHandle,
 }
 
-/// The object as of this render, with what Delete needs.
+/// The object as of this render, with what its actions need.
 struct Resolved {
     model: DetailModel,
     object: ObjectRef,
     cascade: String,
+    actions: &'static [Action],
 }
 
 impl ResourceDetailPanel {
     pub fn new(session: Entity<Session>, target: DetailTarget, cx: &mut Context<Self>) -> Self {
+        if let DetailTarget::Builtin { kind, key } = &target
+            && let Some(namespace) = &key.namespace
+        {
+            session.update(cx, |session, cx| {
+                session.watch_builtin(*kind, namespace, cx)
+            });
+        }
         cx.observe(&session, |panel, session, cx| {
             // A preferred version change needs the new version's watch, even
             // with the kind's list closed.
@@ -85,6 +99,7 @@ impl ResourceDetailPanel {
                         key: ObjectKey::cluster_scoped(name.clone()),
                     },
                     cascade: "Deleting a Namespace deletes every object in it.".to_string(),
+                    actions: DEFAULT_ACTIONS,
                 })
             }
             DetailTarget::Definition { name } => {
@@ -99,6 +114,24 @@ impl ResourceDetailPanel {
                         "Deleting a CustomResourceDefinition also deletes every {} object in the cluster.",
                         crd.spec.names.kind
                     ),
+                    actions: DEFAULT_ACTIONS,
+                })
+            }
+            DetailTarget::Builtin { kind, key } => {
+                let registration = kind.registration();
+                let namespace = key.namespace.as_deref()?;
+                let watch = session.builtin_watch_key(*kind, namespace);
+                let object = session
+                    .object_watch(&watch)?
+                    .get(Some(namespace), &key.name)?;
+                Some(Resolved {
+                    model: (registration.detail)(object, now)?,
+                    object: ObjectRef {
+                        resource: (registration.resource)(),
+                        key: key.clone(),
+                    },
+                    cascade: registration.cascade.to_string(),
+                    actions: registration.actions,
                 })
             }
             DetailTarget::Custom { id, key } => {
@@ -108,7 +141,7 @@ impl ResourceDetailPanel {
                 };
                 let namespace = key.namespace.as_deref();
                 let watch = session.custom_object_watch_key(kind, namespace);
-                let object = session.custom_watch(&watch)?.get(namespace, &key.name)?;
+                let object = session.object_watch(&watch)?.get(namespace, &key.name)?;
                 Some(Resolved {
                     model: custom_resource_detail(kind, object, now),
                     object: ObjectRef {
@@ -117,6 +150,7 @@ impl ResourceDetailPanel {
                     },
                     cascade: "Objects that list it in ownerReferences will be garbage-collected."
                         .to_string(),
+                    actions: DEFAULT_ACTIONS,
                 })
             }
         }
@@ -126,6 +160,7 @@ impl ResourceDetailPanel {
         match &self.target {
             DetailTarget::Namespace { name } => format!("Namespace {name}"),
             DetailTarget::Definition { name } => name.clone(),
+            DetailTarget::Builtin { kind, key } => format!("{} {key}", kind.kind()),
             DetailTarget::Custom { id, key } => format!("{} {key}", id.kind),
         }
     }
@@ -166,7 +201,7 @@ impl ResourceDetailPanel {
         .detach();
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, actions: &[Action], cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let button = |id: &'static str, label: &'static str| {
             div()
@@ -187,18 +222,18 @@ impl ResourceDetailPanel {
             .p_2()
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                button("detail-edit", "Edit YAML")
-                    .on_click(cx.listener(|panel, _, _, cx| panel.edit(cx))),
-            )
-            .child(
-                button("detail-delete", "Delete")
-                    .text_color(theme.danger)
-                    .on_click(cx.listener(|panel, _, _, cx| {
-                        panel.confirm_delete = true;
-                        cx.notify();
-                    })),
-            )
+            .children(actions.iter().map(|action| {
+                match action {
+                    Action::Edit => button("detail-edit", "Edit YAML")
+                        .on_click(cx.listener(|panel, _, _, cx| panel.edit(cx))),
+                    Action::Delete => button("detail-delete", "Delete")
+                        .text_color(theme.danger)
+                        .on_click(cx.listener(|panel, _, _, cx| {
+                            panel.confirm_delete = true;
+                            cx.notify();
+                        })),
+                }
+            }))
             .when_some(self.notice.clone(), |bar, notice| {
                 bar.child(
                     div()
@@ -303,6 +338,91 @@ fn list_field(label: &'static str, values: &[String]) -> Option<AnyElement> {
     (!values.is_empty()).then(|| field(label, &values.join(", ")))
 }
 
+/// Desired / updated / available / unavailable, as text and as a bar:
+/// available, then updated but not yet available, then unavailable.
+fn replica_bar(counts: ReplicaCounts, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let text = format!(
+        "Replicas: {} desired, {} updated, {} available, {} unavailable",
+        counts.desired, counts.updated, counts.available, counts.unavailable
+    );
+    let total = counts
+        .desired
+        .max(counts.available + counts.unavailable)
+        .max(1) as f32;
+    let width = 240.;
+    let segment = |count: i32, color: Hsla| {
+        div()
+            .h_full()
+            .w(px(width * count.max(0) as f32 / total))
+            .bg(color)
+    };
+    v_flex()
+        .id("detail-replicas")
+        .aria_label(text.clone())
+        .test_support()
+        .gap_1()
+        .child(div().text_sm().child(text))
+        .child(
+            h_flex()
+                .h(px(8.))
+                .w(px(width))
+                .rounded_sm()
+                .overflow_hidden()
+                .bg(theme.muted)
+                .child(segment(counts.available, theme.success))
+                .child(segment(counts.updated - counts.available, theme.info))
+                .child(segment(counts.unavailable, theme.warning)),
+        )
+        .into_any_element()
+}
+
+fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let title = &table.title;
+    let row = |id: SharedString, cells: &[String]| {
+        h_flex()
+            .id(id)
+            .children(cells.iter().enumerate().map(|(index, cell)| {
+                div()
+                    .id(SharedString::from(format!("table-{title}-cell-{index}")))
+                    .aria_label(cell.clone())
+                    .test_support()
+                    .w(px(if index == 0 { 200. } else { 160. }))
+                    .flex_shrink_0()
+                    .pr_2()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(cell.clone())
+            }))
+    };
+    v_flex()
+        .id(SharedString::from(format!("detail-table-{title}")))
+        .test_support()
+        .pt_2()
+        .text_sm()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(title.clone()),
+        )
+        .child(
+            row(
+                SharedString::from(format!("table-{title}-head")),
+                &table.columns,
+            )
+            .text_color(theme.muted_foreground),
+        )
+        .children(table.rows.iter().enumerate().map(|(index, cells)| {
+            row(
+                SharedString::from(format!("table-{title}-row-{index}")),
+                cells,
+            )
+        }))
+        .into_any_element()
+}
+
 impl EventEmitter<OpenEditor> for ResourceDetailPanel {}
 impl EventEmitter<PanelEvent> for ResourceDetailPanel {}
 
@@ -356,10 +476,16 @@ impl Render for ResourceDetailPanel {
         metadata.extend(list_field("Owners", &model.owners));
 
         let mut status: Vec<AnyElement> = model
-            .status
-            .iter()
-            .map(|(label, value)| field(label, value))
+            .replicas
+            .map(|counts| replica_bar(counts, cx))
+            .into_iter()
             .collect();
+        status.extend(
+            model
+                .status
+                .iter()
+                .map(|(label, value)| field(label, value)),
+        );
         for condition in &model.conditions {
             let mut text = format!("{}={}", condition.kind, condition.status);
             if !condition.reason.is_empty() {
@@ -370,6 +496,7 @@ impl Render for ResourceDetailPanel {
             }
             status.push(field("Condition", &text));
         }
+        status.extend(model.tables.iter().map(|table| summary_table(table, cx)));
 
         let yaml_lines = v_flex()
             .font_family("monospace")
@@ -397,7 +524,7 @@ impl Render for ResourceDetailPanel {
             .aria_label(self.display_name())
             .test_support()
             .size_full()
-            .child(self.render_toolbar(cx))
+            .child(self.render_toolbar(resolved.actions, cx))
             .when(self.confirm_delete, |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })

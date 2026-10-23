@@ -24,14 +24,15 @@ pub fn custom_resource_definitions(
     watcher(Api::all(client.clone()), watcher::Config::default()).default_backoff()
 }
 
-/// Custom resource instances: `None` watches a cluster-scoped kind, `Some`
-/// one namespace of a namespaced kind (#8: never cluster-wide for those).
-pub fn custom_resources(
+/// One resource's objects, untyped (custom resources and built-in kinds
+/// alike): `None` watches a cluster-scoped kind, `Some` one namespace of a
+/// namespaced kind (#8: never cluster-wide for those).
+pub fn objects(
     client: &Client,
     resource: &ApiResource,
     namespace: Option<&str>,
 ) -> impl Stream<Item = Result<watcher::Event<DynamicObject>, watcher::Error>> + Send + use<> {
-    tracing::debug!(kind = %resource.kind, namespace = ?namespace, "starting custom resource watch stream");
+    tracing::debug!(kind = %resource.kind, namespace = ?namespace, "starting object watch stream");
     let api = match namespace {
         Some(namespace) => Api::namespaced_with(client.clone(), namespace, resource),
         None => Api::all_with(client.clone(), resource),

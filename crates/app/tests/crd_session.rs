@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::session::{
-    ConnectionHealth, CustomKindId, CustomWatchMessage, ResourceKind, ScriptedCluster, Session,
+    ConnectionHealth, CustomKindId, ObjectWatchMessage, ResourceKind, ScriptedCluster, Session,
     WatchError, WatchKey,
 };
 use astrolabe_kube::crd::KindResource;
@@ -94,7 +94,7 @@ struct Harness {
 
 fn harness(
     cx: &mut TestAppContext,
-    custom: Vec<(WatchKey, mpsc::Receiver<CustomWatchMessage>)>,
+    custom: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
 ) -> Harness {
     let (namespaces, namespace_events) = mpsc::channel(32);
     let (crds, crd_events) = mpsc::channel(32);
@@ -111,7 +111,7 @@ fn harness(
             }
         });
     for (key, receiver) in custom {
-        cluster = cluster.custom(key, receiver);
+        cluster = cluster.watch(key, receiver);
     }
     let session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, cx)));
     Harness {
@@ -350,7 +350,7 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
         assert_eq!(session.namespace(), "default");
         assert!(
             session
-                .custom_watch(&custom_key(Some("default"), "CronTab"))
+                .object_watch(&custom_key(Some("default"), "CronTab"))
                 .is_none()
         );
     });
@@ -365,7 +365,7 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
         let watch = h
             .session
             .read(cx)
-            .custom_watch(&custom_key(Some("default"), "CronTab"))
+            .object_watch(&custom_key(Some("default"), "CronTab"))
             .unwrap();
         assert_eq!(watch.health(), ConnectionHealth::Healthy);
         assert_eq!(watch.objects().len(), 1);
@@ -383,11 +383,11 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
     cx.read(|cx| {
         let session = h.session.read(cx);
         let team = session
-            .custom_watch(&custom_key(Some("team-a"), "CronTab"))
+            .object_watch(&custom_key(Some("team-a"), "CronTab"))
             .unwrap();
         assert_eq!(team.objects().len(), 2);
         let default = session
-            .custom_watch(&custom_key(Some("default"), "CronTab"))
+            .object_watch(&custom_key(Some("default"), "CronTab"))
             .unwrap();
         assert_eq!(default.objects().len(), 1);
     });
@@ -420,7 +420,7 @@ fn unserved_kinds_start_no_watch(cx: &mut TestAppContext) {
         assert!(
             h.session
                 .read(cx)
-                .custom_watch(&custom_key(Some("default"), "CronTab"))
+                .object_watch(&custom_key(Some("default"), "CronTab"))
                 .is_none()
         )
     });
@@ -458,7 +458,7 @@ fn an_object_watch_ignores_the_namespace_selection_and_list(cx: &mut TestAppCont
         let session = h.session.read(cx);
         assert_eq!(session.namespace(), "default");
         let watch = session
-            .custom_watch(&custom_key(Some("team-a"), "CronTab"))
+            .object_watch(&custom_key(Some("team-a"), "CronTab"))
             .unwrap();
         assert!(watch.get(Some("team-a"), "nightly").is_some());
     });
@@ -471,7 +471,7 @@ fn an_object_watch_ignores_the_namespace_selection_and_list(cx: &mut TestAppCont
         assert!(
             h.session
                 .read(cx)
-                .custom_watch(&custom_key(Some("team-b"), "CronTab"))
+                .object_watch(&custom_key(Some("team-b"), "CronTab"))
                 .is_none()
         )
     });

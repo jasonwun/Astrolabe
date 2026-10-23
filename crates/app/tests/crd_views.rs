@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::session::{
-    CustomWatchMessage, ObjectRef, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ObjectRef, ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
@@ -130,7 +130,7 @@ struct Ui<'a> {
 
 fn open(
     cx: &mut TestAppContext,
-    custom: Vec<(WatchKey, mpsc::Receiver<CustomWatchMessage>)>,
+    custom: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
 ) -> Ui<'_> {
     cx.update(gpui_kit::init);
     let (namespaces, namespace_events) = mpsc::channel(32);
@@ -159,7 +159,7 @@ fn open(
             }
         });
     for (key, events) in custom {
-        cluster = cluster.custom(key, events);
+        cluster = cluster.watch(key, events);
     }
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
         WorkspaceView::from_clusters(vec![("kind-a".to_string(), cluster)], window, cx)
