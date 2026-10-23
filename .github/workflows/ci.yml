@@ -40,3 +40,36 @@ jobs:
           key: e2e
       - uses: helm/kind-action@v1
       - run: cargo test -p astrolabe-kube --locked --test e2e_cluster -- --ignored --test-threads=1
+
+  mutants:
+    # astrolabe-kube's zero-missed mutant bar (docs/agents/testing.md),
+    # scoped to the code this PR touches. Linux: the crate is gpui-free.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mutants
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+      - run: git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+      - run: cargo mutants -p astrolabe-kube --cargo-arg=--locked --in-diff pr.diff -j 2
+
+  e2e-legacy-discovery:
+    # A pre-aggregated-discovery apiserver (aggregated discovery is
+    # default-on from 1.27): proves discover()'s per-group fallback on a
+    # real server, which the hermetic suite only covers with a mock.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+      - uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:v1.25.16
+      - run: cargo test -p astrolabe-kube --locked --test e2e_cluster -- --ignored --test-threads=1 crd_
