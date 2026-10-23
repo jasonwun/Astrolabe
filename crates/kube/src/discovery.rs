@@ -59,15 +59,14 @@ impl ServedResources {
 /// Aggregated discovery (2 requests, K8s ≥ 1.26), falling back to per-group
 /// discovery on servers that do not support it.
 ///
-/// A pre-aggregated server is expected not to reject the request: the
-/// Accept header (`ACCEPT_AGGREGATED_DISCOVERY_V2`) ends in a plain
-/// `application/json` fallback, and `APIGroupDiscoveryList.items` is
-/// `#[serde(default)]`, so an `APIGroupList` answer would make
-/// `run_aggregated` succeed with no groups at all (verified against
-/// kube-client 4.2.0 / kube-core 4.2.0). That server answer is inferred
-/// from content negotiation, not captured from a pre-1.26 apiserver.
-/// Every real server serves the core group, so its absence is the
-/// "unsupported" signal either way.
+/// A pre-aggregated server does not reject the request: the Accept header
+/// (`ACCEPT_AGGREGATED_DISCOVERY_V2`) ends in a plain `application/json`
+/// fallback, the server answers 200 with an `APIGroupList` / `APIVersions`,
+/// and `APIGroupDiscoveryList.items` is `#[serde(default)]`, so
+/// `run_aggregated` succeeds with no groups at all (verified against
+/// kube-client 4.2.0 / kube-core 4.2.0, and a v1.25.16 kind apiserver via
+/// `curl` through `kubectl proxy` with that Accept header). Every real
+/// server serves the core group, so its absence is the "unsupported" signal.
 pub async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
         Ok(discovery) if discovery.has_group(ApiGroup::CORE_GROUP) => {

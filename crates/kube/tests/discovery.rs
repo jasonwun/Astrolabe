@@ -68,9 +68,12 @@ const LEGACY_CRONTABS: &str = r#"{"kind":"APIResourceList","apiVersion":"v1","gr
     {"name":"crontabs","singularName":"crontab","namespaced":true,"kind":"CronTab","verbs":["get","list","watch","delete","patch"]}
 ]}"#;
 
-/// A pre-1.26 apiserver: ignores the aggregated media type and answers the
-/// plain `application/json` fallback that kube-client's Accept header
-/// carries, so `/apis` returns an `APIGroupList` even for aggregated asks.
+/// A pre-aggregated apiserver: ignores the aggregated media type and
+/// answers the plain `application/json` fallback that kube-client's Accept
+/// header carries, so `/apis` returns an `APIGroupList` even for aggregated
+/// asks. The bodies are hand-trimmed; that response shape (200,
+/// `APIGroupList` / `APIVersions`) was confirmed against a v1.25.16 kind
+/// apiserver via `curl` through `kubectl proxy`.
 fn legacy_server(path: &str, _aggregated: bool) -> http::Response<Body> {
     match path {
         "/api" => json(LEGACY_CORE_VERSIONS),

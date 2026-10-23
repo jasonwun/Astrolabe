@@ -17,6 +17,13 @@ GitHub's macOS runners have no Docker, so kind cannot run there.
 cargo test -p astrolabe-kube --test e2e_cluster -- --ignored --test-threads=1
 ```
 
+CI also runs the `crd_` e2e tests on a v1.25 kind node
+(`e2e-legacy-discovery`), the real-server check of discovery's per-group
+fallback.
+
+A kube-rs `watcher` emits `Event::Init` before its LIST, so a test waiting
+for a LIST failure (e.g. a 403) skips `Init` until the `Err` arrives (#16).
+
 ### Manual Namespace recovery check (kind-astrolabe-dev)
 
 The automated e2e cannot prove timely full-relist recovery versus silent
@@ -64,12 +71,14 @@ cargo mutants -p astrolabe-kube -j 4        # full run, ~90s
 cargo mutants -p astrolabe-kube -f <file>   # scoped to one file
 ```
 
+CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff.
+
 ## Scripted apiserver tests (gpui + real I/O)
 
 Tests that drive real network I/O (e.g. `Session::new` against a scripted
 localhost apiserver) inside a `#[gpui_kit::test]` — reference implementation:
 `session_watch_error_forces_complete_namespace_relist` in
-`crates/app/tests/session.rs`. Two gotchas:
+`crates/app/tests/session.rs`. Three gotchas:
 
 - Call `cx.executor().allow_parking()` first. Real I/O wakes the foreground
   executor from tokio worker threads; without it the test scheduler fails the
@@ -78,8 +87,13 @@ localhost apiserver) inside a `#[gpui_kit::test]` — reference implementation:
   from a connection handler without shutdown leaves the socket open, and
   hyper's client pool hands the dead connection to the next request, which
   then hangs unread.
+- Route requests by path and answer every request `Session::new` makes on
+  connect (namespace list/watch, CRD list/watch, `/api` + `/apis`
+  discovery). A server that treats every non-watch request as one resource's
+  LIST miscounts its queries and serves the wrong body once the session adds
+  a connect-time request; the test then times out far from the cause.
 
-Origin: #28 session, both hit mid-implementation.
+Origin: #28 session (first two), #16 session (third).
 
 ## Cargo.lock sticky-pin conflicts
 
