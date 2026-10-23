@@ -37,3 +37,213 @@ fn namespaces_project_to_handwritten_columns() {
         ]
     );
 }
+
+mod custom {
+    use std::collections::BTreeSet;
+
+    use astrolabe::projection::{
+        ResourceRow, custom_resource_detail, definition_detail, format_age,
+        project_custom_resources, project_definitions,
+    };
+    use astrolabe_kube::crd::{CustomKind, catalog};
+    use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+    use astrolabe_kube::k8s_openapi::jiff::{SignedDuration, Timestamp};
+    use astrolabe_kube::kube::core::DynamicObject;
+
+    fn now() -> Timestamp {
+        "2026-10-22T12:00:00Z".parse().unwrap()
+    }
+
+    /// Synthetic CRD: plausible shape, not captured from a server.
+    fn crontab_crd(scope: &str) -> CustomResourceDefinition {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "apiextensions.k8s.io/v1",
+            "kind": "CustomResourceDefinition",
+            "metadata": {"name": "crontabs.stable.example.com", "creationTimestamp": "2026-10-20T12:00:00Z"},
+            "spec": {
+                "group": "stable.example.com",
+                "scope": scope,
+                "names": {"kind": "CronTab", "plural": "crontabs", "singular": "crontab", "shortNames": ["ct", "cron"]},
+                "versions": [{
+                    "name": "v1", "served": true, "storage": true,
+                    "additionalPrinterColumns": [
+                        {"name": "Spec", "type": "string", "jsonPath": ".spec.cronSpec"},
+                        {"name": "Replicas", "type": "integer", "jsonPath": ".spec.replicas"},
+                        {"name": "Age", "type": "date", "jsonPath": ".metadata.creationTimestamp"},
+                        {"name": "Last Run", "type": "date", "jsonPath": ".status.lastRun"},
+                        {"name": "Image", "type": "string", "jsonPath": ".spec.image", "priority": 1}
+                    ]
+                }]
+            }
+        }))
+        .unwrap()
+    }
+
+    fn kind(crd: &CustomResourceDefinition) -> CustomKind {
+        catalog(&[crd], None).remove(0).kinds.remove(0)
+    }
+
+    /// Synthetic custom resource (plausible shape, not captured from a server).
+    fn crontab(namespace: &str, name: &str) -> DynamicObject {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "stable.example.com/v1",
+            "kind": "CronTab",
+            "metadata": {
+                "name": name, "namespace": namespace, "uid": "uid-1",
+                "creationTimestamp": "2026-10-22T11:55:00Z",
+                "labels": {"app": "cron"},
+                "annotations": {"note": "hi"},
+                "ownerReferences": [{"apiVersion": "v1", "kind": "ConfigMap", "name": "owner", "uid": "u"}],
+                "managedFields": [{"manager": "kubectl"}]
+            },
+            "spec": {"cronSpec": "*/5 * * * *", "replicas": 2, "image": "busybox"},
+            "status": {
+                "lastRun": "2026-10-22T09:00:00Z",
+                "conditions": [{"type": "Ready", "status": "True", "reason": "Scheduled", "message": "ok"}]
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn ages_follow_kubectl_human_durations() {
+        let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);
+        assert_eq!(format_age(ago(45), now()), "45s");
+        assert_eq!(format_age(ago(5 * 60 + 30), now()), "5m30s");
+        assert_eq!(format_age(ago(90 * 60), now()), "90m");
+        assert_eq!(format_age(ago(5 * 3600 + 3 * 60), now()), "5h3m");
+        assert_eq!(format_age(ago(30 * 3600), now()), "30h");
+        assert_eq!(format_age(ago(3 * 86400 + 4 * 3600), now()), "3d4h");
+        assert_eq!(format_age(ago(20 * 86400), now()), "20d");
+    }
+
+    #[test]
+    fn namespaced_instances_list_priority_zero_printer_columns_between_name_and_age() {
+        let crd = crontab_crd("Namespaced");
+        let object = crontab("team-a", "nightly");
+
+        let table = project_custom_resources(&kind(&crd), &[&object], now());
+
+        assert_eq!(
+            table.columns,
+            ["Name", "Namespace", "Spec", "Replicas", "Last Run", "Age"]
+        );
+        assert_eq!(
+            table.rows,
+            [ResourceRow {
+                key: "team-a/nightly".to_string(),
+                cells: ["nightly", "team-a", "*/5 * * * *", "2", "3h", "5m"]
+                    .map(String::from)
+                    .to_vec(),
+            }]
+        );
+    }
+
+    #[test]
+    fn instances_without_printer_columns_fall_back_to_name_and_age() {
+        let mut crd = crontab_crd("Cluster");
+        crd.spec.versions[0].additional_printer_columns = None;
+        let object = crontab("", "global");
+
+        let table = project_custom_resources(&kind(&crd), &[&object], now());
+
+        assert_eq!(table.columns, ["Name", "Age"]);
+        assert_eq!(table.rows[0].cells, ["global", "5m"]);
+    }
+
+    #[test]
+    fn definitions_list_with_group_filter() {
+        let crontab = crontab_crd("Namespaced");
+        let mut other = crontab_crd("Cluster");
+        other.metadata.name = Some("backups.acme.io".to_string());
+        other.spec.group = "acme.io".to_string();
+        other.spec.names.kind = "Backup".to_string();
+        other.spec.names.short_names = None;
+
+        let all = project_definitions(&[&crontab, &other], &BTreeSet::new(), now());
+        assert_eq!(
+            all.columns,
+            ["Resource", "Group", "Version", "ShortNames", "Scope", "Age"]
+        );
+        assert_eq!(
+            all.rows[0].cells,
+            [
+                "CronTab",
+                "stable.example.com",
+                "v1",
+                "ct, cron",
+                "Namespaced",
+                "2d"
+            ]
+        );
+        assert_eq!(all.rows[1].cells[..2], ["Backup", "acme.io"]);
+
+        let filter = BTreeSet::from(["acme.io".to_string()]);
+        let filtered = project_definitions(&[&crontab, &other], &filter, now());
+        assert_eq!(filtered.rows.len(), 1);
+        assert_eq!(filtered.rows[0].key, "backups.acme.io");
+    }
+
+    #[test]
+    fn instance_detail_summarizes_metadata_status_and_yaml() {
+        let crd = crontab_crd("Namespaced");
+        let object = crontab("team-a", "nightly");
+
+        let detail = custom_resource_detail(&kind(&crd), &object, now());
+
+        assert_eq!(detail.title, "CronTab team-a/nightly");
+        assert_eq!(
+            detail.metadata,
+            [
+                ("Name", "nightly"),
+                ("Namespace", "team-a"),
+                ("UID", "uid-1"),
+                ("Created", "2026-10-22T11:55:00Z (5m ago)"),
+            ]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+        );
+        assert_eq!(detail.labels, ["app=cron"]);
+        assert_eq!(detail.annotations, ["note=hi"]);
+        assert_eq!(detail.owners, ["ConfigMap owner"]);
+        assert_eq!(
+            detail.status,
+            [("Image".to_string(), "busybox".to_string())]
+        );
+        assert_eq!(detail.conditions.len(), 1);
+        assert_eq!(detail.conditions[0].kind, "Ready");
+        assert_eq!(detail.conditions[0].status, "True");
+        assert_eq!(detail.conditions[0].reason, "Scheduled");
+        assert_eq!(detail.conditions[0].message, "ok");
+        assert!(
+            detail.yaml.contains("cronSpec: '*/5 * * * *'")
+                || detail.yaml.contains("cronSpec: \"*/5 * * * *\"")
+        );
+        assert!(!detail.yaml.contains("managedFields"));
+    }
+
+    #[test]
+    fn definition_detail_lists_versions_scope_names_and_columns() {
+        let crd = crontab_crd("Namespaced");
+
+        let detail = definition_detail(&crd, now());
+
+        assert_eq!(
+            detail.title,
+            "CustomResourceDefinition crontabs.stable.example.com"
+        );
+        assert_eq!(
+            detail.status,
+            [
+                ("Versions", "v1 (served, storage)"),
+                ("Scope", "Namespaced"),
+                ("Kind", "CronTab"),
+                ("Plural", "crontabs"),
+                ("Singular", "crontab"),
+                ("Short names", "ct, cron"),
+                ("Printer columns", "Spec, Replicas, Age, Last Run, Image"),
+            ]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+        );
+        assert!(detail.yaml.contains("group: stable.example.com"));
+    }
+}

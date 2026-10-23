@@ -3,8 +3,11 @@
 //! trait boundary). `astrolabe-kube` (cluster I/O) and `astrolabe-terminal`
 //! (terminal engine + view) plug in here.
 
+pub mod jsonpath;
 pub mod kube_bridge;
 pub mod projection;
+mod resource_detail;
+mod resource_list;
 pub mod session;
 mod session_view;
 pub mod store;

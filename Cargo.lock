@@ -307,6 +307,8 @@ dependencies = [
  "futures",
  "gpui-kit",
  "regex",
+ "serde-saphyr 0.0.29",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
