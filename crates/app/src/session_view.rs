@@ -97,6 +97,10 @@ impl SessionView {
             this.open_editor(event.title.clone(), event.yaml.clone(), window, cx);
         })
         .detach();
+        cx.subscribe_in(&panel, window, |this, _, event: &OpenDetail, window, cx| {
+            this.open_detail(event.0.clone(), window, cx);
+        })
+        .detach();
         self.add_tab(panel_handle(panel.clone()), window, cx);
         self.details.insert(target, panel);
     }
@@ -263,7 +267,7 @@ impl SessionView {
                 ),
             )
             .child(heading("Workloads"))
-            .children(BuiltinKind::ALL.map(|kind| {
+            .children(BuiltinKind::NAVIGATION.map(|kind| {
                 let label = kind.registration().label;
                 item(
                     format!("nav-{}", label.to_lowercase()).into(),

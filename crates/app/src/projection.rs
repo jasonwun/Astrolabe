@@ -15,6 +15,7 @@ use serde_json::Value;
 use crate::jsonpath;
 use crate::store::ObjectKey;
 
+pub mod events;
 pub mod workloads;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -19,9 +19,10 @@ use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
 use crate::projection::{
-    DetailModel, ReplicaCounts, SummaryTable, custom_resource_detail, definition_detail,
-    namespace_detail,
+    DetailModel, ReplicaCounts, ResourceTable, SummaryTable, custom_resource_detail,
+    definition_detail, namespace_detail,
 };
+use crate::resource_list::OpenDetail;
 use crate::session::{CustomKindId, ObjectRef, Operation, Session};
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
@@ -59,6 +60,15 @@ struct Resolved {
     object: ObjectRef,
     cascade: String,
     actions: &'static [Action],
+    related: Option<RelatedRows>,
+}
+
+/// A related section as of this render.
+struct RelatedRows {
+    title: &'static str,
+    kind: BuiltinKind,
+    table: ResourceTable,
+    forbidden: bool,
 }
 
 impl ResourceDetailPanel {
@@ -67,7 +77,10 @@ impl ResourceDetailPanel {
             && let Some(namespace) = &key.namespace
         {
             session.update(cx, |session, cx| {
-                session.watch_builtin(*kind, namespace, cx)
+                session.watch_builtin(*kind, namespace, cx);
+                if let Some(related) = &kind.registration().related {
+                    session.watch_builtin(related.kind, namespace, cx);
+                }
             });
         }
         cx.observe(&session, |panel, session, cx| {
@@ -105,6 +118,7 @@ impl ResourceDetailPanel {
                     },
                     cascade: "Deleting a Namespace deletes every object in it.".to_string(),
                     actions: DEFAULT_ACTIONS,
+                    related: None,
                 })
             }
             DetailTarget::Definition { name } => {
@@ -120,6 +134,7 @@ impl ResourceDetailPanel {
                         crd.spec.names.kind
                     ),
                     actions: DEFAULT_ACTIONS,
+                    related: None,
                 })
             }
             DetailTarget::Builtin { kind, key } => {
@@ -129,6 +144,18 @@ impl ResourceDetailPanel {
                 let object = session
                     .object_watch(&watch)?
                     .get(Some(namespace), &key.name)?;
+                let related = registration.related.as_ref().map(|related| {
+                    let watch =
+                        session.object_watch(&session.builtin_watch_key(related.kind, namespace));
+                    let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
+                    let selected = (related.select)(object, &candidates);
+                    RelatedRows {
+                        title: related.title,
+                        kind: related.kind,
+                        table: (related.kind.registration().list)(&selected, now),
+                        forbidden: watch.is_some_and(|watch| watch.forbidden()),
+                    }
+                });
                 Some(Resolved {
                     model: (registration.detail)(object, now)?,
                     object: ObjectRef {
@@ -137,6 +164,7 @@ impl ResourceDetailPanel {
                     },
                     cascade: registration.cascade.to_string(),
                     actions: registration.actions,
+                    related,
                 })
             }
             DetailTarget::Custom { id, key } => {
@@ -156,6 +184,7 @@ impl ResourceDetailPanel {
                     cascade: "Objects that list it in ownerReferences will be garbage-collected."
                         .to_string(),
                     actions: DEFAULT_ACTIONS,
+                    related: None,
                 })
             }
         }
@@ -391,6 +420,114 @@ impl ResourceDetailPanel {
             )
     }
 
+    /// The related kind's list columns over the selected objects; a row's
+    /// first cell opens its detail.
+    fn render_related(&self, related: RelatedRows, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let muted = theme.muted_foreground;
+        let cell = |id: SharedString, text: String, first: bool| {
+            div()
+                .id(id)
+                .aria_label(text.clone())
+                .test_support()
+                .w(px(if first { 240. } else { 140. }))
+                .flex_shrink_0()
+                .pr_2()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .child(text)
+        };
+        let lowercase = related.title.to_lowercase();
+        let empty = if related.forbidden {
+            Some(format!("No permission to list {lowercase} here"))
+        } else if related.table.rows.is_empty() {
+            Some(format!("No {lowercase}"))
+        } else {
+            None
+        };
+        let mut children = vec![
+            div()
+                .id("related-title")
+                .aria_label(related.title)
+                .test_support()
+                .text_xs()
+                .text_color(muted)
+                .child(related.title)
+                .into_any_element(),
+        ];
+        match empty {
+            Some(text) => children.push(
+                div()
+                    .id("related-empty")
+                    .aria_label(text.clone())
+                    .test_support()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(text)
+                    .into_any_element(),
+            ),
+            None => {
+                children.push(
+                    h_flex()
+                        .id("related-head")
+                        .text_sm()
+                        .text_color(muted)
+                        .children(
+                            related
+                                .table
+                                .columns
+                                .iter()
+                                .enumerate()
+                                .map(|(index, name)| {
+                                    cell(
+                                        SharedString::from(format!("related-column-{index}")),
+                                        name.clone(),
+                                        index == 0,
+                                    )
+                                }),
+                        )
+                        .into_any_element(),
+                );
+                for (row_index, row) in related.table.rows.into_iter().enumerate() {
+                    let target = DetailTarget::Builtin {
+                        kind: related.kind,
+                        key: row.key.clone(),
+                    };
+                    let mut cells = row.cells.into_iter().enumerate().map(|(index, text)| {
+                        cell(
+                            SharedString::from(format!("related-cell-{row_index}-{index}")),
+                            text,
+                            index == 0,
+                        )
+                    });
+                    let first = cells.next().map(|first| {
+                        first
+                            .id(SharedString::from(format!("related-row-{}", row.key)))
+                            .cursor_pointer()
+                            .text_color(theme.link)
+                            .on_click(
+                                cx.listener(move |_, _, _, cx| cx.emit(OpenDetail(target.clone()))),
+                            )
+                    });
+                    children.push(
+                        h_flex()
+                            .text_sm()
+                            .children(first)
+                            .children(cells)
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+        v_flex()
+            .id("detail-related")
+            .test_support()
+            .gap_1()
+            .p_2()
+            .children(children)
+            .into_any_element()
+    }
+
     fn render_confirm(&self, cascade: String, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let question = format!("Delete {}?", self.display_name());
@@ -568,6 +705,7 @@ fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
 }
 
 impl EventEmitter<OpenEditor> for ResourceDetailPanel {}
+impl EventEmitter<OpenDetail> for ResourceDetailPanel {}
 impl EventEmitter<PanelEvent> for ResourceDetailPanel {}
 
 impl Focusable for ResourceDetailPanel {
@@ -661,6 +799,9 @@ impl Render for ResourceDetailPanel {
             .into_any_element();
         let metadata = section("detail-metadata", "Metadata", metadata, cx);
         let status = section("detail-status", "Status", status, cx);
+        let related = resolved
+            .related
+            .map(|related| self.render_related(related, cx));
         let yaml = section("detail-yaml", "YAML", vec![yaml_lines], cx);
         let background = cx.theme().background;
 
@@ -685,6 +826,7 @@ impl Render for ResourceDetailPanel {
                     .bg(background)
                     .child(metadata)
                     .child(status)
+                    .children(related)
                     .child(yaml),
             )
             .into_any_element()

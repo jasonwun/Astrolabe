@@ -1,13 +1,15 @@
 //! Pods and Deployments on the generic list/detail pipeline (#17).
 
 use astrolabe::projection::workloads::{
-    deployment_detail, pod_detail, project_deployments, project_pods,
+    deployment_detail, pod_detail, project_deployments, project_pods, selector_matches,
 };
 use astrolabe::projection::{ReplicaCounts, SummaryTable};
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
+use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use std::collections::BTreeMap;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -428,4 +430,66 @@ fn recreate_strategy_has_no_rolling_parameters() {
         [("Strategy", "Recreate"), ("Selector", "app=web")]
             .map(|(k, v)| (k.to_string(), v.to_string()))
     );
+}
+
+fn selector(value: serde_json::Value) -> LabelSelector {
+    serde_json::from_value(value).unwrap()
+}
+
+fn labels(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+#[test]
+fn match_labels_must_all_match() {
+    let web = selector(serde_json::json!({"matchLabels": {"app": "web", "tier": "front"}}));
+    assert!(selector_matches(
+        &web,
+        Some(&labels(&[
+            ("app", "web"),
+            ("tier", "front"),
+            ("extra", "x")
+        ]))
+    ));
+    assert!(!selector_matches(&web, Some(&labels(&[("app", "web")]))));
+    assert!(!selector_matches(
+        &web,
+        Some(&labels(&[("app", "api"), ("tier", "front")]))
+    ));
+    assert!(!selector_matches(&web, None));
+}
+
+#[test]
+fn match_expressions_follow_label_selector_semantics() {
+    let expressions = selector(serde_json::json!({"matchExpressions": [
+        {"key": "tier", "operator": "In", "values": ["front", "edge"]},
+        {"key": "env", "operator": "NotIn", "values": ["dev"]},
+        {"key": "app", "operator": "Exists"},
+        {"key": "canary", "operator": "DoesNotExist"},
+    ]}));
+    let matching = labels(&[("tier", "edge"), ("app", "web")]);
+    assert!(selector_matches(&expressions, Some(&matching)));
+    for (key, value) in [("tier", "back"), ("env", "dev"), ("canary", "yes")] {
+        let mut changed = matching.clone();
+        changed.insert(key.to_string(), value.to_string());
+        assert!(
+            !selector_matches(&expressions, Some(&changed)),
+            "{key}={value}"
+        );
+    }
+    let mut no_app = matching.clone();
+    no_app.remove("app");
+    assert!(!selector_matches(&expressions, Some(&no_app)));
+    let unknown = selector(serde_json::json!({"matchExpressions": [
+        {"key": "app", "operator": "Gt", "values": ["1"]},
+    ]}));
+    assert!(!selector_matches(&unknown, Some(&matching)));
+}
+
+#[test]
+fn an_empty_selector_matches_everything() {
+    assert!(selector_matches(&LabelSelector::default(), None));
 }

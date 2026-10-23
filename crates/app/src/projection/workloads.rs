@@ -1,6 +1,8 @@
 //! Built-in workload kinds on the generic pipeline (#17): Pods and
 //! Deployments project to list rows and detail models like any kind.
 
+use std::collections::BTreeMap;
+
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Container, ContainerState, ContainerStatus, Pod};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
@@ -352,6 +354,33 @@ fn int_or_string(value: &IntOrString) -> String {
         IntOrString::Int(n) => n.to_string(),
         IntOrString::String(s) => s.clone(),
     }
+}
+
+/// Whether `labels` satisfy `selector`, with `LabelSelectorAsSelector`'s
+/// semantics: every term must hold, an empty selector matches everything,
+/// and an unknown operator matches nothing.
+pub fn selector_matches(
+    selector: &LabelSelector,
+    labels: Option<&BTreeMap<String, String>>,
+) -> bool {
+    let value = |key: &str| labels.and_then(|labels| labels.get(key));
+    let by_labels = selector
+        .match_labels
+        .iter()
+        .flatten()
+        .all(|(key, expected)| value(key) == Some(expected));
+    let by_expressions = selector.match_expressions.iter().flatten().all(|e| {
+        let values = e.values.as_deref().unwrap_or_default();
+        let found = value(&e.key);
+        match e.operator.as_str() {
+            "In" => found.is_some_and(|found| values.contains(found)),
+            "NotIn" => found.is_none_or(|found| !values.contains(found)),
+            "Exists" => found.is_some(),
+            "DoesNotExist" => found.is_none(),
+            _ => false,
+        }
+    });
+    by_labels && by_expressions
 }
 
 /// A label selector in `kubectl` selector syntax (`app=web,tier in (a,b)`).

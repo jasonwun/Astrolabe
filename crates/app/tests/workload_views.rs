@@ -387,3 +387,123 @@ fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
         assert!(window.try_find("detail-restart").is_none());
     });
 }
+
+/// Synthetic Event (plausible shape, not captured from a server).
+fn pod_event(name: &str, reason: &str, pod: &str, uid: &str) -> DynamicObject {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1", "kind": "Event",
+        "metadata": {"name": name, "namespace": "default"},
+        "involvedObject": {"kind": "Pod", "name": pod, "namespace": "default", "uid": uid},
+        "type": "Warning", "reason": reason, "message": format!("{reason} on {pod}"),
+        "lastTimestamp": "2026-10-22T11:58:00Z",
+    }))
+    .unwrap()
+}
+
+/// Synthetic Pod (plausible shape, not captured from a server).
+fn labeled_pod(name: &str, app: &str) -> DynamicObject {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": name, "namespace": "default", "uid": format!("uid-{name}"),
+                     "labels": {"app": app}},
+        "spec": {"containers": [{"name": "app", "image": "nginx"}]},
+        "status": {"phase": "Running"}
+    }))
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn a_pod_detail_lists_its_events(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let (mut events, event_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![
+            (key(BuiltinKind::Pods, "default"), pod_events),
+            (key(BuiltinKind::Events, "default"), event_events),
+        ],
+    );
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-pods", cx));
+    snapshot(&mut pods, vec![crashing_pod("default")]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    snapshot(
+        &mut events,
+        vec![
+            pod_event("web-1.backoff", "BackOff", "web-1", "uid-pod"),
+            // An earlier Pod with the same name: not this one.
+            pod_event("web-1.old", "Killing", "web-1", "uid-gone"),
+            pod_event("api-1.pulled", "Pulled", "api-1", "uid-api"),
+        ],
+    );
+    ui.settle();
+
+    ui.frame(|window, cx| {
+        let related = window.within("detail-related");
+        assert!(related.try_find_by_label("Events").is_some());
+        assert!(related.try_find_by_label("Involved Object").is_some());
+        assert!(related.try_find_by_label("BackOff on web-1").is_some());
+        assert!(related.try_find_by_label("Killing").is_none());
+        assert!(related.try_find_by_label("Pulled").is_none());
+        window.click("related-row-default/web-1.backoff", cx);
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Event default/web-1.backoff")
+                .is_some()
+        );
+        assert!(
+            window
+                .within("detail-status")
+                .try_find_by_label("Involved object: pod/web-1")
+                .is_some()
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
+    let (mut deployments, deployment_events) = mpsc::channel(32);
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![
+            (key(BuiltinKind::Deployments, "default"), deployment_events),
+            (key(BuiltinKind::Pods, "default"), pod_events),
+        ],
+    );
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-deployments", cx));
+    snapshot(&mut deployments, vec![web_deployment()]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .within("detail-related")
+                .try_find_by_label("No pods")
+                .is_some()
+        );
+    });
+    snapshot(
+        &mut pods,
+        vec![labeled_pod("web-1", "web"), labeled_pod("api-1", "api")],
+    );
+    ui.settle();
+
+    ui.frame(|window, cx| {
+        let related = window.within("detail-related");
+        assert!(related.try_find_by_label("Pods").is_some());
+        assert!(related.try_find("related-row-default/web-1").is_some());
+        assert!(related.try_find("related-row-default/api-1").is_none());
+        window.click("related-row-default/web-1", cx);
+    });
+    ui.settle();
+    ui.frame(|window, _| assert!(window.try_find_by_label("Pod default/web-1").is_some()));
+}
