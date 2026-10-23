@@ -25,7 +25,7 @@ use crate::projection::{
     definition_detail, namespace_detail,
 };
 use crate::resource_list::OpenDetail;
-use crate::session::{CustomKindId, LogRequest, ObjectRef, Operation, Session};
+use crate::session::{CustomKindId, ExecRequest, LogRequest, ObjectRef, Operation, Session};
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
 
@@ -46,6 +46,12 @@ pub struct OpenLogs {
     pub request: LogRequest,
 }
 
+/// A shell was chosen: open an Exec tab running it.
+pub struct OpenExec {
+    pub title: String,
+    pub request: ExecRequest,
+}
+
 /// Edit YAML was pressed: open an editor tab on this text.
 pub struct OpenEditor {
     pub title: String,
@@ -58,8 +64,8 @@ pub struct ResourceDetailPanel {
     confirm_delete: bool,
     /// The Scale field, while open.
     scale: Option<Entity<InputState>>,
-    /// The container picker, while a Pod action waits for a container.
-    picking: Option<PodAction>,
+    /// The picker, while a Pod action waits for a container or a shell.
+    picking: Option<Picking>,
     notice: Option<String>,
     focus_handle: FocusHandle,
 }
@@ -68,7 +74,19 @@ pub struct ResourceDetailPanel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PodAction {
     Logs,
+    Exec,
 }
+
+/// What the picker asks: a container, or for Exec in a chosen container,
+/// a shell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Picking {
+    action: PodAction,
+    container: Option<String>,
+}
+
+/// The shells Exec offers; `sh` exists in nearly every image.
+const SHELLS: &[&str] = &["sh", "bash"];
 
 /// The object as of this render, with what its actions need.
 struct Resolved {
@@ -321,35 +339,92 @@ impl ResourceDetailPanel {
     fn pick_container(&mut self, action: PodAction, cx: &mut Context<Self>) {
         match self.containers(cx).as_slice() {
             [only] => self.run_in(action, only.clone(), cx),
-            _ => {
-                self.picking = Some(action);
-                cx.notify();
-            }
+            _ => self.ask(action, None, cx),
         }
     }
 
+    fn ask(&mut self, action: PodAction, container: Option<String>, cx: &mut Context<Self>) {
+        self.picking = Some(Picking { action, container });
+        cx.notify();
+    }
+
     fn run_in(&mut self, action: PodAction, container: String, cx: &mut Context<Self>) {
+        let DetailTarget::Builtin { key, .. } = &self.target else {
+            return;
+        };
+        match action {
+            PodAction::Logs => {
+                self.picking = None;
+                cx.notify();
+                cx.emit(OpenLogs {
+                    title: format!("Logs {key} ({container})"),
+                    request: LogRequest {
+                        pod: key.clone(),
+                        container,
+                    },
+                })
+            }
+            PodAction::Exec => self.ask(action, Some(container), cx),
+        }
+    }
+
+    fn exec(&mut self, container: String, shell: &str, cx: &mut Context<Self>) {
         self.picking = None;
         cx.notify();
         let DetailTarget::Builtin { key, .. } = &self.target else {
             return;
         };
-        match action {
-            PodAction::Logs => cx.emit(OpenLogs {
-                title: format!("Logs {key} ({container})"),
-                request: LogRequest {
-                    pod: key.clone(),
-                    container,
-                },
-            }),
-        }
+        cx.emit(OpenExec {
+            title: format!("Exec {key} ({container})"),
+            request: ExecRequest {
+                pod: key.clone(),
+                container,
+                shell: shell.to_string(),
+            },
+        });
     }
 
-    fn render_picker(&self, action: PodAction, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_picker(&self, picking: Picking, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let prompt = match action {
-            PodAction::Logs => "Logs: choose a container",
+        let Picking { action, container } = picking;
+        let prompt = match (action, &container) {
+            (PodAction::Logs, _) => "Logs: choose a container".to_string(),
+            (PodAction::Exec, None) => "Exec: choose a container".to_string(),
+            (PodAction::Exec, Some(container)) => format!("Exec in {container}: choose a shell"),
         };
+        let choices: Vec<AnyElement> =
+            match container {
+                None => self
+                    .containers(cx)
+                    .into_iter()
+                    .map(|container| {
+                        button(
+                            SharedString::from(format!("pick-container-{container}")),
+                            container.clone(),
+                            theme.border,
+                        )
+                        .on_click(cx.listener(move |panel, _, _, cx| {
+                            panel.run_in(action, container.clone(), cx)
+                        }))
+                        .into_any_element()
+                    })
+                    .collect(),
+                Some(container) => SHELLS
+                    .iter()
+                    .map(|shell| {
+                        let container = container.clone();
+                        button(
+                            SharedString::from(format!("pick-shell-{shell}")),
+                            *shell,
+                            theme.border,
+                        )
+                        .on_click(cx.listener(move |panel, _, _, cx| {
+                            panel.exec(container.clone(), shell, cx)
+                        }))
+                        .into_any_element()
+                    })
+                    .collect(),
+            };
         h_flex()
             .id("container-picker")
             .test_support()
@@ -360,21 +435,12 @@ impl ResourceDetailPanel {
             .child(
                 div()
                     .id("picker-prompt")
-                    .aria_label(prompt)
+                    .aria_label(prompt.clone())
                     .test_support()
                     .text_sm()
                     .child(prompt),
             )
-            .children(self.containers(cx).into_iter().map(|container| {
-                button(
-                    SharedString::from(format!("pick-container-{container}")),
-                    container.clone(),
-                    theme.border,
-                )
-                .on_click(
-                    cx.listener(move |panel, _, _, cx| panel.run_in(action, container.clone(), cx)),
-                )
-            }))
+            .children(choices)
             .child(
                 button("picker-cancel", "Cancel", theme.border).on_click(cx.listener(
                     |panel, _, _, cx| {
@@ -433,6 +499,9 @@ impl ResourceDetailPanel {
                 match action {
                     Action::Logs => button("detail-logs", "Logs").on_click(
                         cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Logs, cx)),
+                    ),
+                    Action::Exec => button("detail-exec", "Exec").on_click(
+                        cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Exec, cx)),
                     ),
                     Action::Scale => button("detail-scale", "Scale")
                         .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
@@ -808,6 +877,7 @@ fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
 impl EventEmitter<OpenEditor> for ResourceDetailPanel {}
 impl EventEmitter<OpenDetail> for ResourceDetailPanel {}
 impl EventEmitter<OpenLogs> for ResourceDetailPanel {}
+impl EventEmitter<OpenExec> for ResourceDetailPanel {}
 impl EventEmitter<PanelEvent> for ResourceDetailPanel {}
 
 impl Focusable for ResourceDetailPanel {
@@ -913,8 +983,8 @@ impl Render for ResourceDetailPanel {
             .test_support()
             .size_full()
             .child(self.render_toolbar(resolved.actions, cx))
-            .when_some(self.picking, |this, action| {
-                this.child(self.render_picker(action, cx))
+            .when_some(self.picking.clone(), |this, picking| {
+                this.child(self.render_picker(picking, cx))
             })
             .when_some(self.scale.clone(), |this, input| {
                 this.child(self.render_scale(&input, replicas, cx))

@@ -76,6 +76,18 @@ pub trait TerminalBackend: Send + Sync + 'static {
     fn shutdown(&self);
 }
 
+/// The far end of a remote session (`kubectl exec`): it owns the process,
+/// receives the user's input and grid size, and sends output back through
+/// [`TerminalBackend::feed_output`].
+pub trait RemoteSink: Send + Sync + 'static {
+    /// Bytes from the user → the remote process's stdin.
+    fn input(&self, bytes: &[u8]);
+    /// The grid size changed (the remote TTY's window size).
+    fn resize(&self, cols: u16, rows: u16);
+    /// The session ended on this side; called once.
+    fn close(&self);
+}
+
 /// Events flowing from the engine/session to the UI.
 ///
 /// `Wakeup` is expected to arrive in bursts; the UI must coalesce (batch
@@ -312,4 +324,16 @@ pub fn display_only(
     scrollback: usize,
 ) -> (AlacrittyBackend, EventStream) {
     AlacrittyBackend::display_only(cols, rows, scrollback)
+}
+
+/// Create a remote terminal: rendered like [`display_only`], with input
+/// and resizes going to `sink`. Report the far end's exit through
+/// [`AlacrittyBackend::remote_exited`].
+pub fn remote(
+    cols: usize,
+    rows: usize,
+    scrollback: usize,
+    sink: Box<dyn RemoteSink>,
+) -> (AlacrittyBackend, EventStream) {
+    AlacrittyBackend::remote(cols, rows, scrollback, sink)
 }

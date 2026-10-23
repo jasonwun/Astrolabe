@@ -12,6 +12,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 futures.workspace = true
 tracing.workspace = true
+# Exec stream pump (#17): the IO traits kube-client's AttachedProcess uses.
+tokio = { workspace = true, features = ["io-util", "macros"] }
 
 [dev-dependencies]
 http.workspace = true

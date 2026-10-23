@@ -5,6 +5,7 @@
 
 pub mod builtin;
 mod cluster_io;
+pub mod exec;
 pub mod jsonpath;
 pub mod kube_bridge;
 pub mod logs;

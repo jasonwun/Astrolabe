@@ -16,8 +16,11 @@ use tokio::sync::oneshot;
 
 use crate::builtin::BuiltinKind;
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{LogChunk, LogStream, ScriptedCluster, SharedClient};
+pub use crate::cluster_io::{
+    ExecOutput, ExecSession, LogChunk, LogStream, ScriptedCluster, SharedClient,
+};
 use crate::store::{ObjectKey, Store};
+pub use astrolabe_kube::pod::ExecInput;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
 /// new CRD is served only once it turns Established, which arrives as an
@@ -256,6 +259,14 @@ pub enum Operation {
 pub struct LogRequest {
     pub pod: ObjectKey,
     pub container: String,
+}
+
+/// Run `shell` interactively in `container` of Pod `pod` (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecRequest {
+    pub pod: ObjectKey,
+    pub container: String,
+    pub shell: String,
 }
 
 pub struct Session {
@@ -577,13 +588,18 @@ impl Session {
     }
 
     /// Run one operation; resolves with the server's answer.
+    pub fn operate(&mut self, operation: Operation) -> oneshot::Receiver<Result<(), String>> {
+        self.io.operate(operation)
+    }
+
     /// Follow one container's log, from a bounded tail.
     pub fn logs(&mut self, request: LogRequest) -> LogStream {
         self.io.logs(request)
     }
 
-    pub fn operate(&mut self, operation: Operation) -> oneshot::Receiver<Result<(), String>> {
-        self.io.operate(operation)
+    /// Open an interactive shell in one container.
+    pub fn exec(&mut self, request: ExecRequest) -> ExecSession {
+        self.io.exec(request)
     }
 
     /// The live session's shared client; `None` for scripted sessions.

@@ -8,12 +8,15 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::builtin::BuiltinKind;
+use crate::exec::ExecPanel;
 use crate::logs::LogsPanel;
 use crate::resource_detail::{
-    DetailTarget, EditorPanel, OpenEditor, OpenLogs, ResourceDetailPanel,
+    DetailTarget, EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel,
 };
 use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
-use crate::session::{ConnectionHealth, CustomKindId, LogRequest, ScriptedCluster, Session};
+use crate::session::{
+    ConnectionHealth, CustomKindId, ExecRequest, LogRequest, ScriptedCluster, Session,
+};
 use crate::workspace::STALE_MESSAGE;
 use crate::yaml_editor::YamlEditorView;
 
@@ -108,6 +111,10 @@ impl SessionView {
             this.open_logs(event.title.clone(), event.request.clone(), window, cx);
         })
         .detach();
+        cx.subscribe_in(&panel, window, |this, _, event: &OpenExec, window, cx| {
+            this.open_exec(event.title.clone(), event.request.clone(), window, cx);
+        })
+        .detach();
         self.add_tab(panel_handle(panel.clone()), window, cx);
         self.details.insert(target, panel);
     }
@@ -121,6 +128,18 @@ impl SessionView {
     ) {
         let stream = self.session.update(cx, |session, _| session.logs(request));
         let panel = cx.new(|cx| LogsPanel::new(title, stream, window, cx));
+        self.add_tab(panel_handle(panel), window, cx);
+    }
+
+    fn open_exec(
+        &mut self,
+        title: String,
+        request: ExecRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self.session.update(cx, |session, _| session.exec(request));
+        let panel = cx.new(|cx| ExecPanel::new(title, session, window, cx));
         self.add_tab(panel_handle(panel), window, cx);
     }
 

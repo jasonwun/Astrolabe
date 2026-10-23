@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{
-    LogRequest, ObjectRef, ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster,
-    WatchError, WatchKey,
+    ExecInput, ExecOutput, ExecRequest, LogRequest, ObjectRef, ObjectWatchMessage, Operation,
+    ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::store::ObjectKey;
 use astrolabe::workspace::WorkspaceView;
@@ -75,6 +75,7 @@ fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
 type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
 type Operated = Rc<RefCell<Vec<Operation>>>;
 type Logged = Rc<RefCell<Vec<LogRequest>>>;
+type Execed = Rc<RefCell<Vec<(ExecRequest, mpsc::UnboundedReceiver<ExecInput>)>>>;
 
 struct Ui<'a> {
     cx: &'a mut VisualTestContext,
@@ -82,6 +83,7 @@ struct Ui<'a> {
     deleted: Deleted,
     operated: Operated,
     logged: Logged,
+    execed: Execed,
 }
 
 fn open(
@@ -93,6 +95,7 @@ fn open(
     let deleted: Deleted = Rc::default();
     let operated: Operated = Rc::default();
     let logged: Logged = Rc::default();
+    let execed: Execed = Rc::default();
     let mut cluster = ScriptedCluster::new(namespace_events)
         .delete({
             let deleted = deleted.clone();
@@ -122,6 +125,20 @@ fn open(
                 logged.borrow_mut().push(request.clone());
                 vec![Ok(b"starting\n".to_vec()), Err("stream reset".to_string())]
             }
+        })
+        .exec({
+            let execed = execed.clone();
+            move |request: &ExecRequest, input| {
+                execed.borrow_mut().push((request.clone(), input));
+                let exit = match request.shell.as_str() {
+                    "bash" => Ok(0),
+                    _ => Err("container not found (\"app\")".to_string()),
+                };
+                vec![
+                    ExecOutput::Bytes(b"/ # ".to_vec()),
+                    ExecOutput::Exited(exit),
+                ]
+            }
         });
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
@@ -135,6 +152,7 @@ fn open(
         deleted,
         operated,
         logged,
+        execed,
     }
 }
 
@@ -603,4 +621,83 @@ fn a_single_container_pod_opens_its_logs_directly(cx: &mut TestAppContext) {
         );
     });
     assert_eq!(ui.logged.borrow().len(), 1);
+}
+
+#[gpui_kit::test]
+fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_pod_detail(&mut ui, &mut pods, sidecar_pod());
+
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.frame(|window, cx| {
+        let picker = window.within("container-picker");
+        assert!(
+            picker
+                .try_find_by_label("Exec: choose a container")
+                .is_some()
+        );
+        window.click("pick-container-sidecar", cx);
+    });
+    ui.frame(|window, cx| {
+        let picker = window.within("container-picker");
+        assert!(
+            picker
+                .try_find_by_label("Exec in sidecar: choose a shell")
+                .is_some()
+        );
+        assert!(picker.try_find("pick-shell-sh").is_some());
+        window.click("pick-shell-bash", cx);
+    });
+    ui.settle();
+
+    ui.frame(|window, _| {
+        assert!(window.try_find("container-picker").is_none());
+        assert!(
+            window
+                .try_find_by_label("Exec default/web-1 (sidecar)")
+                .is_some()
+        );
+        assert!(window.try_find_by_label("Exited with code 0").is_some());
+    });
+    let mut execed = ui.execed.borrow_mut();
+    let (request, input) = &mut execed[0];
+    assert_eq!(
+        *request,
+        ExecRequest {
+            pod: ObjectKey::new(Some("default".into()), "web-1"),
+            container: "sidecar".to_string(),
+            shell: "bash".to_string(),
+        }
+    );
+    assert!(
+        matches!(input.try_recv(), Ok(ExecInput::Resize { .. })),
+        "the remote TTY learns the terminal's size"
+    );
+}
+
+#[gpui_kit::test]
+fn a_single_container_pod_asks_only_for_the_shell(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_pod_detail(&mut ui, &mut pods, crashing_pod("default"));
+
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.frame(|window, cx| {
+        assert!(
+            window
+                .try_find_by_label("Exec in app: choose a shell")
+                .is_some()
+        );
+        window.click("pick-shell-sh", cx);
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Session failed: container not found (\"app\")")
+                .is_some()
+        );
+    });
+    assert_eq!(ui.execed.borrow()[0].0.shell, "sh");
 }

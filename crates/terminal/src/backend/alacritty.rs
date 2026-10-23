@@ -26,9 +26,9 @@ use alacritty_terminal::tty::{self, Options, Shell};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape as VteCursorShape, NamedColor};
 
 use super::{
-    BackendStats, ClipboardKind, CursorShape, DEFAULT_BG, DEFAULT_FG, ExitStatus, RenderSnapshot,
-    Rgba, SessionConfig, SnapshotCell, SnapshotCursor, StyleFlags, TerminalBackend, TerminalEvent,
-    TerminalModes,
+    BackendStats, ClipboardKind, CursorShape, DEFAULT_BG, DEFAULT_FG, ExitStatus, RemoteSink,
+    RenderSnapshot, Rgba, SessionConfig, SnapshotCell, SnapshotCursor, StyleFlags, TerminalBackend,
+    TerminalEvent, TerminalModes,
 };
 
 /// Formatter carried by alacritty's OSC52-load event; never leaves this module.
@@ -204,8 +204,10 @@ pub struct AlacrittyBackend {
     shared: Arc<Shared>,
     /// None for display-only terminals.
     io: Mutex<Option<IoHandle>>,
-    /// VT parser for display-only terminals.
+    /// VT parser for display-only and remote terminals.
     parser: Mutex<Option<ansi::Processor>>,
+    /// The far end of a remote terminal, until shutdown.
+    remote: Mutex<Option<Box<dyn RemoteSink>>>,
     last_size: Mutex<(usize, usize)>,
 }
 
@@ -286,6 +288,7 @@ impl AlacrittyBackend {
             shared,
             io: Mutex::new(Some(IoHandle { sender, joiner })),
             parser: Mutex::new(None),
+            remote: Mutex::new(None),
             last_size: Mutex::new((config.cols, config.rows)),
         };
         (backend, events)
@@ -300,9 +303,30 @@ impl AlacrittyBackend {
             shared,
             io: Mutex::new(None),
             parser: Mutex::new(Some(ansi::Processor::default())),
+            remote: Mutex::new(None),
             last_size: Mutex::new((cols, rows)),
         };
         (backend, events)
+    }
+
+    /// Remote terminal (`kubectl exec`): output is fed like a display-only
+    /// terminal's; input and resizes go to `sink`, which first learns the
+    /// starting size.
+    pub fn remote(
+        cols: usize,
+        rows: usize,
+        scrollback: usize,
+        sink: Box<dyn RemoteSink>,
+    ) -> (Self, EventStream) {
+        let (backend, events) = Self::display_only(cols, rows, scrollback);
+        sink.resize(cols as u16, rows as u16);
+        *backend.remote.lock().unwrap() = Some(sink);
+        (backend, events)
+    }
+
+    /// The remote process ended with `status`.
+    pub fn remote_exited(&self, status: ExitStatus) {
+        self.shared.emit(TerminalEvent::ChildExit(status));
     }
 
     /// Feed an ANSI byte stream into a display-only terminal.
@@ -333,6 +357,9 @@ impl TerminalBackend for AlacrittyBackend {
         if let Some(io) = self.io.lock().unwrap().as_ref() {
             let _ = io.sender.send(Msg::Input(Cow::Owned(bytes.to_vec())));
         }
+        if let Some(remote) = self.remote.lock().unwrap().as_ref() {
+            remote.input(bytes);
+        }
     }
 
     fn resize(&self, cols: usize, rows: usize, cell_width: u16, cell_height: u16) {
@@ -351,6 +378,9 @@ impl TerminalBackend for AlacrittyBackend {
                 cell_width,
                 cell_height,
             }));
+        }
+        if let Some(remote) = self.remote.lock().unwrap().as_ref() {
+            remote.resize(cols as u16, rows as u16);
         }
     }
 
@@ -495,6 +525,9 @@ impl TerminalBackend for AlacrittyBackend {
         if let Some(io) = self.io.lock().unwrap().take() {
             let _ = io.sender.send(Msg::Shutdown);
             let _ = io.joiner.join();
+        }
+        if let Some(remote) = self.remote.lock().unwrap().take() {
+            remote.close();
         }
     }
 }
