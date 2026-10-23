@@ -4,6 +4,7 @@
 //! and issues no GET/watch of its own. Built-in kinds reuse this template.
 
 use astrolabe_kube::crd::KindResource;
+use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::discovery::ApiResource;
@@ -13,13 +14,16 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::projection::{DetailModel, custom_resource_detail, definition_detail};
+use crate::projection::{DetailModel, custom_resource_detail, definition_detail, namespace_detail};
 use crate::session::{CustomKindId, Session, WatchKey};
 use crate::yaml_editor::YamlEditorView;
 
 /// What a detail tab shows: one object, addressed in its list's store.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DetailTarget {
+    Namespace {
+        name: String,
+    },
     Definition {
         name: String,
     },
@@ -68,6 +72,14 @@ impl ResourceDetailPanel {
         let session = self.session.read(cx);
         let now = Timestamp::now();
         match &self.target {
+            DetailTarget::Namespace { name } => {
+                let namespace = session.namespace_object(name)?;
+                Some(Resolved {
+                    model: namespace_detail(namespace, now),
+                    resource: ApiResource::erase::<Namespace>(&()),
+                    cascade: "Deleting a Namespace deletes every object in it.".to_string(),
+                })
+            }
             DetailTarget::Definition { name } => {
                 let crd = session.crds().get(None, name)?;
                 Some(Resolved {
@@ -104,6 +116,7 @@ impl ResourceDetailPanel {
 
     fn display_name(&self) -> String {
         match &self.target {
+            DetailTarget::Namespace { name } => format!("Namespace {name}"),
             DetailTarget::Definition { name } => name.clone(),
             DetailTarget::Custom {
                 id,
@@ -132,7 +145,9 @@ impl ResourceDetailPanel {
             return;
         };
         let (namespace, name) = match &self.target {
-            DetailTarget::Definition { name } => (None, name.clone()),
+            DetailTarget::Namespace { name } | DetailTarget::Definition { name } => {
+                (None, name.clone())
+            }
             DetailTarget::Custom {
                 namespace, name, ..
             } => (namespace.clone(), name.clone()),
@@ -386,6 +401,9 @@ impl Render for ResourceDetailPanel {
         let background = cx.theme().background;
 
         v_flex()
+            .id("detail-tab")
+            .aria_label(self.display_name())
+            .test_support()
             .size_full()
             .child(self.render_toolbar(cx))
             .when(self.confirm_delete, |this| {

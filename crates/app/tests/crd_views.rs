@@ -351,3 +351,81 @@ fn namespace_selection_switches_namespaced_lists(cx: &mut TestAppContext) {
         assert!(window.try_find("row-default/nightly").is_none());
     });
 }
+
+/// Synthetic Namespace (plausible shape, not captured from a server).
+fn namespace_in_phase(
+    name: &str,
+    phase: &str,
+) -> astrolabe_kube::k8s_openapi::api::core::v1::Namespace {
+    serde_json::from_value(serde_json::json!({
+        "metadata": {"name": name, "uid": "uid-ns"},
+        "spec": {"finalizers": ["kubernetes"]},
+        "status": {"phase": phase}
+    }))
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn namespace_rows_open_a_live_detail_tab_with_delete(cx: &mut TestAppContext) {
+    let mut ui = open(cx, Vec::new());
+    snapshot(
+        &mut ui.namespaces,
+        vec![namespace_in_phase("old", "Active")],
+    );
+    snapshot(&mut ui.crds, Vec::new());
+    ui.settle();
+
+    ui.frame(|window, cx| window.click("row-old", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(window.try_find_by_label("Namespace old").is_some());
+        let status = window.within("detail-status");
+        assert!(status.try_find_by_label("Phase: Active").is_some());
+        assert!(status.try_find_by_label("Finalizers: kubernetes").is_some());
+    });
+
+    // The tab follows the session's namespace watch; no GET of its own.
+    ui.namespaces
+        .try_send(Ok(Event::Apply(namespace_in_phase("old", "Terminating"))))
+        .unwrap();
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .within("detail-status")
+                .try_find_by_label("Phase: Terminating")
+                .is_some()
+        );
+    });
+
+    // Edit YAML opens the manifest in its own tab; the row reselects the detail.
+    ui.frame(|window, cx| window.click("detail-edit", cx));
+    ui.settle();
+    ui.frame(|window, cx| {
+        assert!(window.try_find_by_label("Edit Namespace old").is_some());
+        window.click("nav-namespaces", cx);
+    });
+    ui.frame(|window, cx| window.click("row-old", cx));
+    ui.settle();
+
+    ui.frame(|window, cx| window.click("detail-delete", cx));
+    ui.frame(|window, cx| {
+        assert!(
+            window
+                .try_find_by_label("Deleting a Namespace deletes every object in it.")
+                .is_some()
+        );
+        window.click("delete-confirm-yes", cx);
+    });
+    ui.settle();
+    assert_eq!(
+        *ui.deleted.borrow(),
+        [("Namespace".to_string(), None, "old".to_string())]
+    );
+
+    ui.namespaces
+        .try_send(Ok(Event::Delete(namespace_in_phase("old", "Terminating"))))
+        .unwrap();
+    ui.settle();
+    ui.frame(|window, _| assert!(window.try_find("detail-gone").is_some()));
+}

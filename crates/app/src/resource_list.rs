@@ -110,7 +110,7 @@ impl ResourceListPanel {
             None => (None, key.to_string()),
         };
         let target = match &self.view {
-            ListView::Namespaces => return,
+            ListView::Namespaces => DetailTarget::Namespace { name },
             ListView::Definitions => DetailTarget::Definition { name },
             ListView::Custom(id) => {
                 let session = self.session.read(cx);
