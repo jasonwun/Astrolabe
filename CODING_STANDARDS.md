@@ -66,3 +66,15 @@ namespace)` watch architecture, and reported `Api::<Namespace>::all` as
 prohibited cluster-wide watching although Namespace itself is
 cluster-scoped and the acceptance criteria require a live Namespaces
 list; both findings were withdrawn (#26/#27 retro).
+
+## Test assertions in no-behaviour-change refactors
+
+In a refactor ticket that forbids behaviour change, updating an
+assertion's literals for a changed type (e.g. `"ns/name"` becoming
+`ObjectKey::new(..)`) is mechanical and allowed. Changing what an
+assertion checks, or deleting one, is a behaviour change and is a
+finding.
+
+Origin: #42 asked for unchanged test assertions while replacing string
+row keys with `ObjectKey`; the implementer had to guess the line (#42
+retro).

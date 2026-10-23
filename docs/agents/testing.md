@@ -61,6 +61,18 @@ intend to tear it down.
 cargo llvm-cov --workspace --summary-only
 ```
 
+To compare against a baseline (e.g. a refactor that must not regress),
+build the baseline in a throwaway worktree, not via `git stash` (the stash
+stack is shared across worktrees), and filter the summary rows by file
+basename:
+
+```sh
+git worktree add ../cov-base origin/main
+(cd ../cov-base && cargo llvm-cov --workspace --summary-only) | grep -E 'session\.rs|store\.rs'
+cargo llvm-cov --workspace --summary-only | grep -E 'session\.rs|store\.rs'
+git worktree remove ../cov-base
+```
+
 ## Mutation testing
 
 `astrolabe-kube` keeps a zero-missed bar — after touching it, rerun and
@@ -94,6 +106,22 @@ localhost apiserver) inside a `#[gpui_kit::test]` — reference implementation:
   a connect-time request; the test then times out far from the cause.
 
 Origin: #28 session (first two), #16 session (third).
+
+## Merge gate
+
+`main` is gated by the repository ruleset "main" alone (no classic branch
+protection). Its required checks are the `ci.yml` job names `lint`,
+`build-test`, `e2e`, `e2e-legacy-discovery`, `mutants`; squash is the only
+merge method. Renaming or adding a CI job means updating the ruleset in the
+same PR, or the gate waits on a check that never reports:
+
+```sh
+gh api repos/jasonwun/Astrolabe/rulesets/25450659 \
+  --jq '.rules[] | select(.type=="required_status_checks").parameters.required_status_checks[].context'
+```
+
+Origin: #42 session (a ruleset with an emptied required list sat beside
+stale classic protection unnoticed).
 
 ## Cargo.lock sticky-pin conflicts
 
