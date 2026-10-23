@@ -11,13 +11,14 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
 use futures::{Stream, StreamExt, channel::mpsc};
-use gpui_kit::Context;
+use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
 
 use crate::builtin::BuiltinKind;
 use crate::cluster_io::ClusterIo;
 pub use crate::cluster_io::{
-    ExecOutput, ExecSession, LogChunk, LogStream, ScriptedCluster, SharedClient,
+    ExecOutput, ExecSession, ForwardEvent, LogChunk, LogStream, PortForward, ScriptedCluster,
+    SharedClient,
 };
 use crate::store::{ObjectKey, Store};
 pub use astrolabe_kube::pod::ExecInput;
@@ -269,6 +270,32 @@ pub struct ExecRequest {
     pub shell: String,
 }
 
+/// Forward a localhost port to `port` of Pod `pod` (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForwardRequest {
+    pub pod: ObjectKey,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardState {
+    Starting,
+    /// Accepting on this localhost port.
+    Listening(u16),
+    Failed(String),
+}
+
+/// A port-forward the session keeps until stopped, whether or not its
+/// Pod's detail tab is open.
+pub struct Forward {
+    pub request: ForwardRequest,
+    pub state: ForwardState,
+    /// The latest connection's failure, while the listener goes on.
+    pub last_error: Option<String>,
+    /// Owns the I/O; dropping it stops the forward.
+    _reports: Task<()>,
+}
+
 pub struct Session {
     watch_key: WatchKey,
     namespaces: Watched<Namespace>,
@@ -282,6 +309,7 @@ pub struct Session {
     objects: BTreeMap<WatchKey, Watched<DynamicObject>>,
     namespace: String,
     viewing: Option<Viewing>,
+    forwards: Vec<Forward>,
     io: ClusterIo,
 }
 
@@ -325,6 +353,7 @@ impl Session {
             objects: BTreeMap::new(),
             namespace: "default".to_string(),
             viewing: None,
+            forwards: Vec::new(),
             io,
         };
         session.start_watch(
@@ -600,6 +629,76 @@ impl Session {
     /// Open an interactive shell in one container.
     pub fn exec(&mut self, request: ExecRequest) -> ExecSession {
         self.io.exec(request)
+    }
+
+    /// Start forwarding `request`, unless it already is; a failed forward
+    /// starts over.
+    pub fn forward_port(&mut self, request: ForwardRequest, cx: &mut Context<Self>) {
+        if let Some(index) = self.forward_index(&request) {
+            if !matches!(self.forwards[index].state, ForwardState::Failed(_)) {
+                return;
+            }
+            self.forwards.remove(index);
+        }
+        let mut forward = self.io.port_forward(request.clone());
+        let reports = {
+            let request = request.clone();
+            cx.spawn(async move |this, cx| {
+                while let Some(event) = forward.next().await {
+                    let applied = this.update(cx, |session, cx| {
+                        session.forward_reported(&request, event, cx)
+                    });
+                    if applied.is_err() {
+                        return;
+                    }
+                }
+            })
+        };
+        self.forwards.push(Forward {
+            request,
+            state: ForwardState::Starting,
+            last_error: None,
+            _reports: reports,
+        });
+        cx.notify();
+    }
+
+    pub fn stop_forward(&mut self, request: &ForwardRequest, cx: &mut Context<Self>) {
+        if let Some(index) = self.forward_index(request) {
+            self.forwards.remove(index);
+            cx.notify();
+        }
+    }
+
+    /// The forwards to one Pod, in the order they started.
+    pub fn forwards<'a>(&'a self, pod: &'a ObjectKey) -> impl Iterator<Item = &'a Forward> {
+        self.forwards
+            .iter()
+            .filter(move |forward| forward.request.pod == *pod)
+    }
+
+    fn forward_index(&self, request: &ForwardRequest) -> Option<usize> {
+        self.forwards
+            .iter()
+            .position(|forward| forward.request == *request)
+    }
+
+    fn forward_reported(
+        &mut self,
+        request: &ForwardRequest,
+        event: ForwardEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.forward_index(request) else {
+            return;
+        };
+        let forward = &mut self.forwards[index];
+        match event {
+            ForwardEvent::Listening(port) => forward.state = ForwardState::Listening(port),
+            ForwardEvent::ConnectionFailed(error) => forward.last_error = Some(error),
+            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error),
+        }
+        cx.notify();
     }
 
     /// The live session's shared client; `None` for scripted sessions.

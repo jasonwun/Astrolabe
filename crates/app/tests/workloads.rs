@@ -1,7 +1,8 @@
 //! Pods and Deployments on the generic list/detail pipeline (#17).
 
 use astrolabe::projection::workloads::{
-    deployment_detail, pod_detail, project_deployments, project_pods, selector_matches,
+    PodPort, deployment_detail, pod_detail, pod_ports, project_deployments, project_pods,
+    selector_matches,
 };
 use astrolabe::projection::{ReplicaCounts, SummaryTable};
 use astrolabe::store::ObjectKey;
@@ -492,4 +493,48 @@ fn match_expressions_follow_label_selector_semantics() {
 #[test]
 fn an_empty_selector_matches_everything() {
     assert!(selector_matches(&LabelSelector::default(), None));
+}
+
+#[test]
+fn pod_ports_are_the_declared_tcp_ports_in_container_order() {
+    let pod = pod(
+        serde_json::json!({
+            "initContainers": [{"name": "migrate", "ports": [{"containerPort": 9000}]}],
+            "containers": [
+                {"name": "app", "ports": [
+                    {"name": "http", "containerPort": 8080},
+                    {"name": "dns", "containerPort": 53, "protocol": "UDP"}
+                ]},
+                {"name": "sidecar", "ports": [
+                    {"name": "admin", "containerPort": 9901, "protocol": "TCP"},
+                    {"name": "dup", "containerPort": 8080}
+                ]},
+                {"name": "plain"}
+            ]
+        }),
+        serde_json::json!({}),
+    );
+    assert_eq!(
+        pod_ports(&pod),
+        [
+            PodPort {
+                port: 9000,
+                label: "9000 (migrate)".to_string()
+            },
+            PodPort {
+                port: 8080,
+                label: "8080/http (app)".to_string()
+            },
+            PodPort {
+                port: 9901,
+                label: "9901/admin (sidecar)".to_string()
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_pod_without_a_spec_has_no_ports() {
+    let pod: Pod = serde_json::from_value(serde_json::json!({"metadata": {"name": "p"}})).unwrap();
+    assert!(pod_ports(&pod).is_empty());
 }

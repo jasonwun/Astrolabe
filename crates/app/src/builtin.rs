@@ -34,6 +34,8 @@ pub enum Action {
     Logs,
     /// Open a shell in a container (container picked when several).
     Exec,
+    /// Forward a localhost port to one of the Pod's declared ports.
+    PortForward,
     /// Set a Deployment's desired replicas.
     Scale,
     RolloutRestart,
@@ -88,7 +90,13 @@ static PODS: Registration = Registration {
     resource: || ApiResource::erase::<Pod>(&()),
     list: |objects, now| typed_list(objects, now, project_pods),
     detail: |object, now| Some(pod_detail(&parse::<Pod>(object)?, now)),
-    actions: &[Action::Logs, Action::Exec, Action::Edit, Action::Delete],
+    actions: &[
+        Action::Logs,
+        Action::Exec,
+        Action::PortForward,
+        Action::Edit,
+        Action::Delete,
+    ],
     cascade: "A controller that owns this Pod will create a replacement.",
     related: Some(Related {
         title: "Events",

@@ -17,8 +17,8 @@ use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
-    CrdWatchMessage, ExecRequest, LogRequest, NamespaceWatchMessage, ObjectRef, ObjectWatchMessage,
-    Operation, WatchError, WatchKey, WatchMessage,
+    CrdWatchMessage, ExecRequest, ForwardRequest, LogRequest, NamespaceWatchMessage, ObjectRef,
+    ObjectWatchMessage, Operation, WatchError, WatchKey, WatchMessage,
 };
 
 /// Retry interval for a watch the apiserver refused with 403.
@@ -28,6 +28,7 @@ type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, String>>;
 type DeleteFn = Box<dyn FnMut(&ObjectRef) -> Result<(), String>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
+type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
 type ExecFn = Box<dyn FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput>>;
 
 /// A piece of a log stream, or why the stream stopped.
@@ -90,9 +91,42 @@ impl Drop for ExecSession {
     }
 }
 
+/// What a port-forward reports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardEvent {
+    /// Accepting on this localhost port.
+    Listening(u16),
+    /// One connection's forward failed; the listener goes on.
+    ConnectionFailed(String),
+    /// The forward stopped: the client, the bind or the listener failed.
+    Failed(String),
+}
+
+/// A running port-forward; dropping it closes the listener and its
+/// connections.
+pub struct PortForward {
+    events: mpsc::UnboundedReceiver<ForwardEvent>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PortForward {
+    /// The next report; `None` once the forward is gone.
+    pub async fn next(&mut self) -> Option<ForwardEvent> {
+        self.events.next().await
+    }
+}
+
+impl Drop for PortForward {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
 /// Hand-fed cluster I/O for tests and demos: watch events come from
-/// channels, discovery, delete, operations, log chunks and exec output
-/// from closures.
+/// channels, discovery, delete, operations, log chunks, exec output and
+/// port-forward reports from closures.
 pub struct ScriptedCluster {
     pub(crate) namespaces: Option<mpsc::Receiver<NamespaceWatchMessage>>,
     pub(crate) crds: Option<mpsc::Receiver<CrdWatchMessage>>,
@@ -102,6 +136,7 @@ pub struct ScriptedCluster {
     operate: OperateFn,
     logs: LogsFn,
     exec: ExecFn,
+    port_forward: ForwardFn,
 }
 
 impl ScriptedCluster {
@@ -115,6 +150,7 @@ impl ScriptedCluster {
             operate: Box::new(|_| Ok(())),
             logs: Box::new(|_| Vec::new()),
             exec: Box::new(|_, _| Vec::new()),
+            port_forward: Box::new(|_| Vec::new()),
         }
     }
 
@@ -167,6 +203,15 @@ impl ScriptedCluster {
         exec: impl FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput> + 'static,
     ) -> Self {
         self.exec = Box::new(exec);
+        self
+    }
+
+    /// The reports a port-forward request makes.
+    pub fn port_forward(
+        mut self,
+        port_forward: impl FnMut(&ForwardRequest) -> Vec<ForwardEvent> + 'static,
+    ) -> Self {
+        self.port_forward = Box::new(port_forward);
         self
     }
 }
@@ -401,6 +446,63 @@ impl ClusterIo {
                 ExecSession {
                     input,
                     output,
+                    task: Some(task),
+                }
+            }
+        }
+    }
+
+    /// Forward a localhost port to one Pod port: the same port when free.
+    pub(crate) fn port_forward(&mut self, request: ForwardRequest) -> PortForward {
+        let (sender, events) = mpsc::unbounded();
+        match self {
+            Self::Scripted(cluster) => {
+                for event in (cluster.port_forward)(&request) {
+                    let _ = sender.unbounded_send(event);
+                }
+                PortForward { events, task: None }
+            }
+            Self::Live { client, .. } => {
+                let client = client.clone();
+                let task = spawn_cluster_task(async move {
+                    let failed = |error: String| {
+                        let _ = sender.unbounded_send(ForwardEvent::Failed(error));
+                    };
+                    let client = match client.await {
+                        Ok(client) => client,
+                        Err(error) => return failed(error),
+                    };
+                    let port = request.port;
+                    let listener = match astrolabe_kube::pod::bind_local(port).await {
+                        Ok(listener) => listener,
+                        Err(error) => return failed(format!("bind localhost: {error}")),
+                    };
+                    match listener.local_addr() {
+                        Ok(local) => {
+                            let _ = sender.unbounded_send(ForwardEvent::Listening(local.port()));
+                        }
+                        Err(error) => return failed(format!("bind localhost: {error}")),
+                    }
+                    let pod = &request.pod;
+                    let connections = sender.clone();
+                    let result = astrolabe_kube::pod::port_forward(
+                        &client,
+                        pod.namespace.as_deref().unwrap_or_default(),
+                        &pod.name,
+                        port,
+                        listener,
+                        move |error| {
+                            let _ =
+                                connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
+                        },
+                    )
+                    .await;
+                    if let Err(error) = result {
+                        failed(format!("listener: {error}"));
+                    }
+                });
+                PortForward {
+                    events,
                     task: Some(task),
                 }
             }

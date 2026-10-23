@@ -1,4 +1,4 @@
-//! Pod streams and exec exit codes against a mock apiserver (synthetic responses, never
+//! Pod streams, exec exit codes and port-forward listeners against a mock apiserver (synthetic responses, never
 //! captured from a real apiserver).
 
 use std::sync::{Arc, Mutex};
@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
-use astrolabe_kube::pod::{ExecError, LOG_TAIL_LINES, exec, exit_code, logs};
+use astrolabe_kube::pod::{
+    ExecError, LOG_TAIL_LINES, bind_local, exec, exit_code, logs, port_forward,
+};
 use futures::TryStreamExt;
 
 type Uris = Arc<Mutex<Vec<String>>>;
@@ -153,4 +155,57 @@ fn an_unknown_status_is_a_protocol_error() {
         exit_code(Some(&status("{}"))),
         Err("error stream protocol error: unknown error".to_string())
     );
+}
+
+#[tokio::test]
+async fn a_free_local_port_is_used_as_asked() {
+    let free = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let listener = bind_local(free).await.unwrap();
+    assert_eq!(listener.local_addr().unwrap().port(), free);
+}
+
+#[tokio::test]
+async fn a_taken_local_port_falls_back_to_a_free_one() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let listener = bind_local(port).await.unwrap();
+    let local = listener.local_addr().unwrap();
+    assert!(local.ip().is_loopback());
+    assert_ne!(local.port(), port);
+}
+
+#[tokio::test]
+async fn each_local_connection_forwards_to_the_pod_port() {
+    // A plain 403 instead of a WebSocket upgrade: each connection fails,
+    // and the listener keeps accepting.
+    let (client, seen) = mock_client(
+        403,
+        r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"pods \"web-1\" is forbidden: User \"dev\" cannot create resource \"pods/portforward\""}"#,
+    );
+    let listener = bind_local(0).await.unwrap();
+    let local = listener.local_addr().unwrap();
+    let (failures, mut failed) = tokio::sync::mpsc::unbounded_channel();
+    let forward = tokio::spawn(async move {
+        port_forward(&client, "team-a", "web-1", 8080, listener, move |error| {
+            let _ = failures.send(error);
+        })
+        .await
+    });
+
+    for _ in 0..2 {
+        let _connection = tokio::net::TcpStream::connect(local).await.unwrap();
+        let error = failed.recv().await.unwrap();
+        // kube-rs reports a refused upgrade by its status, not its body.
+        assert!(error.contains("403 Forbidden"), "{error}");
+    }
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["/api/v1/namespaces/team-a/pods/web-1/portforward?&ports=8080"; 2]
+    );
+    assert!(!forward.is_finished());
+    forward.abort();
 }

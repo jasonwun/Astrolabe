@@ -369,6 +369,52 @@ pub fn pod_containers(pod: &Pod) -> Vec<String> {
         .collect()
 }
 
+/// A declared container port, as Port Forward offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PodPort {
+    pub port: u16,
+    /// `8080/http (app)`: the port, its name if any, and its container.
+    pub label: String,
+}
+
+/// The Pod's declared TCP ports (port-forward carries TCP only), init
+/// containers first, each port once.
+pub fn pod_ports(pod: &Pod) -> Vec<PodPort> {
+    let Some(spec) = &pod.spec else {
+        return Vec::new();
+    };
+    let mut ports: Vec<PodPort> = Vec::new();
+    for container in spec
+        .init_containers
+        .iter()
+        .flatten()
+        .chain(&spec.containers)
+    {
+        for declared in container.ports.iter().flatten() {
+            let tcp = declared
+                .protocol
+                .as_deref()
+                .is_none_or(|protocol| protocol == "TCP");
+            let Ok(port) = u16::try_from(declared.container_port) else {
+                continue;
+            };
+            if !tcp || ports.iter().any(|known| known.port == port) {
+                continue;
+            }
+            let name = declared
+                .name
+                .as_ref()
+                .map(|name| format!("/{name}"))
+                .unwrap_or_default();
+            ports.push(PodPort {
+                port,
+                label: format!("{port}{name} ({})", container.name),
+            });
+        }
+    }
+    ports
+}
+
 /// Whether `labels` satisfy `selector`, with `LabelSelectorAsSelector`'s
 /// semantics: every term must hold, an empty selector matches everything,
 /// and an unknown operator matches nothing.

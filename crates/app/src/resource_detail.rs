@@ -19,13 +19,16 @@ use gpui_kit::*;
 use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
-use crate::projection::workloads::pod_containers;
+use crate::projection::workloads::{pod_containers, pod_ports};
 use crate::projection::{
     DetailModel, ReplicaCounts, ResourceTable, SummaryTable, custom_resource_detail,
     definition_detail, namespace_detail,
 };
 use crate::resource_list::OpenDetail;
-use crate::session::{CustomKindId, ExecRequest, LogRequest, ObjectRef, Operation, Session};
+use crate::session::{
+    CustomKindId, ExecRequest, ForwardRequest, ForwardState, LogRequest, ObjectRef, Operation,
+    Session,
+};
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
 
@@ -64,7 +67,8 @@ pub struct ResourceDetailPanel {
     confirm_delete: bool,
     /// The Scale field, while open.
     scale: Option<Entity<InputState>>,
-    /// The picker, while a Pod action waits for a container or a shell.
+    /// The picker, while a Pod action waits for a container, a shell or a
+    /// port.
     picking: Option<Picking>,
     notice: Option<String>,
     focus_handle: FocusHandle,
@@ -75,6 +79,8 @@ pub struct ResourceDetailPanel {
 enum PodAction {
     Logs,
     Exec,
+    /// Picks a port, not a container.
+    Forward,
 }
 
 /// What the picker asks: a container, or for Exec in a chosen container,
@@ -320,19 +326,22 @@ impl ResourceDetailPanel {
 
     /// The shown Pod's containers, init containers first.
     fn containers(&self, cx: &App) -> Vec<String> {
+        self.pod(cx)
+            .map(|pod| pod_containers(&pod))
+            .unwrap_or_default()
+    }
+
+    /// The shown Pod, as of the watch.
+    fn pod(&self, cx: &App) -> Option<Pod> {
         let DetailTarget::Builtin { kind, key } = &self.target else {
-            return Vec::new();
+            return None;
         };
-        let Some(namespace) = key.namespace.as_deref() else {
-            return Vec::new();
-        };
+        let namespace = key.namespace.as_deref()?;
         let session = self.session.read(cx);
         session
             .object_watch(&session.builtin_watch_key(*kind, namespace))
             .and_then(|watch| watch.get(Some(namespace), &key.name))
             .and_then(|object| object.clone().try_parse::<Pod>().ok())
-            .map(|pod| pod_containers(&pod))
-            .unwrap_or_default()
     }
 
     /// Run `action` in the only container, or ask which one.
@@ -365,7 +374,22 @@ impl ResourceDetailPanel {
                 })
             }
             PodAction::Exec => self.ask(action, Some(container), cx),
+            PodAction::Forward => {}
         }
+    }
+
+    fn forward(&mut self, port: u16, cx: &mut Context<Self>) {
+        self.picking = None;
+        cx.notify();
+        let DetailTarget::Builtin { key, .. } = &self.target else {
+            return;
+        };
+        let request = ForwardRequest {
+            pod: key.clone(),
+            port,
+        };
+        self.session
+            .update(cx, |session, cx| session.forward_port(request, cx));
     }
 
     fn exec(&mut self, container: String, shell: &str, cx: &mut Context<Self>) {
@@ -385,23 +409,25 @@ impl ResourceDetailPanel {
     }
 
     fn render_picker(&self, picking: Picking, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let border = cx.theme().border;
         let Picking { action, container } = picking;
         let prompt = match (action, &container) {
             (PodAction::Logs, _) => "Logs: choose a container".to_string(),
             (PodAction::Exec, None) => "Exec: choose a container".to_string(),
             (PodAction::Exec, Some(container)) => format!("Exec in {container}: choose a shell"),
+            (PodAction::Forward, _) => "Port forward: choose a port".to_string(),
         };
         let choices: Vec<AnyElement> =
-            match container {
-                None => self
+            match (action, container) {
+                (PodAction::Forward, _) => self.render_ports(cx),
+                (_, None) => self
                     .containers(cx)
                     .into_iter()
                     .map(|container| {
                         button(
                             SharedString::from(format!("pick-container-{container}")),
                             container.clone(),
-                            theme.border,
+                            border,
                         )
                         .on_click(cx.listener(move |panel, _, _, cx| {
                             panel.run_in(action, container.clone(), cx)
@@ -409,14 +435,14 @@ impl ResourceDetailPanel {
                         .into_any_element()
                     })
                     .collect(),
-                Some(container) => SHELLS
+                (_, Some(container)) => SHELLS
                     .iter()
                     .map(|shell| {
                         let container = container.clone();
                         button(
                             SharedString::from(format!("pick-shell-{shell}")),
                             *shell,
-                            theme.border,
+                            border,
                         )
                         .on_click(cx.listener(move |panel, _, _, cx| {
                             panel.exec(container.clone(), shell, cx)
@@ -431,7 +457,7 @@ impl ResourceDetailPanel {
             .gap_2()
             .p_2()
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(border)
             .child(
                 div()
                     .id("picker-prompt")
@@ -442,13 +468,121 @@ impl ResourceDetailPanel {
             )
             .children(choices)
             .child(
-                button("picker-cancel", "Cancel", theme.border).on_click(cx.listener(
+                button("picker-cancel", "Cancel", border).on_click(cx.listener(
                     |panel, _, _, cx| {
                         panel.picking = None;
                         cx.notify();
                     },
                 )),
             )
+    }
+
+    /// One button per declared port, or why there are none.
+    fn render_ports(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let border = cx.theme().border;
+        let ports = self.pod(cx).map(|pod| pod_ports(&pod)).unwrap_or_default();
+        if ports.is_empty() {
+            let text = "No declared ports";
+            return vec![
+                div()
+                    .id("picker-empty")
+                    .aria_label(text)
+                    .test_support()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(text)
+                    .into_any_element(),
+            ];
+        }
+        ports
+            .into_iter()
+            .map(|port| {
+                let number = port.port;
+                button(
+                    SharedString::from(format!("pick-port-{number}")),
+                    port.label,
+                    border,
+                )
+                .on_click(cx.listener(move |panel, _, _, cx| panel.forward(number, cx)))
+                .into_any_element()
+            })
+            .collect()
+    }
+
+    /// The session's forwards to the shown Pod, each with Stop.
+    fn render_forwards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let DetailTarget::Builtin { key, .. } = &self.target else {
+            return None;
+        };
+        let theme = cx.theme();
+        let session = self.session.read(cx);
+        let rows: Vec<AnyElement> = session
+            .forwards(key)
+            .map(|forward| {
+                let request = forward.request.clone();
+                let port = request.port;
+                let (text, color) = match &forward.state {
+                    ForwardState::Starting => {
+                        (format!("Starting → {port}…"), theme.muted_foreground)
+                    }
+                    ForwardState::Listening(local) => {
+                        (format!("localhost:{local} → {port}"), theme.foreground)
+                    }
+                    ForwardState::Failed(error) => {
+                        (format!("Forward to {port} failed: {error}"), theme.danger)
+                    }
+                };
+                let last_error = forward.last_error.as_ref().map(|error| {
+                    let text = format!("Last connection failed: {error}");
+                    div()
+                        .id(SharedString::from(format!("forward-error-{port}")))
+                        .aria_label(text.clone())
+                        .test_support()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .child(text)
+                });
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("forward-{port}")))
+                            .aria_label(text.clone())
+                            .test_support()
+                            .text_sm()
+                            .text_color(color)
+                            .child(text),
+                    )
+                    .children(last_error)
+                    .child(
+                        button(
+                            SharedString::from(format!("forward-stop-{port}")),
+                            "Stop",
+                            theme.border,
+                        )
+                        .on_click(cx.listener(move |panel, _, _, cx| {
+                            panel
+                                .session
+                                .update(cx, |session, cx| session.stop_forward(&request, cx))
+                        })),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        if rows.is_empty() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .id("detail-forwards")
+                .test_support()
+                .gap_1()
+                .p_2()
+                .border_b_1()
+                .border_color(theme.border)
+                .children(rows)
+                .into_any_element(),
+        )
     }
 
     fn show_notice(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
@@ -502,6 +636,9 @@ impl ResourceDetailPanel {
                     ),
                     Action::Exec => button("detail-exec", "Exec").on_click(
                         cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Exec, cx)),
+                    ),
+                    Action::PortForward => button("detail-forward", "Port Forward").on_click(
+                        cx.listener(|panel, _, _, cx| panel.ask(PodAction::Forward, None, cx)),
                     ),
                     Action::Scale => button("detail-scale", "Scale")
                         .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
@@ -992,6 +1129,7 @@ impl Render for ResourceDetailPanel {
             .when(self.confirm_delete, |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })
+            .children(self.render_forwards(cx))
             .child(
                 v_flex()
                     .id("detail-body")

@@ -1,4 +1,7 @@
-//! Pod streams: container logs and interactive exec (#17).
+//! Pod streams: container logs, interactive exec and port-forward (#17).
+
+use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 use futures::{AsyncBufReadExt, SinkExt as _, Stream, StreamExt as _};
 use k8s_openapi::api::core::v1::Pod;
@@ -6,6 +9,8 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
 use kube::api::{AttachParams, LogParams, TerminalSize};
 use kube::{Api, Client};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinSet;
 
 /// How much history a log view starts from before following.
 pub const LOG_TAIL_LINES: i64 = 1000;
@@ -134,4 +139,70 @@ pub fn exit_code(status: Option<&Status>) -> Result<u8, String> {
         Some("Failure") => Err(status.message.clone().unwrap_or_default()),
         _ => Err("error stream protocol error: unknown error".to_string()),
     }
+}
+
+/// A listener on `localhost:port`, or on a free port when that one cannot
+/// be bound (taken, or privileged).
+pub async fn bind_local(port: u16) -> std::io::Result<TcpListener> {
+    match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
+        Ok(listener) => Ok(listener),
+        Err(_) => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await,
+    }
+}
+
+/// `kubectl port-forward pod/name local:port` over a listener the caller
+/// bound: each accepted connection gets its own forward to `port`, and a
+/// connection's failure goes to `on_error` while the listener keeps
+/// accepting. Runs until the listener fails; dropping the future closes
+/// every open connection.
+pub async fn port_forward(
+    client: &Client,
+    namespace: &str,
+    name: &str,
+    port: u16,
+    listener: TcpListener,
+    on_error: impl Fn(String) + Send + Sync + 'static,
+) -> std::io::Result<()> {
+    let api: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    let on_error = Arc::new(on_error);
+    let mut connections = JoinSet::new();
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (local, _) = accepted?;
+                let (api, name, on_error) = (api.clone(), name.to_string(), on_error.clone());
+                connections.spawn(async move {
+                    if let Err(error) = forward(&api, &name, port, local).await {
+                        on_error(error);
+                    }
+                });
+            }
+            Some(_) = connections.join_next() => {}
+        }
+    }
+}
+
+/// One local connection's forward, until either side closes.
+async fn forward(
+    api: &Api<Pod>,
+    name: &str,
+    port: u16,
+    mut local: TcpStream,
+) -> Result<(), String> {
+    let mut forwarder = api
+        .portforward(name, &[port])
+        .await
+        .map_err(|error| error.to_string())?;
+    let requested = "the forwarder carries the requested port";
+    let mut remote = forwarder.take_stream(port).expect(requested);
+    let remote_error = forwarder.take_error(port).expect(requested);
+    let copied = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+    drop(remote);
+    forwarder.join().await.map_err(|error| error.to_string())?;
+    // The server's own report (e.g. nothing listening on the port) says
+    // more than the copy's broken pipe.
+    if let Some(error) = remote_error.await {
+        return Err(error);
+    }
+    copied.map(|_| ()).map_err(|error| error.to_string())
 }

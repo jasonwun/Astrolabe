@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, LogRequest, ObjectRef, ObjectWatchMessage, Operation,
-    ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
+    ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::store::ObjectKey;
 use astrolabe::workspace::WorkspaceView;
@@ -75,6 +75,7 @@ fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
 type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
 type Operated = Rc<RefCell<Vec<Operation>>>;
 type Logged = Rc<RefCell<Vec<LogRequest>>>;
+type Forwarded = Rc<RefCell<Vec<ForwardRequest>>>;
 type Execed = Rc<RefCell<Vec<(ExecRequest, mpsc::UnboundedReceiver<ExecInput>)>>>;
 
 struct Ui<'a> {
@@ -84,6 +85,7 @@ struct Ui<'a> {
     operated: Operated,
     logged: Logged,
     execed: Execed,
+    forwarded: Forwarded,
 }
 
 fn open(
@@ -96,6 +98,7 @@ fn open(
     let operated: Operated = Rc::default();
     let logged: Logged = Rc::default();
     let execed: Execed = Rc::default();
+    let forwarded: Forwarded = Rc::default();
     let mut cluster = ScriptedCluster::new(namespace_events)
         .delete({
             let deleted = deleted.clone();
@@ -139,6 +142,19 @@ fn open(
                     ExecOutput::Exited(exit),
                 ]
             }
+        })
+        .port_forward({
+            let forwarded = forwarded.clone();
+            move |request: &ForwardRequest| {
+                forwarded.borrow_mut().push(request.clone());
+                let mut events = vec![ForwardEvent::Listening(request.port + 10_000)];
+                if request.port == 9901 {
+                    events.push(ForwardEvent::ConnectionFailed(
+                        "error forwarding port 9901: connection refused".to_string(),
+                    ));
+                }
+                events
+            }
         });
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
@@ -153,6 +169,7 @@ fn open(
         operated,
         logged,
         execed,
+        forwarded,
     }
 }
 
@@ -700,4 +717,103 @@ fn a_single_container_pod_asks_only_for_the_shell(cx: &mut TestAppContext) {
         );
     });
     assert_eq!(ui.execed.borrow()[0].0.shell, "sh");
+}
+
+/// Synthetic Pod (plausible shape, not captured from a server).
+fn serving_pod() -> DynamicObject {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {"containers": [
+            {"name": "app", "image": "nginx", "ports": [{"name": "http", "containerPort": 8080}]},
+            {"name": "sidecar", "image": "envoy", "ports": [{"name": "admin", "containerPort": 9901}]}
+        ]},
+        "status": {"phase": "Running"}
+    }))
+    .unwrap()
+}
+
+fn forward(ui: &mut Ui<'_>, port: u16) {
+    ui.frame(|window, cx| window.click("detail-forward", cx));
+    ui.frame(|window, cx| window.click(format!("pick-port-{port}"), cx));
+    ui.settle();
+}
+
+#[gpui_kit::test]
+fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_pod_detail(&mut ui, &mut pods, serving_pod());
+
+    ui.frame(|window, cx| window.click("detail-forward", cx));
+    ui.frame(|window, _| {
+        let picker = window.within("container-picker");
+        assert!(
+            picker
+                .try_find_by_label("Port forward: choose a port")
+                .is_some()
+        );
+        assert!(picker.try_find_by_label("8080/http (app)").is_some());
+        assert!(picker.try_find_by_label("9901/admin (sidecar)").is_some());
+    });
+    ui.frame(|window, cx| window.click("pick-port-8080", cx));
+    ui.settle();
+    forward(&mut ui, 9901);
+    forward(&mut ui, 8080);
+
+    ui.frame(|window, _| {
+        assert!(window.try_find("container-picker").is_none());
+        let forwards = window.within("detail-forwards");
+        assert!(
+            forwards
+                .try_find_by_label("localhost:18080 → 8080")
+                .is_some()
+        );
+        assert!(
+            forwards
+                .try_find_by_label("localhost:19901 → 9901")
+                .is_some()
+        );
+        assert!(
+            forwards
+                .try_find_by_label(
+                    "Last connection failed: error forwarding port 9901: connection refused"
+                )
+                .is_some()
+        );
+    });
+    let pod = ObjectKey::new(Some("default".into()), "web-1");
+    assert_eq!(
+        *ui.forwarded.borrow(),
+        [
+            ForwardRequest {
+                pod: pod.clone(),
+                port: 8080
+            },
+            ForwardRequest { pod, port: 9901 },
+        ],
+        "a port already forwarded is not forwarded twice"
+    );
+
+    ui.frame(|window, cx| window.click("forward-stop-8080", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        let forwards = window.within("detail-forwards");
+        assert!(forwards.try_find("forward-stop-8080").is_none());
+        assert!(forwards.try_find("forward-stop-9901").is_some());
+    });
+}
+
+#[gpui_kit::test]
+fn a_pod_without_declared_ports_has_nothing_to_forward(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_pod_detail(&mut ui, &mut pods, crashing_pod("default"));
+
+    ui.frame(|window, cx| window.click("detail-forward", cx));
+    ui.frame(|window, _| {
+        let picker = window.within("container-picker");
+        assert!(picker.try_find_by_label("No declared ports").is_some());
+        assert!(window.try_find("detail-forwards").is_none());
+    });
 }
