@@ -15,7 +15,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::projection::{DetailModel, custom_resource_detail, definition_detail, namespace_detail};
-use crate::session::{CustomKindId, Session};
+use crate::session::{CustomKindId, ObjectRef, Session};
+use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
 
 /// What a detail tab shows: one object, addressed in its list's store.
@@ -23,18 +24,9 @@ use crate::yaml_editor::YamlEditorView;
 /// the kind's current preferred version, so a version change keeps the tab.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DetailTarget {
-    Namespace {
-        name: String,
-    },
-    Definition {
-        name: String,
-    },
-    Custom {
-        id: CustomKindId,
-        /// The object's own namespace; `None` when cluster-scoped.
-        namespace: Option<String>,
-        name: String,
-    },
+    Namespace { name: String },
+    Definition { name: String },
+    Custom { id: CustomKindId, key: ObjectKey },
 }
 
 /// Edit YAML was pressed: open an editor tab on this text.
@@ -54,7 +46,7 @@ pub struct ResourceDetailPanel {
 /// The object as of this render, with what Delete needs.
 struct Resolved {
     model: DetailModel,
-    resource: ApiResource,
+    object: ObjectRef,
     cascade: String,
 }
 
@@ -63,9 +55,9 @@ impl ResourceDetailPanel {
         cx.observe(&session, |panel, session, cx| {
             // A preferred version change needs the new version's watch, even
             // with the kind's list closed.
-            if let DetailTarget::Custom { id, namespace, .. } = &panel.target {
+            if let DetailTarget::Custom { id, key } = &panel.target {
                 session.update(cx, |session, cx| {
-                    session.watch_custom_object(id, namespace.clone(), cx)
+                    session.watch_custom_object(id, key.namespace.clone(), cx)
                 });
             }
             cx.notify();
@@ -88,7 +80,10 @@ impl ResourceDetailPanel {
                 let namespace = session.namespace_object(name)?;
                 Some(Resolved {
                     model: namespace_detail(namespace, now),
-                    resource: ApiResource::erase::<Namespace>(&()),
+                    object: ObjectRef {
+                        resource: ApiResource::erase::<Namespace>(&()),
+                        key: ObjectKey::cluster_scoped(name.clone()),
+                    },
                     cascade: "Deleting a Namespace deletes every object in it.".to_string(),
                 })
             }
@@ -96,29 +91,30 @@ impl ResourceDetailPanel {
                 let crd = session.crds().get(None, name)?;
                 Some(Resolved {
                     model: definition_detail(crd, now),
-                    resource: ApiResource::erase::<CustomResourceDefinition>(&()),
+                    object: ObjectRef {
+                        resource: ApiResource::erase::<CustomResourceDefinition>(&()),
+                        key: ObjectKey::cluster_scoped(name.clone()),
+                    },
                     cascade: format!(
                         "Deleting a CustomResourceDefinition also deletes every {} object in the cluster.",
                         crd.spec.names.kind
                     ),
                 })
             }
-            DetailTarget::Custom {
-                id,
-                namespace,
-                name,
-            } => {
+            DetailTarget::Custom { id, key } => {
                 let kind = session.custom_kind(id)?;
                 let KindResource::Served(resource) = &kind.resource else {
                     return None;
                 };
-                let watch = session.custom_object_watch_key(kind, namespace.as_deref());
-                let object = session
-                    .custom_watch(&watch)?
-                    .get(namespace.as_deref(), name)?;
+                let namespace = key.namespace.as_deref();
+                let watch = session.custom_object_watch_key(kind, namespace);
+                let object = session.custom_watch(&watch)?.get(namespace, &key.name)?;
                 Some(Resolved {
                     model: custom_resource_detail(kind, object, now),
-                    resource: resource.clone(),
+                    object: ObjectRef {
+                        resource: resource.clone(),
+                        key: key.clone(),
+                    },
                     cascade: "Objects that list it in ownerReferences will be garbage-collected."
                         .to_string(),
                 })
@@ -130,14 +126,7 @@ impl ResourceDetailPanel {
         match &self.target {
             DetailTarget::Namespace { name } => format!("Namespace {name}"),
             DetailTarget::Definition { name } => name.clone(),
-            DetailTarget::Custom {
-                id,
-                namespace,
-                name,
-            } => match namespace {
-                Some(namespace) => format!("{} {namespace}/{name}", id.kind),
-                None => format!("{} {name}", id.kind),
-            },
+            DetailTarget::Custom { id, key } => format!("{} {key}", id.kind),
         }
     }
 
@@ -155,17 +144,9 @@ impl ResourceDetailPanel {
         let Some(resolved) = self.resolve(cx) else {
             return;
         };
-        let (namespace, name) = match &self.target {
-            DetailTarget::Namespace { name } | DetailTarget::Definition { name } => {
-                (None, name.clone())
-            }
-            DetailTarget::Custom {
-                namespace, name, ..
-            } => (namespace.clone(), name.clone()),
-        };
-        let result = self.session.update(cx, |session, _| {
-            session.delete(resolved.resource, namespace, name)
-        });
+        let result = self
+            .session
+            .update(cx, |session, _| session.delete(resolved.object));
         self.notice = Some("Deleting…".to_string());
         cx.notify();
         cx.spawn(async move |panel, cx| {

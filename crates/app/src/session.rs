@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe_kube::crd::{self, CustomGroup, CustomKind, KindResource};
@@ -9,21 +10,18 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
-use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt as _, SinkExt, Stream, StreamExt, channel::mpsc};
+use futures::{Stream, StreamExt, channel::mpsc};
 use gpui_kit::Context;
 use tokio::sync::oneshot;
 
-use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
-use crate::store::Store;
+use crate::cluster_io::ClusterIo;
+pub use crate::cluster_io::{ScriptedCluster, SharedClient};
+use crate::store::{ObjectKey, Store};
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
 /// new CRD is served only once it turns Established, which arrives as an
 /// update of the same object.
 pub const CRD_DEBOUNCE: Duration = Duration::from_millis(400);
-
-/// Retry interval for a watch the apiserver refused with 403.
-const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
 
 /// A failed watch, as the session sees it. `forbidden` marks an RBAC
 /// denial (HTTP 403), which some views present as an empty state instead
@@ -49,7 +47,7 @@ impl WatchError {
         }
     }
 
-    fn from_watcher(error: &watcher::Error) -> Self {
+    pub(crate) fn from_watcher(error: &watcher::Error) -> Self {
         Self {
             message: error.to_string(),
             forbidden: astrolabe_kube::watch::is_forbidden(error),
@@ -107,9 +105,21 @@ pub enum ConnectionHealth {
     Stale,
 }
 
+/// What one watch message did to its store's object set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotChange {
+    Unchanged,
+    /// The first complete list arrived.
+    FirstSnapshot,
+    /// An object changed, or a relist replaced the snapshot (it may hide
+    /// changes missed while disconnected).
+    Changed,
+}
+
 /// One watcher's store plus its connection state: old data stays visible
 /// (stale) through a relist until the complete replacement arrives.
 pub struct Watched<K> {
+    cluster: String,
     label: String,
     store: Store<K>,
     health: ConnectionHealth,
@@ -119,8 +129,9 @@ pub struct Watched<K> {
 }
 
 impl<K: ResourceExt> Watched<K> {
-    fn new(label: impl Into<String>) -> Self {
+    fn new(cluster: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
+            cluster: cluster.into(),
             label: label.into(),
             store: Store::new(),
             health: ConnectionHealth::Connecting,
@@ -130,10 +141,10 @@ impl<K: ResourceExt> Watched<K> {
         }
     }
 
-    fn set_health(&mut self, cluster: &str, health: ConnectionHealth) {
+    fn set_health(&mut self, health: ConnectionHealth) {
         if self.health != health {
             tracing::info!(
-                cluster = %cluster,
+                cluster = %self.cluster,
                 from = ?self.health,
                 to = ?health,
                 "{} session health changed",
@@ -143,41 +154,49 @@ impl<K: ResourceExt> Watched<K> {
         }
     }
 
-    fn mark_stale(&mut self, cluster: &str) {
-        self.set_health(cluster, ConnectionHealth::Stale);
+    fn mark_stale(&mut self) {
+        self.set_health(ConnectionHealth::Stale);
         self.stale = self.has_snapshot;
     }
 
-    fn apply(&mut self, cluster: &str, message: WatchMessage<K>) {
+    fn apply(&mut self, message: WatchMessage<K>) -> SnapshotChange {
         match message {
             Ok(event) => {
                 let relist_completed = matches!(&event, Event::InitDone);
+                let change = match &event {
+                    Event::Apply(_) | Event::Delete(_) => SnapshotChange::Changed,
+                    Event::InitDone if self.has_snapshot => SnapshotChange::Changed,
+                    Event::InitDone => SnapshotChange::FirstSnapshot,
+                    Event::Init | Event::InitApply(_) => SnapshotChange::Unchanged,
+                };
                 match &event {
                     Event::Init => {
-                        self.set_health(cluster, ConnectionHealth::Connecting);
+                        self.set_health(ConnectionHealth::Connecting);
                         self.stale = self.has_snapshot;
                     }
                     Event::InitApply(_) => {}
                     Event::InitDone | Event::Apply(_) | Event::Delete(_) => {
                         self.has_snapshot = true;
                         self.forbidden = false;
-                        self.set_health(cluster, ConnectionHealth::Healthy);
+                        self.set_health(ConnectionHealth::Healthy);
                         self.stale = false;
                     }
                 }
                 self.store.apply(event);
                 if relist_completed {
                     tracing::info!(
-                        cluster = %cluster,
+                        cluster = %self.cluster,
                         objects = self.store.snapshot().len(),
                         "{} snapshot replaced",
                         self.label
                     );
                 }
+                change
             }
             Err(error) => {
                 self.forbidden = error.forbidden;
-                self.mark_stale(cluster);
+                self.mark_stale();
+                SnapshotChange::Unchanged
             }
         }
     }
@@ -208,68 +227,11 @@ impl<K: ResourceExt> Watched<K> {
     }
 }
 
-type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, String>>;
-type DeleteFn = Box<dyn FnMut(&ApiResource, Option<&str>, &str) -> Result<(), String>>;
-
-/// Hand-fed cluster I/O for tests and demos: watch events come from
-/// channels, discovery and delete from closures.
-pub struct ScriptedCluster {
-    namespaces: mpsc::Receiver<NamespaceWatchMessage>,
-    crds: Option<mpsc::Receiver<CrdWatchMessage>>,
-    custom: HashMap<WatchKey, mpsc::Receiver<CustomWatchMessage>>,
-    discover: DiscoverFn,
-    delete: DeleteFn,
-}
-
-impl ScriptedCluster {
-    pub fn new(namespaces: mpsc::Receiver<NamespaceWatchMessage>) -> Self {
-        Self {
-            namespaces,
-            crds: None,
-            custom: HashMap::new(),
-            discover: Box::new(|| Ok(ServedResources::default())),
-            delete: Box::new(|_, _, _| Ok(())),
-        }
-    }
-
-    pub fn crds(mut self, crds: mpsc::Receiver<CrdWatchMessage>) -> Self {
-        self.crds = Some(crds);
-        self
-    }
-
-    /// Events for the custom resource watch `key`, once a view opens it.
-    pub fn custom(mut self, key: WatchKey, events: mpsc::Receiver<CustomWatchMessage>) -> Self {
-        self.custom.insert(key, events);
-        self
-    }
-
-    pub fn discover(
-        mut self,
-        discover: impl FnMut() -> Result<ServedResources, String> + 'static,
-    ) -> Self {
-        self.discover = Box::new(discover);
-        self
-    }
-
-    pub fn delete(
-        mut self,
-        delete: impl FnMut(&ApiResource, Option<&str>, &str) -> Result<(), String> + 'static,
-    ) -> Self {
-        self.delete = Box::new(delete);
-        self
-    }
-}
-
-/// The session's cluster client, connected once and shared by every
-/// watcher and one-shot operation.
-pub type SharedClient = Shared<BoxFuture<'static, Result<Client, String>>>;
-
-enum ClusterIo {
-    Live {
-        client: SharedClient,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
-    },
-    Scripted(ScriptedCluster),
+/// One object of one resource: what a delete addresses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectRef {
+    pub resource: ApiResource,
+    pub key: ObjectKey,
 }
 
 pub struct Session {
@@ -291,38 +253,8 @@ pub struct Session {
 impl Session {
     pub fn new(cluster: impl Into<String>, cx: &mut Context<Self>) -> Self {
         let cluster = cluster.into();
-        let client = {
-            let cluster = cluster.clone();
-            let connect = spawn_cluster(async move {
-                astrolabe_kube::client_for_context(&cluster)
-                    .await
-                    .map_err(|error| error.to_string())
-            });
-            async move {
-                connect
-                    .await
-                    .unwrap_or_else(|_| Err("cluster connect task dropped".to_string()))
-            }
-            .boxed()
-            .shared()
-        };
-        let (namespaces, namespace_task) = spawn_watch(
-            cluster.clone(),
-            "namespace",
-            client.clone(),
-            astrolabe_kube::watch::namespaces,
-        );
-        let (crds, crd_task) = spawn_watch(
-            cluster.clone(),
-            "CRD",
-            client.clone(),
-            astrolabe_kube::watch::custom_resource_definitions,
-        );
-        let io = ClusterIo::Live {
-            client,
-            tasks: vec![namespace_task, crd_task],
-        };
-        Self::start(cluster, namespaces, Some(crds), io, cx)
+        let io = ClusterIo::connect(cluster.clone());
+        Self::start(cluster, io, cx)
     }
 
     /// Namespace events only: CRDs never arrive, discovery finds nothing.
@@ -336,36 +268,21 @@ impl Session {
 
     pub fn scripted(
         cluster: impl Into<String>,
-        mut scripted: ScriptedCluster,
+        scripted: ScriptedCluster,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (_, placeholder) = mpsc::channel(1);
-        let namespaces = std::mem::replace(&mut scripted.namespaces, placeholder);
-        let crds = scripted.crds.take();
-        Self::start(
-            cluster.into(),
-            namespaces,
-            crds,
-            ClusterIo::Scripted(scripted),
-            cx,
-        )
+        Self::start(cluster.into(), ClusterIo::Scripted(scripted), cx)
     }
 
-    fn start(
-        cluster: String,
-        namespaces: mpsc::Receiver<NamespaceWatchMessage>,
-        crds: Option<mpsc::Receiver<CrdWatchMessage>>,
-        io: ClusterIo,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn start(cluster: String, io: ClusterIo, cx: &mut Context<Self>) -> Self {
         let mut session = Self {
+            namespaces: Watched::new(cluster.clone(), "namespace"),
+            crds: Watched::new(cluster.clone(), "CRD"),
             watch_key: WatchKey {
                 cluster,
                 kind: ResourceKind::Namespaces,
                 namespace: None,
             },
-            namespaces: Watched::new("namespace"),
-            crds: Watched::new("CRD"),
             discovery: DiscoveryCache::default(),
             crd_generation: 0,
             discovery_runs: 0,
@@ -375,50 +292,60 @@ impl Session {
             viewing: None,
             io,
         };
-        spawn_drain(
-            namespaces,
+        session.start_watch(
+            "namespace",
+            |scripted| scripted.namespaces.take(),
+            astrolabe_kube::watch::namespaces,
+            |session| Some(&mut session.namespaces),
+            |_, _, _| {},
             cx,
-            |session, message, _| {
-                let cluster = session.watch_key.cluster.clone();
-                session.namespaces.apply(&cluster, message);
-            },
-            |session| {
-                let cluster = session.watch_key.cluster.clone();
-                session.namespaces.mark_stale(&cluster);
-            },
         );
-        if let Some(crds) = crds {
-            spawn_drain(crds, cx, Self::apply_crd, |session| {
-                let cluster = session.watch_key.cluster.clone();
-                session.crds.mark_stale(&cluster);
-            });
-        }
+        session.start_watch(
+            "CRD",
+            |scripted| scripted.crds.take(),
+            astrolabe_kube::watch::custom_resource_definitions,
+            |session| Some(&mut session.crds),
+            Self::crds_changed,
+            cx,
+        );
         session.run_discovery(cx);
         session
     }
 
-    fn apply_crd(&mut self, message: CrdWatchMessage, cx: &mut Context<Self>) {
-        let changed = match &message {
-            Ok(Event::Apply(_) | Event::Delete(_)) => true,
-            // A relist after a disconnect may hide missed changes; the
-            // first snapshot does not, connect-time discovery covers it.
-            Ok(Event::InitDone) => self.crds.has_snapshot(),
-            _ => false,
-        };
-        let first_snapshot = matches!(&message, Ok(Event::InitDone)) && !self.crds.has_snapshot();
-        let cluster = self.watch_key.cluster.clone();
-        self.crds.apply(&cluster, message);
+    /// Start a resident watch through the I/O seam and drain it into the
+    /// `Watched` that `watched` selects; `changed` runs after each message.
+    /// No-op when a scripted cluster scripts no events for it.
+    fn start_watch<K, S>(
+        &mut self,
+        label: &'static str,
+        scripted: impl FnOnce(&mut ScriptedCluster) -> Option<mpsc::Receiver<WatchMessage<K>>>,
+        stream: impl Fn(&Client) -> S + Send + 'static,
+        watched: impl Fn(&mut Self) -> Option<&mut Watched<K>> + 'static,
+        changed: impl Fn(&mut Self, SnapshotChange, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) where
+        K: ResourceExt + Send + 'static,
+        S: Stream<Item = Result<Event<K>, watcher::Error>> + Send,
+    {
+        if let Some(events) = self.io.watch(label, scripted, stream) {
+            spawn_drain(events, cx, watched, changed);
+        }
+    }
+
+    fn crds_changed(&mut self, change: SnapshotChange, cx: &mut Context<Self>) {
         self.rebuild_catalog(cx);
         // Connect-time discovery races the first CRD list: a CRD created in
         // between would stay "not served" until the next CRD change.
-        let unresolved = first_snapshot
+        let unresolved = change == SnapshotChange::FirstSnapshot
             && self.catalog.iter().any(|group| {
                 group
                     .kinds
                     .iter()
                     .any(|kind| kind.resource == KindResource::NotServed)
             });
-        if changed || unresolved {
+        // A relist after a disconnect may hide missed changes; the first
+        // snapshot does not, connect-time discovery covers it.
+        if change == SnapshotChange::Changed || unresolved {
             self.schedule_discovery(cx);
         }
     }
@@ -441,29 +368,21 @@ impl Session {
     fn run_discovery(&mut self, cx: &mut Context<Self>) {
         self.discovery_runs += 1;
         let run = self.discovery_runs;
-        match &mut self.io {
-            ClusterIo::Scripted(scripted) => {
-                let result = (scripted.discover)();
-                self.finish_discovery(run, result, cx);
-            }
-            ClusterIo::Live { client, .. } => {
-                let client = client.clone();
-                let result = spawn_cluster(async move {
-                    let client = client.await?;
-                    astrolabe_kube::discovery::discover(&client)
-                        .await
-                        .map_err(|error| error.to_string())
-                });
-                cx.spawn(async move |this, cx| {
-                    let result = result
-                        .await
-                        .unwrap_or_else(|_| Err("discovery task dropped".to_string()));
-                    this.update(cx, |session, cx| session.finish_discovery(run, result, cx))
-                        .ok();
-                })
-                .detach();
-            }
+        let mut result = self.io.discover();
+        // Scripted clusters answer before `discover` returns: finish within
+        // this update, as a live answer's arrival can't be awaited here.
+        if let Ok(result) = result.try_recv() {
+            self.finish_discovery(run, result, cx);
+            return;
         }
+        cx.spawn(async move |this, cx| {
+            let result = result
+                .await
+                .unwrap_or_else(|_| Err("discovery task dropped".to_string()));
+            this.update(cx, |session, cx| session.finish_discovery(run, result, cx))
+                .ok();
+        })
+        .detach();
     }
 
     fn finish_discovery(
@@ -537,49 +456,23 @@ impl Session {
         if self.custom.contains_key(&key) {
             return Some(key);
         }
-        self.custom
-            .insert(key.clone(), Watched::new(resource.kind.clone()));
-        let events = match &mut self.io {
-            ClusterIo::Scripted(scripted) => scripted.custom.remove(&key),
-            ClusterIo::Live { client, tasks } => {
-                let namespace = key.namespace.clone();
-                let watch_resource = resource.clone();
-                let (events, task) = spawn_watch(
-                    key.cluster.clone(),
-                    "custom resource",
-                    client.clone(),
-                    move |client| {
-                        astrolabe_kube::watch::custom_resources(
-                            client,
-                            &watch_resource,
-                            namespace.as_deref(),
-                        )
-                    },
-                );
-                tasks.push(task);
-                Some(events)
-            }
-        };
-        if let Some(events) = events {
-            let apply_key = key.clone();
-            let closed_key = key.clone();
-            spawn_drain(
-                events,
-                cx,
-                move |session, message, _| {
-                    let cluster = session.watch_key.cluster.clone();
-                    if let Some(watch) = session.custom.get_mut(&apply_key) {
-                        watch.apply(&cluster, message);
-                    }
-                },
-                move |session| {
-                    let cluster = session.watch_key.cluster.clone();
-                    if let Some(watch) = session.custom.get_mut(&closed_key) {
-                        watch.mark_stale(&cluster);
-                    }
-                },
-            );
-        }
+        self.custom.insert(
+            key.clone(),
+            Watched::new(key.cluster.clone(), resource.kind.clone()),
+        );
+        let scripted_key = key.clone();
+        let watched_key = key.clone();
+        let namespace = key.namespace.clone();
+        self.start_watch(
+            "custom resource",
+            move |scripted| scripted.custom.remove(&scripted_key),
+            move |client| {
+                astrolabe_kube::watch::custom_resources(client, &resource, namespace.as_deref())
+            },
+            move |session| session.custom.get_mut(&watched_key),
+            |_, _, _| {},
+            cx,
+        );
         cx.notify();
         Some(key)
     }
@@ -616,41 +509,13 @@ impl Session {
     }
 
     /// Delete one object; resolves with the server's answer.
-    pub fn delete(
-        &mut self,
-        resource: ApiResource,
-        namespace: Option<String>,
-        name: String,
-    ) -> oneshot::Receiver<Result<(), String>> {
-        match &mut self.io {
-            ClusterIo::Scripted(scripted) => {
-                let (tx, rx) = oneshot::channel();
-                let _ = tx.send((scripted.delete)(&resource, namespace.as_deref(), &name));
-                rx
-            }
-            ClusterIo::Live { client, .. } => {
-                let client = client.clone();
-                spawn_cluster(async move {
-                    let client = client.await?;
-                    astrolabe_kube::resource::delete(
-                        &client,
-                        &resource,
-                        namespace.as_deref(),
-                        &name,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())
-                })
-            }
-        }
+    pub fn delete(&mut self, object: ObjectRef) -> oneshot::Receiver<Result<(), String>> {
+        self.io.delete(object)
     }
 
     /// The live session's shared client; `None` for scripted sessions.
     pub fn client(&self) -> Option<SharedClient> {
-        match &self.io {
-            ClusterIo::Live { client, .. } => Some(client.clone()),
-            ClusterIo::Scripted(_) => None,
-        }
+        self.io.client()
     }
 
     pub fn watch_key(&self) -> &WatchKey {
@@ -711,24 +576,28 @@ impl Session {
     }
 }
 
-impl Drop for Session {
-    fn drop(&mut self) {
-        if let ClusterIo::Live { tasks, .. } = &mut self.io {
-            for task in tasks.drain(..) {
-                task.abort();
-            }
-        }
-    }
-}
-
-/// Resident drain loop (#8 bridge): applies every queued message, then
-/// notifies once; the channel closing marks the watch stale.
-fn spawn_drain<K: 'static>(
+/// Resident drain loop (#8 bridge): applies every queued message to the
+/// `Watched` that `watched` selects, then notifies once; the channel
+/// closing marks the watch stale.
+fn spawn_drain<K: ResourceExt + 'static>(
     mut receiver: mpsc::Receiver<WatchMessage<K>>,
     cx: &mut Context<Session>,
-    apply: impl Fn(&mut Session, WatchMessage<K>, &mut Context<Session>) + 'static,
-    closed: impl Fn(&mut Session) + 'static,
+    watched: impl Fn(&mut Session) -> Option<&mut Watched<K>> + 'static,
+    changed: impl Fn(&mut Session, SnapshotChange, &mut Context<Session>) + 'static,
 ) {
+    let watched = Rc::new(watched);
+    let apply_to = watched.clone();
+    let apply = move |session: &mut Session, message, cx: &mut Context<Session>| {
+        if let Some(watch) = apply_to(session) {
+            let change = watch.apply(message);
+            changed(session, change, cx);
+        }
+    };
+    let closed = move |session: &mut Session| {
+        if let Some(watch) = watched(session) {
+            watch.mark_stale();
+        }
+    };
     cx.spawn(async move |this, cx| {
         while let Some(message) = receiver.next().await {
             let mut ended = false;
@@ -765,68 +634,4 @@ fn spawn_drain<K: 'static>(
         .ok();
     })
     .detach();
-}
-
-/// Resident watcher on the cluster runtime. Any stream error restarts the
-/// watcher from a fresh LIST (#28): a silent watch resumption would emit no
-/// `InitDone`, leaving the UI stale.
-fn spawn_watch<K, S>(
-    cluster: String,
-    label: &'static str,
-    client: SharedClient,
-    stream: impl Fn(&Client) -> S + Send + 'static,
-) -> (mpsc::Receiver<WatchMessage<K>>, tokio::task::JoinHandle<()>)
-where
-    K: Send + 'static,
-    S: Stream<Item = Result<Event<K>, watcher::Error>> + Send,
-{
-    let (mut sender, receiver) = mpsc::channel(256);
-    let task = spawn_cluster_task(async move {
-        let client = match client.await {
-            Ok(client) => client,
-            Err(error) => {
-                tracing::warn!(cluster = %cluster, error = %error, "{label} watch client setup failed");
-                let _ = sender.send(Err(WatchError::new(error))).await;
-                return;
-            }
-        };
-        loop {
-            let events = stream(&client);
-            futures::pin_mut!(events);
-            let mut report_end = true;
-            let mut forbidden = false;
-            while let Some(event) = events.next().await {
-                let event = event.map_err(|error| {
-                    tracing::warn!(cluster = %cluster, error = %error, "{label} watch failed");
-                    WatchError::from_watcher(&error)
-                });
-                let failed = event.is_err();
-                forbidden = matches!(&event, Err(error) if error.forbidden);
-                if sender.send(event).await.is_err() {
-                    return;
-                }
-                if failed {
-                    report_end = false;
-                    break;
-                }
-            }
-            if report_end
-                && sender
-                    .send(Err(WatchError::new(format!("{label} watch ended"))))
-                    .await
-                    .is_err()
-            {
-                return;
-            }
-            tracing::info!(cluster = %cluster, "restarting {label} watch");
-            // RBAC denials do not clear by retrying fast; back off further.
-            let delay = if forbidden {
-                FORBIDDEN_RETRY
-            } else {
-                Duration::from_secs(1)
-            };
-            tokio::time::sleep(delay).await;
-        }
-    });
-    (receiver, task)
 }
