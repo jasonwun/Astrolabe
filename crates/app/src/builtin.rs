@@ -54,8 +54,8 @@ pub struct Registration {
     pub list: fn(&[&DynamicObject], Timestamp) -> ResourceTable,
     pub detail: fn(&DynamicObject, Timestamp) -> Option<DetailModel>,
     pub actions: &'static [Action],
-    /// What else a delete takes with it, for the confirmation.
-    pub cascade: &'static str,
+    /// What else deleting this object takes with it, for the confirmation.
+    pub cascade: fn(&DynamicObject) -> &'static str,
     pub related: Option<Related>,
 }
 
@@ -97,7 +97,7 @@ static PODS: Registration = Registration {
         Action::Edit,
         Action::Delete,
     ],
-    cascade: "A controller that owns this Pod will create a replacement.",
+    cascade: pod_cascade,
     related: Some(Related {
         title: "Events",
         kind: BuiltinKind::Events,
@@ -116,7 +116,7 @@ static DEPLOYMENTS: Registration = Registration {
         Action::Edit,
         Action::Delete,
     ],
-    cascade: "Its ReplicaSets and their Pods will be deleted too.",
+    cascade: |_| "Its ReplicaSets and their Pods will be deleted too.",
     related: Some(Related {
         title: "Pods",
         kind: BuiltinKind::Pods,
@@ -130,7 +130,7 @@ static EVENTS: Registration = Registration {
     list: |objects, now| typed_list(objects, now, project_events),
     detail: |object, now| Some(event_detail(&parse::<Event>(object)?, now)),
     actions: DEFAULT_ACTIONS,
-    cascade: "Nothing else is deleted.",
+    cascade: |_| "Nothing else is deleted.",
     related: None,
 };
 
@@ -143,6 +143,21 @@ fn pod_events<'a>(pod: &DynamicObject, events: &[&'a DynamicObject]) -> Vec<&'a 
             parse::<Event>(event).is_some_and(|e| event_involves(&e, "Pod", &pod.metadata))
         })
         .collect()
+}
+
+/// A Pod with an owner (ReplicaSet, Job, StatefulSet…) is replaced by it;
+/// a bare Pod is simply gone.
+fn pod_cascade(pod: &DynamicObject) -> &'static str {
+    if pod
+        .metadata
+        .owner_references
+        .as_ref()
+        .is_some_and(|owners| !owners.is_empty())
+    {
+        "A controller that owns this Pod will create a replacement."
+    } else {
+        "Nothing else is deleted."
+    }
 }
 
 /// Pods the Deployment's selector matches. Owners are not checked, so a

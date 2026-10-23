@@ -19,7 +19,7 @@ use gpui_kit::*;
 use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
-use crate::projection::workloads::{pod_containers, pod_ports};
+use crate::projection::workloads::{pod_containers, pod_ports, running_containers};
 use crate::projection::{
     DetailModel, ReplicaCounts, ResourceTable, SummaryTable, custom_resource_detail,
     definition_detail, namespace_detail,
@@ -203,7 +203,7 @@ impl ResourceDetailPanel {
                         resource: (registration.resource)(),
                         key: key.clone(),
                     },
-                    cascade: registration.cascade.to_string(),
+                    cascade: (registration.cascade)(object).to_string(),
                     actions: registration.actions,
                     related,
                 })
@@ -324,11 +324,16 @@ impl ResourceDetailPanel {
         );
     }
 
-    /// The shown Pod's containers, init containers first.
-    fn containers(&self, cx: &App) -> Vec<String> {
-        self.pod(cx)
-            .map(|pod| pod_containers(&pod))
-            .unwrap_or_default()
+    /// The shown Pod's containers `action` can target: Logs reads every
+    /// container, init containers first; Exec needs one still running.
+    fn containers(&self, action: PodAction, cx: &App) -> Vec<String> {
+        let Some(pod) = self.pod(cx) else {
+            return Vec::new();
+        };
+        match action {
+            PodAction::Logs => pod_containers(&pod),
+            PodAction::Exec | PodAction::Forward => running_containers(&pod),
+        }
     }
 
     /// The shown Pod, as of the watch.
@@ -346,7 +351,7 @@ impl ResourceDetailPanel {
 
     /// Run `action` in the only container, or ask which one.
     fn pick_container(&mut self, action: PodAction, cx: &mut Context<Self>) {
-        match self.containers(cx).as_slice() {
+        match self.containers(action, cx).as_slice() {
             [only] => self.run_in(action, only.clone(), cx),
             _ => self.ask(action, None, cx),
         }
@@ -421,7 +426,7 @@ impl ResourceDetailPanel {
             match (action, container) {
                 (PodAction::Forward, _) => self.render_ports(cx),
                 (_, None) => self
-                    .containers(cx)
+                    .containers(action, cx)
                     .into_iter()
                     .map(|container| {
                         button(

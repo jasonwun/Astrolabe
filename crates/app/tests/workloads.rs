@@ -2,7 +2,7 @@
 
 use astrolabe::projection::workloads::{
     PodPort, deployment_detail, pod_detail, pod_ports, project_deployments, project_pods,
-    selector_matches,
+    running_containers, selector_matches,
 };
 use astrolabe::projection::{ReplicaCounts, SummaryTable};
 use astrolabe::store::ObjectKey;
@@ -496,10 +496,13 @@ fn an_empty_selector_matches_everything() {
 }
 
 #[test]
-fn pod_ports_are_the_declared_tcp_ports_in_container_order() {
+fn pod_ports_are_the_running_containers_declared_tcp_ports_in_order() {
     let pod = pod(
         serde_json::json!({
-            "initContainers": [{"name": "migrate", "ports": [{"containerPort": 9000}]}],
+            "initContainers": [
+                {"name": "migrate", "ports": [{"containerPort": 9000}]},
+                {"name": "proxy", "restartPolicy": "Always", "ports": [{"containerPort": 15001}]}
+            ],
             "containers": [
                 {"name": "app", "ports": [
                     {"name": "http", "containerPort": 8080},
@@ -518,8 +521,8 @@ fn pod_ports_are_the_declared_tcp_ports_in_container_order() {
         pod_ports(&pod),
         [
             PodPort {
-                port: 9000,
-                label: "9000 (migrate)".to_string()
+                port: 15001,
+                label: "15001 (proxy)".to_string()
             },
             PodPort {
                 port: 8080,
@@ -531,6 +534,21 @@ fn pod_ports_are_the_declared_tcp_ports_in_container_order() {
             },
         ]
     );
+}
+
+#[test]
+fn exec_targets_sidecars_and_app_containers_but_not_run_once_init_containers() {
+    let pod = pod(
+        serde_json::json!({
+            "initContainers": [
+                {"name": "migrate"},
+                {"name": "proxy", "restartPolicy": "Always"}
+            ],
+            "containers": [{"name": "app"}, {"name": "log-shipper"}]
+        }),
+        serde_json::json!({}),
+    );
+    assert_eq!(running_containers(&pod), ["proxy", "app", "log-shipper"]);
 }
 
 #[test]

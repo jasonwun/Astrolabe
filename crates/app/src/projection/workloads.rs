@@ -377,19 +377,31 @@ pub struct PodPort {
     pub label: String,
 }
 
-/// The Pod's declared TCP ports (port-forward carries TCP only), init
-/// containers first, each port once.
+/// The containers that keep running, so Exec and Port Forward can reach
+/// them: native sidecars (init containers with `restartPolicy: Always`)
+/// first, then the app containers. Run-once init containers have exited.
+fn long_running(pod: &Pod) -> impl Iterator<Item = &Container> {
+    pod.spec.iter().flat_map(|spec| {
+        spec.init_containers
+            .iter()
+            .flatten()
+            .filter(|init| init.restart_policy.as_deref() == Some("Always"))
+            .chain(&spec.containers)
+    })
+}
+
+/// The names of the containers Exec can run in; see [`long_running`].
+pub fn running_containers(pod: &Pod) -> Vec<String> {
+    long_running(pod)
+        .map(|container| container.name.clone())
+        .collect()
+}
+
+/// The running containers' declared TCP ports (port-forward carries TCP
+/// only), in container order, each port once.
 pub fn pod_ports(pod: &Pod) -> Vec<PodPort> {
-    let Some(spec) = &pod.spec else {
-        return Vec::new();
-    };
     let mut ports: Vec<PodPort> = Vec::new();
-    for container in spec
-        .init_containers
-        .iter()
-        .flatten()
-        .chain(&spec.containers)
-    {
+    for container in long_running(pod) {
         for declared in container.ports.iter().flatten() {
             let tcp = declared
                 .protocol

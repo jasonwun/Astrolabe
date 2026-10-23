@@ -25,7 +25,9 @@ fn crashing_pod(namespace: &str) -> DynamicObject {
     serde_json::from_value(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": namespace, "uid": "uid-pod",
-                     "creationTimestamp": "2026-10-22T11:00:00Z"},
+                     "creationTimestamp": "2026-10-22T11:00:00Z",
+                     "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet",
+                                          "name": "web-5d8f", "uid": "uid-rs", "controller": true}]},
         "spec": {"nodeName": "node-a", "containers": [{"name": "app", "image": "nginx"}]},
         "status": {
             "phase": "Running", "podIP": "10.0.0.7",
@@ -432,6 +434,33 @@ fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
         assert!(window.try_find("detail-edit").is_some());
         assert!(window.try_find("detail-scale").is_none());
         assert!(window.try_find("detail-restart").is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn deleting_a_bare_pod_warns_of_nothing_else(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-pods", cx));
+    snapshot(&mut pods, vec![labeled_pod("debug", "tools")]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/debug", cx));
+    ui.settle();
+
+    ui.frame(|window, cx| window.click("detail-delete", cx));
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Nothing else is deleted.")
+                .is_some()
+        );
+        assert!(
+            window
+                .try_find_by_label("A controller that owns this Pod will create a replacement.")
+                .is_none()
+        );
     });
 }
 
