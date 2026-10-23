@@ -2,6 +2,7 @@
 //! captured from a real apiserver).
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
 use astrolabe_kube::kube::Client;
@@ -198,7 +199,10 @@ async fn each_local_connection_forwards_to_the_pod_port() {
 
     for _ in 0..2 {
         let _connection = tokio::net::TcpStream::connect(local).await.unwrap();
-        let error = failed.recv().await.unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(5), failed.recv())
+            .await
+            .expect("a failed connection is reported")
+            .unwrap();
         // kube-rs reports a refused upgrade by its status, not its body.
         assert!(error.contains("403 Forbidden"), "{error}");
     }
