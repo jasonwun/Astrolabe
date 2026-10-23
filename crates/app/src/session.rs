@@ -244,6 +244,13 @@ pub struct ObjectRef {
     pub key: ObjectKey,
 }
 
+/// A one-shot change to a Deployment (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Operation {
+    Scale { key: ObjectKey, replicas: i32 },
+    RolloutRestart { key: ObjectKey },
+}
+
 pub struct Session {
     watch_key: WatchKey,
     namespaces: Watched<Namespace>,
@@ -560,6 +567,11 @@ impl Session {
     /// Delete one object; resolves with the server's answer.
     pub fn delete(&mut self, object: ObjectRef) -> oneshot::Receiver<Result<(), String>> {
         self.io.delete(object)
+    }
+
+    /// Run one operation; resolves with the server's answer.
+    pub fn operate(&mut self, operation: Operation) -> oneshot::Receiver<Result<(), String>> {
+        self.io.operate(operation)
     }
 
     /// The live session's shared client; `None` for scripted sessions.

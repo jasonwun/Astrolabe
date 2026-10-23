@@ -11,16 +11,18 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::discovery::ApiResource;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
 use crate::projection::{
     DetailModel, ReplicaCounts, SummaryTable, custom_resource_detail, definition_detail,
     namespace_detail,
 };
-use crate::session::{CustomKindId, ObjectRef, Session};
+use crate::session::{CustomKindId, ObjectRef, Operation, Session};
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
 
@@ -45,6 +47,8 @@ pub struct ResourceDetailPanel {
     session: Entity<Session>,
     target: DetailTarget,
     confirm_delete: bool,
+    /// The Scale field, while open.
+    scale: Option<Entity<InputState>>,
     notice: Option<String>,
     focus_handle: FocusHandle,
 }
@@ -81,6 +85,7 @@ impl ResourceDetailPanel {
             session,
             target,
             confirm_delete: false,
+            scale: None,
             notice: None,
             focus_handle: cx.focus_handle(),
         }
@@ -182,19 +187,102 @@ impl ResourceDetailPanel {
         let result = self
             .session
             .update(cx, |session, _| session.delete(resolved.object));
-        self.notice = Some("Deleting…".to_string());
+        self.report(
+            result,
+            "Deleting…",
+            "Deletion requested".to_string(),
+            "Delete",
+            cx,
+        );
+    }
+
+    fn open_scale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| InputState::new(window, cx));
+        cx.subscribe_in(&input, window, |panel, _, event: &InputEvent, _, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                panel.apply_scale(cx);
+            }
+        })
+        .detach();
+        input.update(cx, |input, cx| input.focus(window, cx));
+        self.scale = Some(input);
         cx.notify();
+    }
+
+    fn apply_scale(&mut self, cx: &mut Context<Self>) {
+        let Some(input) = &self.scale else {
+            return;
+        };
+        let replicas = match input.read(cx).value().trim().parse::<i32>() {
+            Ok(replicas) if replicas >= 0 => replicas,
+            _ => return self.show_notice("Replicas must be a whole number, 0 or more", cx),
+        };
+        let DetailTarget::Builtin { key, .. } = &self.target else {
+            return;
+        };
+        let operation = Operation::Scale {
+            key: key.clone(),
+            replicas,
+        };
+        let result = self
+            .session
+            .update(cx, |session, _| session.operate(operation));
+        self.scale = None;
+        self.report(
+            result,
+            "Scaling…",
+            format!("Scaled to {replicas}"),
+            "Scale",
+            cx,
+        );
+    }
+
+    fn rollout_restart(&mut self, cx: &mut Context<Self>) {
+        let DetailTarget::Builtin { key, .. } = &self.target else {
+            return;
+        };
+        let operation = Operation::RolloutRestart { key: key.clone() };
+        let result = self
+            .session
+            .update(cx, |session, _| session.operate(operation));
+        self.report(
+            result,
+            "Restarting…",
+            "Restart requested".to_string(),
+            "Restart",
+            cx,
+        );
+    }
+
+    fn show_notice(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
+        self.notice = Some(notice.into());
+        cx.notify();
+    }
+
+    /// Show `pending` until `result` resolves, then `done` or the failure
+    /// of `verb`.
+    fn report(
+        &mut self,
+        result: oneshot::Receiver<Result<(), String>>,
+        pending: &str,
+        done: String,
+        verb: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_notice(pending, cx);
         cx.spawn(async move |panel, cx| {
             let result = result
                 .await
-                .unwrap_or_else(|_| Err("delete task dropped".to_string()));
+                .unwrap_or_else(|_| Err(format!("{verb} task dropped")));
             panel
                 .update(cx, |panel, cx| {
-                    panel.notice = Some(match result {
-                        Ok(()) => "Deletion requested".to_string(),
-                        Err(error) => format!("Delete failed: {error}"),
-                    });
-                    cx.notify();
+                    panel.show_notice(
+                        match result {
+                            Ok(()) => done,
+                            Err(error) => format!("{verb} failed: {error}"),
+                        },
+                        cx,
+                    )
                 })
                 .ok();
         })
@@ -224,6 +312,10 @@ impl ResourceDetailPanel {
             .border_color(theme.border)
             .children(actions.iter().map(|action| {
                 match action {
+                    Action::Scale => button("detail-scale", "Scale")
+                        .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
+                    Action::RolloutRestart => button("detail-restart", "Rollout Restart")
+                        .on_click(cx.listener(|panel, _, _, cx| panel.rollout_restart(cx))),
                     Action::Edit => button("detail-edit", "Edit YAML")
                         .on_click(cx.listener(|panel, _, _, cx| panel.edit(cx))),
                     Action::Delete => button("detail-delete", "Delete")
@@ -245,6 +337,58 @@ impl ResourceDetailPanel {
                         .child(notice),
                 )
             })
+    }
+
+    fn render_scale(
+        &self,
+        input: &Entity<InputState>,
+        replicas: Option<ReplicaCounts>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let label = match replicas {
+            Some(counts) => format!("Replicas (now {})", counts.desired),
+            None => "Replicas".to_string(),
+        };
+        let button = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .aria_label(label)
+                .test_support()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .cursor_pointer()
+                .text_sm()
+                .child(label)
+        };
+        h_flex()
+            .id("scale-form")
+            .gap_2()
+            .p_2()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id("scale-label")
+                    .aria_label(label.clone())
+                    .test_support()
+                    .text_sm()
+                    .child(label),
+            )
+            .child(Input::new(input).id("scale-input").w(px(120.)))
+            .child(
+                button("scale-apply", "Apply")
+                    .on_click(cx.listener(|panel, _, _, cx| panel.apply_scale(cx))),
+            )
+            .child(
+                button("scale-cancel", "Cancel").on_click(cx.listener(|panel, _, _, cx| {
+                    panel.scale = None;
+                    cx.notify();
+                })),
+            )
     }
 
     fn render_confirm(&self, cascade: String, cx: &mut Context<Self>) -> impl IntoElement {
@@ -466,6 +610,7 @@ impl Render for ResourceDetailPanel {
                 .into_any_element();
         };
         let model = resolved.model;
+        let replicas = model.replicas;
         let mut metadata: Vec<AnyElement> = model
             .metadata
             .iter()
@@ -525,6 +670,9 @@ impl Render for ResourceDetailPanel {
             .test_support()
             .size_full()
             .child(self.render_toolbar(resolved.actions, cx))
+            .when_some(self.scale.clone(), |this, input| {
+                this.child(self.render_scale(&input, replicas, cx))
+            })
             .when(self.confirm_delete, |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })

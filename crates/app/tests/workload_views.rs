@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{
-    ObjectRef, ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ObjectRef, ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
+use astrolabe::store::ObjectKey;
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -71,11 +72,13 @@ fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
 }
 
 type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
+type Operated = Rc<RefCell<Vec<Operation>>>;
 
 struct Ui<'a> {
     cx: &'a mut VisualTestContext,
     namespaces: Sender<Namespace>,
     deleted: Deleted,
+    operated: Operated,
 }
 
 fn open(
@@ -85,18 +88,30 @@ fn open(
     cx.update(gpui_kit::init);
     let (namespaces, namespace_events) = mpsc::channel(32);
     let deleted: Deleted = Rc::default();
-    let mut cluster = ScriptedCluster::new(namespace_events).delete({
-        let deleted = deleted.clone();
-        move |object: &ObjectRef| {
-            let resource = &object.resource;
-            deleted.borrow_mut().push((
-                format!("{}/{}", resource.api_version, resource.kind),
-                object.key.namespace.clone(),
-                object.key.name.clone(),
-            ));
-            Ok(())
-        }
-    });
+    let operated: Operated = Rc::default();
+    let mut cluster = ScriptedCluster::new(namespace_events)
+        .delete({
+            let deleted = deleted.clone();
+            move |object: &ObjectRef| {
+                let resource = &object.resource;
+                deleted.borrow_mut().push((
+                    format!("{}/{}", resource.api_version, resource.kind),
+                    object.key.namespace.clone(),
+                    object.key.name.clone(),
+                ));
+                Ok(())
+            }
+        })
+        .operate({
+            let operated = operated.clone();
+            move |operation: &Operation| {
+                operated.borrow_mut().push(operation.clone());
+                match operation {
+                    Operation::Scale { replicas: 0, .. } => Err("scale refused".to_string()),
+                    _ => Ok(()),
+                }
+            }
+        });
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
@@ -107,6 +122,7 @@ fn open(
         cx,
         namespaces,
         deleted,
+        operated,
     }
 }
 
@@ -267,4 +283,107 @@ fn the_pods_list_follows_the_namespace_selection(cx: &mut TestAppContext) {
     snapshot(&mut web_pods, vec![crashing_pod("web")]);
     ui.settle();
     ui.frame(|window, _| assert!(window.try_find("row-web/web-1").is_some()));
+}
+
+#[gpui_kit::test]
+fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContext) {
+    let (mut deployments, deployment_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Deployments, "default"), deployment_events)],
+    );
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-deployments", cx));
+    snapshot(&mut deployments, vec![web_deployment()]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web", cx));
+    ui.settle();
+    let web = ObjectKey::new(Some("default".into()), "web");
+
+    // Scale: a numeric field with the current desired count as its hint.
+    ui.frame(|window, cx| window.click("detail-scale", cx));
+    ui.frame(|window, cx| {
+        assert!(window.try_find_by_label("Replicas (now 3)").is_some());
+        window.click("scale-input", cx);
+        window.input("5", cx);
+        window.click("scale-apply", cx);
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(window.try_find_by_label("Scaled to 5").is_some());
+        assert!(window.try_find("scale-input").is_none());
+    });
+
+    // Not a number: nothing is sent.
+    ui.frame(|window, cx| window.click("detail-scale", cx));
+    ui.frame(|window, cx| {
+        window.click("scale-input", cx);
+        window.input("-x", cx);
+        window.click("scale-apply", cx);
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Replicas must be a whole number, 0 or more")
+                .is_some()
+        );
+    });
+
+    // A refusal is reported.
+    ui.frame(|window, cx| {
+        window.click("scale-input", cx);
+        for _ in 0..2 {
+            window.press("backspace", cx);
+        }
+        window.input("0", cx);
+        window.press("enter", cx);
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Scale failed: scale refused")
+                .is_some()
+        );
+    });
+
+    ui.frame(|window, cx| window.click("detail-restart", cx));
+    ui.settle();
+    ui.frame(|window, _| assert!(window.try_find_by_label("Restart requested").is_some()));
+
+    assert_eq!(
+        *ui.operated.borrow(),
+        [
+            Operation::Scale {
+                key: web.clone(),
+                replicas: 5
+            },
+            Operation::Scale {
+                key: web.clone(),
+                replicas: 0
+            },
+            Operation::RolloutRestart { key: web },
+        ]
+    );
+}
+
+#[gpui_kit::test]
+fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-pods", cx));
+    snapshot(&mut pods, vec![crashing_pod("default")]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    ui.settle();
+
+    ui.frame(|window, _| {
+        assert!(window.try_find("detail-edit").is_some());
+        assert!(window.try_find("detail-scale").is_none());
+        assert!(window.try_find("detail-restart").is_none());
+    });
 }

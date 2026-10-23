@@ -26,6 +26,9 @@ pub enum BuiltinKind {
 /// A detail-tab toolbar action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    /// Set a Deployment's desired replicas.
+    Scale,
+    RolloutRestart,
     Edit,
     Delete,
 }
@@ -76,7 +79,12 @@ static DEPLOYMENTS: Registration = Registration {
     resource: || ApiResource::erase::<Deployment>(&()),
     list: |objects, now| typed_list(objects, now, project_deployments),
     detail: |object, now| Some(deployment_detail(&parse::<Deployment>(object)?, now)),
-    actions: DEFAULT_ACTIONS,
+    actions: &[
+        Action::Scale,
+        Action::RolloutRestart,
+        Action::Edit,
+        Action::Delete,
+    ],
     cascade: "Its ReplicaSets and their Pods will be deleted too.",
 };
 

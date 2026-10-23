@@ -16,8 +16,8 @@ use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
-    CrdWatchMessage, NamespaceWatchMessage, ObjectRef, ObjectWatchMessage, WatchError, WatchKey,
-    WatchMessage,
+    CrdWatchMessage, NamespaceWatchMessage, ObjectRef, ObjectWatchMessage, Operation, WatchError,
+    WatchKey, WatchMessage,
 };
 
 /// Retry interval for a watch the apiserver refused with 403.
@@ -25,15 +25,17 @@ const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, String>>;
 type DeleteFn = Box<dyn FnMut(&ObjectRef) -> Result<(), String>>;
+type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
 
 /// Hand-fed cluster I/O for tests and demos: watch events come from
-/// channels, discovery and delete from closures.
+/// channels, discovery, delete and operations from closures.
 pub struct ScriptedCluster {
     pub(crate) namespaces: Option<mpsc::Receiver<NamespaceWatchMessage>>,
     pub(crate) crds: Option<mpsc::Receiver<CrdWatchMessage>>,
     pub(crate) watches: HashMap<WatchKey, mpsc::Receiver<ObjectWatchMessage>>,
     discover: DiscoverFn,
     delete: DeleteFn,
+    operate: OperateFn,
 }
 
 impl ScriptedCluster {
@@ -44,6 +46,7 @@ impl ScriptedCluster {
             watches: HashMap::new(),
             discover: Box::new(|| Ok(ServedResources::default())),
             delete: Box::new(|_| Ok(())),
+            operate: Box::new(|_| Ok(())),
         }
     }
 
@@ -72,6 +75,14 @@ impl ScriptedCluster {
         delete: impl FnMut(&ObjectRef) -> Result<(), String> + 'static,
     ) -> Self {
         self.delete = Box::new(delete);
+        self
+    }
+
+    pub fn operate(
+        mut self,
+        operate: impl FnMut(&Operation) -> Result<(), String> + 'static,
+    ) -> Self {
+        self.operate = Box::new(operate);
         self
     }
 }
@@ -173,6 +184,43 @@ impl ClusterIo {
                     )
                     .await
                     .map_err(|error| error.to_string())
+                })
+            }
+        }
+    }
+
+    /// Scale or restart a Deployment.
+    pub(crate) fn operate(
+        &mut self,
+        operation: Operation,
+    ) -> oneshot::Receiver<Result<(), String>> {
+        match self {
+            Self::Scripted(cluster) => answered((cluster.operate)(&operation)),
+            Self::Live { client, .. } => {
+                let client = client.clone();
+                spawn_cluster(async move {
+                    let client = client.await?;
+                    let result = match &operation {
+                        Operation::Scale { key, replicas } => {
+                            astrolabe_kube::resource::scale(
+                                &client,
+                                key.namespace.as_deref().unwrap_or_default(),
+                                &key.name,
+                                *replicas,
+                            )
+                            .await
+                        }
+                        Operation::RolloutRestart { key } => {
+                            astrolabe_kube::resource::rollout_restart(
+                                &client,
+                                key.namespace.as_deref().unwrap_or_default(),
+                                &key.name,
+                                astrolabe_kube::k8s_openapi::jiff::Timestamp::now(),
+                            )
+                            .await
+                        }
+                    };
+                    result.map_err(|error| error.to_string())
                 })
             }
         }
