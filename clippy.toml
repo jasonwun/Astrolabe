@@ -1,0 +1,3 @@
+disallowed-methods = [
+  { path = "gpui::App::open_window", reason = "use gpui_kit::open_window, which adds the theme Root (#52)" },
+]
