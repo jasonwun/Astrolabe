@@ -59,8 +59,8 @@ fn services_list_kubectl_wide_columns() {
             "Cluster IP",
             "External IP",
             "Ports",
-            "Selector",
-            "Age"
+            "Age",
+            "Selector"
         ]
     );
     assert_eq!(
@@ -71,8 +71,8 @@ fn services_list_kubectl_wide_columns() {
             "10.96.0.10",
             "<none>",
             "80:30080/TCP,53/UDP,9000/TCP",
-            "app=web,tier=front",
-            "60m"
+            "60m",
+            "app=web,tier=front"
         ]
     );
 }
@@ -86,7 +86,7 @@ fn a_service_without_ports_or_selector_says_none() {
     let row = cells(&bare);
     assert_eq!(row[2], "None");
     assert_eq!(row[4], "<none>");
-    assert_eq!(row[5], "<none>");
+    assert_eq!(row[6], "<none>");
 }
 
 #[test]

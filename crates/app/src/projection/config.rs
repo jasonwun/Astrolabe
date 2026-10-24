@@ -78,7 +78,7 @@ fn binary(bytes: &ByteString) -> String {
 fn preview(value: &str) -> String {
     let line = value.lines().next().unwrap_or_default();
     let shown: String = line.chars().take(PREVIEW_CHARS).collect();
-    if shown.len() < value.trim_end_matches('\n').len() {
+    if shown.len() < value.trim_end_matches(['\r', '\n']).len() {
         format!("{shown}…")
     } else {
         shown

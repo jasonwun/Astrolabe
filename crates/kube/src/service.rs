@@ -12,7 +12,7 @@ use tokio::net::TcpListener;
 
 /// Where one Service forward connection goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForwardTarget {
+pub struct ResolvedForward {
     pub pod: String,
     /// The container port the service port maps to.
     pub port: u16,
@@ -25,7 +25,11 @@ pub struct ForwardTarget {
 /// the most active of `pods` (the selector's matches), which must be
 /// Running. Of `ActivePods`' criteria, ready time and restart counts are
 /// not compared, and of equally active Pods the first listed wins.
-pub fn forward_target(service: &Service, pods: &[Pod], port: u16) -> Result<ForwardTarget, String> {
+pub fn forward_target(
+    service: &Service,
+    pods: &[Pod],
+    port: u16,
+) -> Result<ResolvedForward, String> {
     let name = service.metadata.name.clone().unwrap_or_default();
     let spec = service.spec.clone().unwrap_or_default();
     if spec
@@ -54,22 +58,23 @@ pub fn forward_target(service: &Service, pods: &[Pod], port: u16) -> Result<Forw
             "unable to forward port because pod is not running. Current status={phase}"
         ));
     }
-    let declared = spec
-        .ports
-        .iter()
-        .flatten()
-        .find(|declared| declared.port == i32::from(port))
-        .ok_or_else(|| format!("Service {name} does not have a service port {port}"))?;
+    // A headless Service's port is the container port, declared or not.
     let container_port = if spec.cluster_ip.as_deref() == Some("None") {
         i32::from(port)
     } else {
+        let declared = spec
+            .ports
+            .iter()
+            .flatten()
+            .find(|declared| declared.port == i32::from(port))
+            .ok_or_else(|| format!("Service {name} does not have a service port {port}"))?;
         match &declared.target_port {
             None | Some(IntOrString::Int(0)) => i32::from(port),
             Some(IntOrString::Int(target)) => *target,
             Some(IntOrString::String(named)) => named_port(pod, named)?,
         }
     };
-    Ok(ForwardTarget {
+    Ok(ResolvedForward {
         pod: pod.metadata.name.clone().unwrap_or_default(),
         port: u16::try_from(container_port)
             .map_err(|_| format!("invalid container port {container_port}"))?,

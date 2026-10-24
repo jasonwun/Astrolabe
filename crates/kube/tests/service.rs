@@ -4,7 +4,7 @@
 //! never captured from a real apiserver).
 
 use astrolabe_kube::k8s_openapi::api::core::v1::{Pod, Service};
-use astrolabe_kube::service::{ForwardTarget, forward_target};
+use astrolabe_kube::service::{ResolvedForward, forward_target};
 
 fn service(spec: serde_json::Value) -> Service {
     serde_json::from_value(serde_json::json!({
@@ -38,8 +38,8 @@ fn running(name: &str) -> Pod {
     .unwrap()
 }
 
-fn target(pod: &str, port: u16) -> Result<ForwardTarget, String> {
-    Ok(ForwardTarget {
+fn target(pod: &str, port: u16) -> Result<ResolvedForward, String> {
+    Ok(ResolvedForward {
         pod: pod.to_string(),
         port,
     })
@@ -98,6 +98,16 @@ fn a_headless_service_forwards_to_the_same_port() {
     assert_eq!(
         forward_target(&headless, &[running("web-1")], 9000),
         target("web-1", 9000)
+    );
+}
+
+#[test]
+fn a_headless_service_forwards_an_undeclared_port_as_is() {
+    let mut headless = web_service();
+    headless.spec.as_mut().unwrap().cluster_ip = Some("None".to_string());
+    assert_eq!(
+        forward_target(&headless, &[running("web-1")], 81),
+        target("web-1", 81)
     );
 }
 

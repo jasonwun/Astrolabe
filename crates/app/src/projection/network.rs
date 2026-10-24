@@ -13,7 +13,7 @@ use super::workloads::{ForwardPort, NONE, int_or_string};
 use super::{DetailModel, ResourceRow, ResourceTable, SummaryTable, age_of, detail};
 use crate::store::ObjectKey;
 
-/// Name / Type / Cluster IP / External IP / Ports / Selector / Age, as
+/// Name / Type / Cluster IP / External IP / Ports / Age / Selector, as
 /// `kubectl get services -o wide` prints them.
 pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable {
     let rows = services
@@ -33,8 +33,8 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
                         .unwrap_or_else(|| NONE.to_string()),
                     external_ip(service),
                     port_text(service),
-                    service_selector(service),
                     age_of(&service.metadata, now),
+                    service_selector(service),
                 ],
             }
         })
@@ -46,8 +46,8 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
             "Cluster IP",
             "External IP",
             "Ports",
-            "Selector",
             "Age",
+            "Selector",
         ]
         .map(String::from)
         .to_vec(),

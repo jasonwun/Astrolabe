@@ -18,6 +18,7 @@ fn app_config() -> ConfigMap {
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "data": {
             "mode": "production",
+            "crlf": "on\r\n",
             "nginx.conf": "server {\n  listen 80;\n}\n",
             "long": "x".repeat(100)
         },
@@ -35,7 +36,7 @@ fn config_maps_list_counts_and_names_their_keys() {
     assert_eq!(table.columns, ["Name", "Data", "Keys", "Age"]);
     assert_eq!(
         table.rows[0].cells,
-        ["app", "4", "logo.png, long, mode, nginx.conf", "60m"]
+        ["app", "5", "crlf, logo.png, long, mode, nginx.conf", "60m"]
     );
 }
 
@@ -50,6 +51,7 @@ fn a_config_map_detail_previews_each_value() {
             title: "Data".to_string(),
             columns: ["Key", "Value"].map(String::from).to_vec(),
             rows: vec![
+                vec!["crlf".to_string(), "on".to_string()],
                 vec!["logo.png".to_string(), "<binary, 8 bytes>".to_string()],
                 vec!["long".to_string(), format!("{}…", "x".repeat(80))],
                 vec!["mode".to_string(), "production".to_string()],

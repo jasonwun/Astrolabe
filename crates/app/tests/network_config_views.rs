@@ -149,6 +149,24 @@ fn a_service_forwards_one_of_its_tcp_ports(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui_kit::test]
+fn a_service_with_only_udp_ports_has_none_to_forward(cx: &mut TestAppContext) {
+    let (mut services, service_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Services, "default"), service_events)],
+    );
+    let mut dns = web_service(Some(serde_json::json!({"app": "web"})));
+    dns.data["spec"]["ports"] = serde_json::json!([{"name": "dns", "port": 53, "protocol": "UDP"}]);
+    open_detail(&mut ui, "services", &mut services, vec![dns], "web");
+
+    ui.frame(|window, cx| window.click("detail-forward", cx));
+    ui.frame(|window, _| {
+        let picker = window.within("container-picker");
+        assert!(picker.try_find_by_label("No TCP ports").is_some());
+    });
+}
+
 fn delete_warning(selector: Option<serde_json::Value>, cx: &mut TestAppContext) -> bool {
     let (mut services, service_events) = mpsc::channel(32);
     let mut ui = open(

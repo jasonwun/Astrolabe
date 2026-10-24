@@ -525,7 +525,10 @@ impl ResourceDetailPanel {
         }
         .unwrap_or_default();
         if ports.is_empty() {
-            let text = "No declared ports";
+            let text = match self.forward_target() {
+                Some(ForwardTarget::Service(_)) => "No TCP ports",
+                _ => "No declared ports",
+            };
             return vec![
                 div()
                     .id("picker-empty")
