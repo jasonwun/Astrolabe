@@ -6,8 +6,8 @@ and gpui-base 0.8.0.
 
 ## Windows
 
-- Open application windows with `gpui_kit::open_window(options, cx, build)`,
-  never raw `cx.open_window`: it wraps the view in `base::Root`, whose
+- Open application windows with `gpui_kit::open_window(options, cx, build)`
+  (clippy enforces it, see `clippy.toml`): it wraps the view in `base::Root`, whose
   gpui-component plugin (`WindowState`, registered by `gpui_kit::init`)
   supplies the theme's background, text colour and font, and hosts
   tooltips. Without it, unpainted regions render black text on a black
@@ -45,5 +45,3 @@ Reference: `crates/app/src/session_view.rs`.
   namespace menu over the dock tab bar is the reference case (#41).
 
 Reference: `crates/app/tests/crd_views.rs`.
-
-Origin: #16 session, all hit mid-implementation.
