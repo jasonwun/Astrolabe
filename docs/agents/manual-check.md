@@ -37,7 +37,15 @@ orca computer click --app astrolabe --x 263 --y 302 --json
 ```
 
 - Click coordinates are window points: screenshot pixels divided by
-  `.result.screenshot.scale` (2 on Retina).
+  `.result.screenshot.scale` (2 on Retina). Read shows a wide screenshot
+  downscaled (e.g. 3024 px wide shown at 2000), so first multiply what
+  you read off the image by original width / shown width (#52):
+  `point = shown × (original / shown width) ÷ scale`.
+- To hover (tooltips), click the element and read the screenshot about
+  two seconds later; the pointer stays where it clicked.
+- The app has only the light theme: nothing calls
+  `Theme::sync_system_appearance`. Where an issue asks for a dark-theme
+  check, state that it was not checked and why.
 - Every action returns a fresh `.result.screenshot.path`; read it to see
   the result rather than taking another snapshot.
 - Select `kind-astrolabe-dev` in the Clusters sidebar if it is not

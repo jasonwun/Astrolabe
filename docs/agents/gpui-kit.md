@@ -45,5 +45,3 @@ Reference: `crates/app/src/session_view.rs`.
   namespace menu over the dock tab bar is the reference case (#41).
 
 Reference: `crates/app/tests/crd_views.rs`.
-
-Origin: #16 session, all hit mid-implementation.
