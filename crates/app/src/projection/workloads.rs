@@ -15,7 +15,7 @@ use super::{
 };
 use crate::store::ObjectKey;
 
-const NONE: &str = "<none>";
+pub(crate) const NONE: &str = "<none>";
 
 /// Name / Ready / Status / Restarts / IP / Node / Age, as `kubectl get pods
 /// -o wide` prints them.
@@ -349,7 +349,7 @@ fn replica_counts(deployment: &Deployment) -> ReplicaCounts {
     }
 }
 
-fn int_or_string(value: &IntOrString) -> String {
+pub(crate) fn int_or_string(value: &IntOrString) -> String {
     match value {
         IntOrString::Int(n) => n.to_string(),
         IntOrString::String(s) => s.clone(),
@@ -369,11 +369,11 @@ pub fn pod_containers(pod: &Pod) -> Vec<String> {
         .collect()
 }
 
-/// A declared container port, as Port Forward offers it.
+/// A port Port Forward offers: a Pod's container port or a Service port.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PodPort {
+pub struct ForwardPort {
     pub port: u16,
-    /// `8080/http (app)`: the port, its name if any, and its container.
+    /// What the picker shows, e.g. `8080/http (app)` for a container port.
     pub label: String,
 }
 
@@ -399,8 +399,8 @@ pub fn running_containers(pod: &Pod) -> Vec<String> {
 
 /// The running containers' declared TCP ports (port-forward carries TCP
 /// only), in container order, each port once.
-pub fn pod_ports(pod: &Pod) -> Vec<PodPort> {
-    let mut ports: Vec<PodPort> = Vec::new();
+pub fn pod_ports(pod: &Pod) -> Vec<ForwardPort> {
+    let mut ports: Vec<ForwardPort> = Vec::new();
     for container in long_running(pod) {
         for declared in container.ports.iter().flatten() {
             let tcp = declared
@@ -418,7 +418,7 @@ pub fn pod_ports(pod: &Pod) -> Vec<PodPort> {
                 .as_ref()
                 .map(|name| format!("/{name}"))
                 .unwrap_or_default();
-            ports.push(PodPort {
+            ports.push(ForwardPort {
                 port,
                 label: format!("{port}{name} ({})", container.name),
             });

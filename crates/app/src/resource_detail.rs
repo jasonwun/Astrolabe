@@ -5,9 +5,13 @@
 //! through their registration (#17).
 
 use astrolabe_kube::crd::KindResource;
-use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
+use std::collections::BTreeSet;
+
+use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod, Secret, Service};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::k8s_openapi::serde::de::DeserializeOwned;
+use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::discovery::ApiResource;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
@@ -19,6 +23,8 @@ use gpui_kit::*;
 use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use crate::projection::config::{HIDDEN, SecretKey, secret_value};
+use crate::projection::network::service_ports;
 use crate::projection::workloads::{pod_containers, pod_ports, running_containers};
 use crate::projection::{
     DetailModel, ReplicaCounts, ResourceTable, SummaryTable, custom_resource_detail,
@@ -26,8 +32,8 @@ use crate::projection::{
 };
 use crate::resource_list::OpenDetail;
 use crate::session::{
-    CustomKindId, ExecRequest, ForwardRequest, ForwardState, LogRequest, ObjectRef, Operation,
-    Session,
+    CustomKindId, ExecRequest, ForwardRequest, ForwardState, ForwardTarget, LogRequest, ObjectRef,
+    Operation, Session,
 };
 use crate::store::ObjectKey;
 use crate::yaml_editor::YamlEditorView;
@@ -70,11 +76,14 @@ pub struct ResourceDetailPanel {
     /// The picker, while a Pod action waits for a container, a shell or a
     /// port.
     picking: Option<Picking>,
+    /// The Secret keys whose values are shown; every other value stays
+    /// masked.
+    revealed: BTreeSet<String>,
     notice: Option<String>,
     focus_handle: FocusHandle,
 }
 
-/// A Pod action that runs in one container.
+/// A Pod action that runs in one container; Forward also serves Services.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PodAction {
     Logs,
@@ -140,6 +149,7 @@ impl ResourceDetailPanel {
             confirm_delete: false,
             scale: None,
             picking: None,
+            revealed: BTreeSet::new(),
             notice: None,
             focus_handle: cx.focus_handle(),
         }
@@ -244,7 +254,7 @@ impl ResourceDetailPanel {
         if let Some(resolved) = self.resolve(cx) {
             cx.emit(OpenEditor {
                 title: resolved.model.title,
-                yaml: resolved.model.yaml,
+                yaml: resolved.model.edit_yaml.unwrap_or(resolved.model.yaml),
             });
         }
     }
@@ -338,15 +348,38 @@ impl ResourceDetailPanel {
 
     /// The shown Pod, as of the watch.
     fn pod(&self, cx: &App) -> Option<Pod> {
-        let DetailTarget::Builtin { kind, key } = &self.target else {
+        self.typed(BuiltinKind::Pods, cx)
+    }
+
+    /// The shown object as `K`, when it is of built-in `kind`.
+    fn typed<K: Resource + DeserializeOwned>(&self, kind: BuiltinKind, cx: &App) -> Option<K> {
+        let DetailTarget::Builtin { kind: shown, key } = &self.target else {
             return None;
         };
+        if *shown != kind {
+            return None;
+        }
         let namespace = key.namespace.as_deref()?;
         let session = self.session.read(cx);
         session
-            .object_watch(&session.builtin_watch_key(*kind, namespace))
+            .object_watch(&session.builtin_watch_key(kind, namespace))
             .and_then(|watch| watch.get(Some(namespace), &key.name))
-            .and_then(|object| object.clone().try_parse::<Pod>().ok())
+            .and_then(|object| object.clone().try_parse::<K>().ok())
+    }
+
+    /// What Port Forward reaches from this tab: the Pod or the Service.
+    fn forward_target(&self) -> Option<ForwardTarget> {
+        match &self.target {
+            DetailTarget::Builtin {
+                kind: BuiltinKind::Pods,
+                key,
+            } => Some(ForwardTarget::Pod(key.clone())),
+            DetailTarget::Builtin {
+                kind: BuiltinKind::Services,
+                key,
+            } => Some(ForwardTarget::Service(key.clone())),
+            _ => None,
+        }
     }
 
     /// Run `action` in the only container, or ask which one.
@@ -386,13 +419,10 @@ impl ResourceDetailPanel {
     fn forward(&mut self, port: u16, cx: &mut Context<Self>) {
         self.picking = None;
         cx.notify();
-        let DetailTarget::Builtin { key, .. } = &self.target else {
+        let Some(target) = self.forward_target() else {
             return;
         };
-        let request = ForwardRequest {
-            pod: key.clone(),
-            port,
-        };
+        let request = ForwardRequest { target, port };
         self.session
             .update(cx, |session, cx| session.forward_port(request, cx));
     }
@@ -482,10 +512,18 @@ impl ResourceDetailPanel {
             )
     }
 
-    /// One button per declared port, or why there are none.
+    /// One button per declared port (a Service's TCP ports), or why there
+    /// are none.
     fn render_ports(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let border = cx.theme().border;
-        let ports = self.pod(cx).map(|pod| pod_ports(&pod)).unwrap_or_default();
+        let ports = match self.forward_target() {
+            Some(ForwardTarget::Pod(_)) => self.pod(cx).map(|pod| pod_ports(&pod)),
+            Some(ForwardTarget::Service(_)) => self
+                .typed::<Service>(BuiltinKind::Services, cx)
+                .map(|service| service_ports(&service)),
+            None => None,
+        }
+        .unwrap_or_default();
         if ports.is_empty() {
             let text = "No declared ports";
             return vec![
@@ -514,15 +552,13 @@ impl ResourceDetailPanel {
             .collect()
     }
 
-    /// The session's forwards to the shown Pod, each with Stop.
+    /// The session's forwards to the shown Pod or Service, each with Stop.
     fn render_forwards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let DetailTarget::Builtin { key, .. } = &self.target else {
-            return None;
-        };
+        let target = self.forward_target()?;
         let theme = cx.theme();
         let session = self.session.read(cx);
         let rows: Vec<AnyElement> = session
-            .forwards(key)
+            .forwards(&target)
             .map(|forward| {
                 let request = forward.request.clone();
                 let port = request.port;
@@ -586,6 +622,63 @@ impl ResourceDetailPanel {
                 .border_b_1()
                 .border_color(theme.border)
                 .children(rows)
+                .into_any_element(),
+        )
+    }
+
+    /// A Secret's keys, each value masked until revealed; a revealed value
+    /// is decoded from the watch at render time.
+    fn render_secret_keys(&self, keys: &[SecretKey], cx: &mut Context<Self>) -> Option<AnyElement> {
+        if keys.is_empty() {
+            return None;
+        }
+        let border = cx.theme().border;
+        let secret = self.typed::<Secret>(BuiltinKind::Secrets, cx);
+        let rows = keys.iter().map(|entry| {
+            let key = entry.key.clone();
+            let revealed = self.revealed.contains(&key);
+            let value = secret
+                .as_ref()
+                .filter(|_| revealed)
+                .and_then(|secret| secret_value(secret, &key))
+                .unwrap_or_else(|| format!("{HIDDEN} ({} bytes)", entry.bytes));
+            let toggle = if revealed {
+                button(
+                    SharedString::from(format!("secret-hide-{key}")),
+                    "Hide",
+                    border,
+                )
+            } else {
+                button(
+                    SharedString::from(format!("secret-reveal-{key}")),
+                    "Reveal",
+                    border,
+                )
+            };
+            h_flex()
+                .gap_2()
+                .child(field(&key, &value))
+                .child(toggle.on_click(cx.listener(move |panel, _, _, cx| {
+                    if !panel.revealed.remove(&key) {
+                        panel.revealed.insert(key.clone());
+                    }
+                    cx.notify();
+                })))
+                .into_any_element()
+        });
+        Some(
+            v_flex()
+                .id("detail-secret-data")
+                .test_support()
+                .gap_1()
+                .pt_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Data"),
+                )
+                .children(rows.collect::<Vec<_>>())
                 .into_any_element(),
         )
     }
@@ -1094,6 +1187,7 @@ impl Render for ResourceDetailPanel {
             status.push(field("Condition", &text));
         }
         status.extend(model.tables.iter().map(|table| summary_table(table, cx)));
+        status.extend(self.render_secret_keys(&model.secret_keys, cx));
 
         let yaml_lines = v_flex()
             .font_family("monospace")

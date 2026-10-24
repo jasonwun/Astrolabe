@@ -1,5 +1,6 @@
 //! End-to-end verification against a real cluster: the #21 apply loop and
-//! the #17 workload operations (scale, restart, logs, exec, port-forward).
+//! the #17 workload operations (scale, restart, logs, exec, port-forward)
+//! and the #18 Service port-forward.
 //!
 //! Requires a reachable cluster via the ambient kubeconfig (the dev loop
 //! uses `kind-astrolabe-dev`). All tests are `#[ignore]`d so the default
@@ -21,7 +22,7 @@ use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
 use astrolabe_kube::pod::{self, ExecInput};
-use astrolabe_kube::{default_client, resource};
+use astrolabe_kube::{default_client, resource, service};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -654,6 +655,17 @@ async fn pod_logs_exec_and_port_forward() {
     let forward = pod::port_forward(&client, &ns, &pod_name, 80, listener, |e| {
         panic!("connection failed: {e}")
     });
+    let response = http_get_through(local, forward).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "response: {response}");
+
+    delete_ns(&client, &ns).await;
+}
+
+/// GET / on `local` while `forward` serves it.
+async fn http_get_through(
+    local: std::net::SocketAddr,
+    forward: impl std::future::Future<Output = std::io::Result<()>>,
+) -> String {
     let request = async {
         let mut stream = tokio::net::TcpStream::connect(local).await.unwrap();
         stream
@@ -664,14 +676,36 @@ async fn pod_logs_exec_and_port_forward() {
         stream.read_to_end(&mut response).await.unwrap();
         String::from_utf8_lossy(&response).into_owned()
     };
-    let response = tokio::time::timeout(Duration::from_secs(20), async {
+    tokio::time::timeout(Duration::from_secs(20), async {
         tokio::select! {
             ended = forward => panic!("port-forward ended: {ended:?}"),
             response = request => response,
         }
     })
     .await
-    .expect("timed out waiting for nginx through the forward");
+    .expect("timed out waiting for nginx through the forward")
+}
+
+/// A Service forward reaches a selected Pod at the targetPort its named
+/// service port maps to.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn service_port_forward_reaches_a_selected_pod() {
+    let client = default_client().await.unwrap();
+    let ns = unique_ns();
+    running_nginx(&client, &ns).await;
+    let service = format!(
+        "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: {ns}\nspec:\n  selector:\n    app: nginx\n  ports:\n    - name: http\n      port: 8081\n      targetPort: 80\n"
+    );
+    let report = apply_documents(&client, &service, false).await.unwrap();
+    assert!(report.ok, "service should apply: {:?}", report.outcomes);
+
+    let listener = pod::bind_local(0).await.unwrap();
+    let local = listener.local_addr().unwrap();
+    let forward = service::port_forward(&client, &ns, "web", 8081, listener, |e| {
+        panic!("connection failed: {e}")
+    });
+    let response = http_get_through(local, forward).await;
     assert!(response.starts_with("HTTP/1.1 200"), "response: {response}");
 
     delete_ns(&client, &ns).await;

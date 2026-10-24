@@ -164,15 +164,38 @@ pub async fn port_forward(
     on_error: impl Fn(String) + Send + Sync + 'static,
 ) -> std::io::Result<()> {
     let api: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    let name = name.to_string();
+    serve_forwards(listener, on_error, move || {
+        let target = Ok((api.clone(), name.clone(), port));
+        async move { target }
+    })
+    .await
+}
+
+/// Accept on `listener` until it fails, forwarding each connection to the
+/// Pod and port `target` resolves for it; a failure, resolution included,
+/// goes to `on_error`. Dropping the future closes every open connection.
+pub(crate) async fn serve_forwards<T>(
+    listener: TcpListener,
+    on_error: impl Fn(String) + Send + Sync + 'static,
+    target: impl Fn() -> T,
+) -> std::io::Result<()>
+where
+    T: Future<Output = Result<(Api<Pod>, String, u16), String>> + Send + 'static,
+{
     let on_error = Arc::new(on_error);
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let (local, _) = accepted?;
-                let (api, name, on_error) = (api.clone(), name.to_string(), on_error.clone());
+                let (target, on_error) = (target(), on_error.clone());
                 connections.spawn(async move {
-                    if let Err(error) = forward(&api, &name, port, local).await {
+                    let forwarded = match target.await {
+                        Ok((api, name, port)) => forward(&api, &name, port, local).await,
+                        Err(error) => Err(error),
+                    };
+                    if let Err(error) = forwarded {
                         on_error(error);
                     }
                 });

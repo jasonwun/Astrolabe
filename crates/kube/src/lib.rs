@@ -14,6 +14,7 @@ pub mod crd;
 pub mod discovery;
 pub mod pod;
 pub mod resource;
+pub mod service;
 pub mod watch;
 
 pub use client::{client_for_context, context_names, default_client};

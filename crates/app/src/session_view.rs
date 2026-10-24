@@ -304,19 +304,27 @@ impl SessionView {
                     cx.listener(|this, _, window, cx| this.show(ListView::Namespaces, window, cx)),
                 ),
             )
-            .child(heading("Workloads"))
-            .children(BuiltinKind::NAVIGATION.map(|kind| {
-                let label = kind.registration().label;
-                item(
-                    format!("nav-{}", label.to_lowercase()).into(),
-                    label.to_string(),
-                    0,
-                    current == ListView::Builtin(kind),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.show(ListView::Builtin(kind), window, cx)
-                }))
-            }))
+            .children(
+                BuiltinKind::NAVIGATION
+                    .into_iter()
+                    .flat_map(|(section, kinds)| {
+                        std::iter::once(heading(section).into_any_element()).chain(
+                            kinds.iter().map(|&kind| {
+                                let label = kind.registration().label;
+                                item(
+                                    format!("nav-{}", label.to_lowercase()).into(),
+                                    label.to_string(),
+                                    0,
+                                    current == ListView::Builtin(kind),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.show(ListView::Builtin(kind), window, cx)
+                                }))
+                                .into_any_element()
+                            }),
+                        )
+                    }),
+            )
             // Custom Resources sits after the built-in resource sections.
             .child(heading("Custom Resources"))
             .child(
