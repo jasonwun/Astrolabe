@@ -24,6 +24,9 @@ Reference: `crates/app/src/session_view.rs`.
   `window.within("detail-metadata").try_find_by_label(…)`.
 - A label lookup only sees elements that carry both `.aria_label(…)` and
   `.test_support()`, and `.aria_label` needs an element with an `.id(…)`.
+- `.test_support()` wraps the element in `Observed<…>`
+  (`gpui_kit::base::test_support::Observed`): a helper that returns a
+  labeled element declares that type, not `Stateful<Div>` (#17).
 - A layer drawn over other elements (menu, popover) needs `.occlude()`;
   without it, `window.click` on the layer also lands on whatever sits
   beneath it. When a click causes an unrelated state change (e.g. the
