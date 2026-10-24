@@ -1,20 +1,20 @@
 //! Built-in network kinds on the generic pipeline (#18): Services and
-//! Ingresses, with kubectl's printer columns (k8s `printers.go`).
+//! Ingresses, with Lens's list columns and detail fields (lensapp/lens
+//! master, the `network-services/` and `network-ingresses/` components and
+//! the `Service`/`Ingress` kube objects). Lens's Namespace column is left
+//! out, as for every built-in kind.
 
-use std::collections::BTreeSet;
-
-use astrolabe_kube::k8s_openapi::api::core::v1::{LoadBalancerStatus, Service};
-use astrolabe_kube::k8s_openapi::api::networking::v1::{
-    Ingress, IngressBackend, IngressLoadBalancerStatus,
-};
+use astrolabe_kube::k8s_openapi::api::core::v1::{Service, ServicePort};
+use astrolabe_kube::k8s_openapi::api::networking::v1::{Ingress, IngressBackend, IngressRule};
+use astrolabe_kube::k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
-use super::workloads::{ForwardPort, NONE, int_or_string};
+use super::workloads::{ForwardPort, int_or_string};
 use super::{DetailModel, ResourceRow, ResourceTable, SummaryTable, age_of, detail};
 use crate::store::ObjectKey;
 
-/// Name / Type / Cluster IP / External IP / Ports / Age / Selector, as
-/// `kubectl get services -o wide` prints them.
+/// Name / Type / Cluster IP / Ports / External IP / Selector / Age /
+/// Status, as Lens's Services list shows them.
 pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable {
     let rows = services
         .iter()
@@ -25,16 +25,12 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
                 cells: vec![
                     service.metadata.name.clone().unwrap_or_default(),
                     spec.type_.clone().unwrap_or_default(),
-                    spec.cluster_ips
-                        .iter()
-                        .flatten()
-                        .next()
-                        .cloned()
-                        .unwrap_or_else(|| NONE.to_string()),
-                    external_ip(service),
-                    port_text(service),
+                    spec.cluster_ip.clone().unwrap_or_default(),
+                    port_list(service),
+                    list_external_ips(service),
+                    selector(service).join(", "),
                     age_of(&service.metadata, now),
-                    service_selector(service),
+                    service_status(service).to_string(),
                 ],
             }
         })
@@ -44,10 +40,11 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
             "Name",
             "Type",
             "Cluster IP",
-            "External IP",
             "Ports",
-            "Age",
+            "External IP",
             "Selector",
+            "Age",
+            "Status",
         ]
         .map(String::from)
         .to_vec(),
@@ -55,155 +52,135 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
     }
 }
 
-/// kubectl's `getServiceExternalIP` (wide, so never truncated).
-fn external_ip(service: &Service) -> String {
-    let spec = service.spec.clone().unwrap_or_default();
-    let external = spec.external_ips.unwrap_or_default();
-    match spec.type_.as_deref() {
-        Some("ClusterIP" | "NodePort") if external.is_empty() => NONE.to_string(),
-        Some("ClusterIP" | "NodePort") => external.join(","),
-        Some("LoadBalancer") => {
-            let balanced = service
-                .status
-                .as_ref()
-                .and_then(|status| status.load_balancer.as_ref())
-                .map(service_balancers)
-                .unwrap_or_default();
-            let addresses: Vec<String> = balanced.into_iter().chain(external).collect();
-            if addresses.is_empty() {
-                "<pending>".to_string()
-            } else {
-                addresses.join(",")
-            }
-        }
-        Some("ExternalName") => spec.external_name.unwrap_or_default(),
-        _ => "<unknown>".to_string(),
+/// Lens's `Service.getExternalIps`: the load balancer's ingress points
+/// (each one's IP, else its hostname) once the status lists any, else
+/// `spec.externalIPs`.
+fn external_ips(service: &Service) -> Vec<String> {
+    let points = service
+        .status
+        .as_ref()
+        .and_then(|status| status.load_balancer.as_ref())
+        .and_then(|balancer| balancer.ingress.as_ref());
+    match points {
+        Some(points) => points
+            .iter()
+            .filter_map(|point| {
+                point
+                    .ip
+                    .clone()
+                    .filter(|ip| !ip.is_empty())
+                    .or(point.hostname.clone())
+            })
+            .collect(),
+        None => service
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.external_ips.clone())
+            .unwrap_or_default(),
     }
 }
 
-/// `loadBalancerStatusStringer`: each ingress point's IP, else its
-/// hostname, sorted and deduplicated.
-fn service_balancers(status: &LoadBalancerStatus) -> Vec<String> {
-    balancer_addresses(
-        status
-            .ingress
-            .iter()
-            .flatten()
-            .map(|point| (point.ip.as_deref(), point.hostname.as_deref())),
-    )
+/// The list's External IP: the external IPs, else an ExternalName's
+/// target, else `-`.
+fn list_external_ips(service: &Service) -> String {
+    let ips = external_ips(service);
+    if !ips.is_empty() {
+        return ips.join(", ");
+    }
+    service
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.external_name.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "-".to_string())
 }
 
-fn ingress_balancers(status: &IngressLoadBalancerStatus) -> Vec<String> {
-    balancer_addresses(
-        status
-            .ingress
-            .iter()
-            .flatten()
-            .map(|point| (point.ip.as_deref(), point.hostname.as_deref())),
-    )
+/// Lens's `Service.getStatus`: a LoadBalancer is Pending until it has an
+/// external IP; every other Service is Active.
+fn service_status(service: &Service) -> &'static str {
+    let balancer = service
+        .spec
+        .as_ref()
+        .is_some_and(|spec| spec.type_.as_deref() == Some("LoadBalancer"));
+    if balancer && external_ips(service).is_empty() {
+        "Pending"
+    } else {
+        "Active"
+    }
 }
 
-fn balancer_addresses<'a>(
-    points: impl Iterator<Item = (Option<&'a str>, Option<&'a str>)>,
-) -> Vec<String> {
-    let addresses: BTreeSet<&str> = points
-        .filter_map(|(ip, hostname)| {
-            ip.filter(|ip| !ip.is_empty())
-                .or(hostname.filter(|hostname| !hostname.is_empty()))
-        })
-        .collect();
-    addresses.into_iter().map(String::from).collect()
+/// Lens's `ServicePort.toString`: `port:nodePort/protocol`, else
+/// `port:targetPort/protocol` when the target differs, else
+/// `port/protocol`.
+fn port_text(port: &ServicePort) -> String {
+    let protocol = port.protocol.as_deref().unwrap_or("TCP");
+    let suffix = match (port.node_port, &port.target_port) {
+        (Some(node), _) if node != 0 => format!(":{node}"),
+        (_, Some(IntOrString::Int(target))) if *target == port.port => String::new(),
+        (_, Some(target)) => format!(":{}", int_or_string(target)),
+        (_, None) => String::new(),
+    };
+    format!("{}{suffix}/{protocol}", port.port)
 }
 
-/// `makePortString`: `port[:nodePort]/protocol`, comma-separated.
-fn port_text(service: &Service) -> String {
-    let ports: Vec<String> = service
+fn port_list(service: &Service) -> String {
+    service
         .spec
         .iter()
         .flat_map(|spec| spec.ports.iter().flatten())
-        .map(|port| {
-            let protocol = port.protocol.as_deref().unwrap_or("TCP");
-            match port.node_port {
-                Some(node) if node > 0 => format!("{}:{node}/{protocol}", port.port),
-                _ => format!("{}/{protocol}", port.port),
-            }
-        })
-        .collect();
-    if ports.is_empty() {
-        NONE.to_string()
-    } else {
-        ports.join(",")
-    }
+        .map(port_text)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-/// `labels.FormatLabels` of the selector.
-fn service_selector(service: &Service) -> String {
-    let pairs: Vec<String> = service
+/// The selector as `key=value` labels.
+fn selector(service: &Service) -> Vec<String> {
+    service
         .spec
         .iter()
         .flat_map(|spec| spec.selector.iter().flatten())
         .map(|(key, value)| format!("{key}={value}"))
-        .collect();
-    if pairs.is_empty() {
-        NONE.to_string()
-    } else {
-        pairs.join(",")
-    }
+        .collect()
 }
 
-/// Status summary = type, IPs, session affinity, selector (and an
-/// ExternalName's target), plus a Ports table.
+/// Lens's Service details: selector, type, session affinity, then the
+/// connection (cluster IPs, IP families and policy, external IPs, ports,
+/// a LoadBalancer's requested IP), each optional one only when set.
 pub fn service_detail(service: &Service, now: Timestamp) -> DetailModel {
     let spec = service.spec.clone().unwrap_or_default();
     let mut summary = vec![
+        ("Selector", selector(service).join(", ")),
         ("Type", spec.type_.clone().unwrap_or_default()),
         (
-            "Cluster IPs",
-            spec.cluster_ips.clone().unwrap_or_default().join(","),
-        ),
-        ("External IP", external_ip(service)),
-        (
-            "Session affinity",
+            "Session Affinity",
             spec.session_affinity.clone().unwrap_or_default(),
         ),
-        ("Selector", service_selector(service)),
+        ("Cluster IP", spec.cluster_ip.clone().unwrap_or_default()),
     ];
-    if let Some(name) = &spec.external_name {
-        summary.push(("External name", name.clone()));
+    let mut optional = |label, values: Vec<String>| {
+        if !values.is_empty() {
+            summary.push((label, values.join(", ")));
+        }
+    };
+    optional("Cluster IPs", spec.cluster_ips.clone().unwrap_or_default());
+    optional("IP families", spec.ip_families.clone().unwrap_or_default());
+    optional(
+        "IP family policy",
+        spec.ip_family_policy.clone().into_iter().collect(),
+    );
+    optional("External IPs", external_ips(service));
+    summary.push(("Ports", port_list(service)));
+    if spec.type_.as_deref() == Some("LoadBalancer")
+        && let Some(ip) = spec.load_balancer_ip.clone().filter(|ip| !ip.is_empty())
+    {
+        summary.push(("Load Balancer IP", ip));
     }
-    let rows = spec
-        .ports
-        .iter()
-        .flatten()
-        .map(|port| {
-            vec![
-                port.name.clone().unwrap_or_default(),
-                port.port.to_string(),
-                port.target_port
-                    .as_ref()
-                    .map(int_or_string)
-                    .unwrap_or_else(|| port.port.to_string()),
-                port.node_port
-                    .map(|node| node.to_string())
-                    .unwrap_or_default(),
-                port.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
-            ]
-        })
-        .collect();
     let value = serde_json::to_value(service).unwrap_or_default();
     let summary = summary
         .into_iter()
         .map(|(label, value)| (label.to_string(), value))
         .collect();
-    let mut model = detail("Service", service, &value, summary, now);
-    model.tables.push(SummaryTable {
-        title: "Ports".to_string(),
-        columns: ["Name", "Port", "Target port", "Node port", "Protocol"]
-            .map(String::from)
-            .to_vec(),
-        rows,
-    });
-    model
+    detail("Service", service, &value, summary, now)
 }
 
 /// The service ports Port Forward offers: TCP only, as port-forward
@@ -234,167 +211,201 @@ pub fn service_ports(service: &Service) -> Vec<ForwardPort> {
         .collect()
 }
 
-/// Name / Class / Hosts / Address / Ports / Age, as `kubectl get ingresses
-/// -o wide` prints them.
+/// Name / LoadBalancers / Rules / Age, as Lens's Ingresses list shows
+/// them.
 pub fn project_ingresses(ingresses: &[&Ingress], now: Timestamp) -> ResourceTable {
     let rows = ingresses
         .iter()
-        .map(|ingress| {
-            let spec = ingress.spec.clone().unwrap_or_default();
-            ResourceRow {
-                key: ObjectKey::of(*ingress),
-                cells: vec![
-                    ingress.metadata.name.clone().unwrap_or_default(),
-                    ingress_class(ingress),
-                    hosts(ingress),
-                    ingress_address(ingress),
-                    if spec.tls.unwrap_or_default().is_empty() {
-                        "80"
-                    } else {
-                        "80, 443"
-                    }
-                    .to_string(),
-                    age_of(&ingress.metadata, now),
-                ],
-            }
+        .map(|ingress| ResourceRow {
+            key: ObjectKey::of(*ingress),
+            cells: vec![
+                ingress.metadata.name.clone().unwrap_or_default(),
+                load_balancers(ingress).join(", "),
+                rules(ingress)
+                    .flat_map(|rule| routes(ingress, rule))
+                    .map(|route| format!("{} ⇢ {}", route.url, route.backend))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                age_of(&ingress.metadata, now),
+            ],
         })
         .collect();
     ResourceTable {
-        columns: ["Name", "Class", "Hosts", "Address", "Ports", "Age"]
+        columns: ["Name", "LoadBalancers", "Rules", "Age"]
             .map(String::from)
             .to_vec(),
         rows,
     }
 }
 
-fn ingress_class(ingress: &Ingress) -> String {
-    ingress
-        .spec
-        .as_ref()
-        .and_then(|spec| spec.ingress_class_name.clone())
-        .unwrap_or_else(|| NONE.to_string())
-}
-
-fn ingress_address(ingress: &Ingress) -> String {
+/// Lens's `Ingress.getLoadBalancers`: each ingress point's hostname, else
+/// its IP.
+fn load_balancers(ingress: &Ingress) -> Vec<String> {
     ingress
         .status
-        .as_ref()
-        .and_then(|status| status.load_balancer.as_ref())
-        .map(ingress_balancers)
-        .unwrap_or_default()
-        .join(",")
+        .iter()
+        .flat_map(|status| status.load_balancer.iter())
+        .flat_map(|balancer| balancer.ingress.iter().flatten())
+        .filter_map(|point| {
+            point
+                .hostname
+                .clone()
+                .filter(|hostname| !hostname.is_empty())
+                .or(point.ip.clone())
+        })
+        .collect()
 }
 
-/// kubectl's `formatHosts`: the first three hosts, `+ N more...` counting
-/// every further rule, `*` when no rule names a host.
-fn hosts(ingress: &Ingress) -> String {
-    const MAX: usize = 3;
-    let rules = ingress
+fn rules(ingress: &Ingress) -> impl Iterator<Item = &IngressRule> {
+    ingress
+        .spec
+        .iter()
+        .flat_map(|spec| spec.rules.iter().flatten())
+}
+
+fn has_tls(ingress: &Ingress) -> bool {
+    ingress
         .spec
         .as_ref()
-        .and_then(|spec| spec.rules.clone())
-        .unwrap_or_default();
-    let mut list: Vec<String> = Vec::new();
-    let mut more = false;
-    for rule in &rules {
-        if list.len() == MAX {
-            more = true;
-        }
-        if let Some(host) = rule.host.as_ref().filter(|host| !host.is_empty())
-            && !more
-        {
-            list.push(host.clone());
-        }
-    }
-    if list.is_empty() {
-        return "*".to_string();
-    }
-    let joined = list.join(",");
-    if more {
-        format!("{joined} + {} more...", rules.len() - MAX)
-    } else {
-        joined
-    }
+        .and_then(|spec| spec.tls.as_ref())
+        .is_some_and(|tls| !tls.is_empty())
 }
 
-/// `service:port` for a Service backend, `Kind name` for a resource one.
+/// One path of a rule, as Lens's `computeRuleDeclarations` reads it.
+struct Route {
+    path: String,
+    url: String,
+    backend: String,
+}
+
+/// Each of `rule`'s paths: `/` when unset, under `https://` once the
+/// Ingress has TLS, on host `*` when the rule names none.
+fn routes(ingress: &Ingress, rule: &IngressRule) -> Vec<Route> {
+    let protocol = if has_tls(ingress) { "https" } else { "http" };
+    let host = rule.host.as_deref().unwrap_or("*");
+    rule.http
+        .iter()
+        .flat_map(|http| &http.paths)
+        .map(|path| {
+            let pathname = path.path.clone().unwrap_or_else(|| "/".to_string());
+            Route {
+                url: format!("{protocol}://{host}{pathname}"),
+                path: pathname,
+                backend: backend_text(&path.backend),
+            }
+        })
+        .collect()
+}
+
+/// Lens's `getBackendServiceNamePort`: `service:port` (the port's number,
+/// else its name), `<unknown>` for anything but a Service backend.
 fn backend_text(backend: &IngressBackend) -> String {
-    if let Some(service) = &backend.service {
-        let port = service
-            .port
-            .as_ref()
-            .and_then(|port| port.name.clone().or(port.number.map(|n| n.to_string())))
-            .unwrap_or_default();
-        return format!("{}:{port}", service.name);
-    }
     backend
-        .resource
+        .service
         .as_ref()
-        .map(|resource| format!("{} {}", resource.kind, resource.name))
-        .unwrap_or_default()
+        .map(|service| {
+            let port = service
+                .port
+                .as_ref()
+                .and_then(|port| port.number.map(|n| n.to_string()).or(port.name.clone()))
+                .unwrap_or_default();
+            format!("{}:{port}", service.name)
+        })
+        .unwrap_or_else(|| "<unknown>".to_string())
 }
 
-/// Status summary = class, address, default backend, TLS, plus a Rules
-/// table mapping each host and path to its backend.
+/// Lens's `Ingress.getPorts`: 80 when a rule has paths (or, with no rules,
+/// the default backend's port number), plus 443 with TLS.
+fn ingress_ports(ingress: &Ingress) -> String {
+    let spec = ingress.spec.clone().unwrap_or_default();
+    let rules = spec.rules.unwrap_or_default();
+    let mut ports = Vec::new();
+    if !rules.is_empty() {
+        if rules.iter().any(|rule| rule.http.is_some()) {
+            ports.push(80);
+        }
+    } else if let Some(port) = spec
+        .default_backend
+        .and_then(|backend| backend.service)
+        .and_then(|service| service.port)
+        .and_then(|port| port.number)
+    {
+        ports.push(port);
+    }
+    if has_tls(ingress) {
+        ports.push(443);
+    }
+    ports
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Lens's Ingress details: ports, TLS secrets, the default backend
+/// Service, a Rules table mapping each host and path to its backend, and
+/// the load balancer's ingress points.
 pub fn ingress_detail(ingress: &Ingress, now: Timestamp) -> DetailModel {
     let spec = ingress.spec.clone().unwrap_or_default();
-    let default_backend = spec.default_backend.as_ref().map(backend_text);
-    let mut summary = vec![
-        ("Class".to_string(), ingress_class(ingress)),
-        ("Address".to_string(), ingress_address(ingress)),
-    ];
-    if let Some(backend) = &default_backend {
-        summary.push(("Default backend".to_string(), backend.clone()));
+    let mut summary = vec![("Ports".to_string(), ingress_ports(ingress))];
+    if let Some(tls) = spec.tls.as_ref().filter(|tls| !tls.is_empty()) {
+        let secrets: Vec<String> = tls
+            .iter()
+            .filter_map(|tls| tls.secret_name.clone())
+            .collect();
+        summary.push(("TLS".to_string(), secrets.join(", ")));
     }
-    let tls: Vec<String> = spec
-        .tls
-        .iter()
-        .flatten()
-        .map(|tls| {
-            format!(
-                "{}: {}",
-                tls.secret_name.clone().unwrap_or_default(),
-                tls.hosts.clone().unwrap_or_default().join(", ")
-            )
-        })
-        .collect();
-    if !tls.is_empty() {
-        summary.push(("TLS".to_string(), tls.join("; ")));
+    // Lens names the default backend only when it has both name and port.
+    if let Some(backend) = spec.default_backend.as_ref().filter(|backend| {
+        backend
+            .service
+            .as_ref()
+            .is_some_and(|service| service.port.is_some())
+    }) {
+        summary.push(("Service".to_string(), backend_text(backend)));
     }
     let mut rows = Vec::new();
-    for rule in spec.rules.iter().flatten() {
-        let host = rule
-            .host
-            .clone()
-            .filter(|host| !host.is_empty())
-            .unwrap_or_else(|| "*".to_string());
-        let Some(http) = &rule.http else {
-            // A rule without paths sends everything to the default backend.
-            rows.push(vec![
-                host,
-                String::new(),
-                String::new(),
-                default_backend.clone().unwrap_or_default(),
-            ]);
+    for rule in rules(ingress) {
+        let host = rule.host.clone().unwrap_or_default();
+        if rule.http.is_none() {
+            // Lens titles a rule without paths by its host alone.
+            if !host.is_empty() {
+                rows.push(vec![host, String::new(), String::new(), String::new()]);
+            }
             continue;
-        };
-        for path in &http.paths {
-            rows.push(vec![
-                host.clone(),
-                path.path.clone().unwrap_or_default(),
-                path.path_type.clone(),
-                backend_text(&path.backend),
-            ]);
+        }
+        for route in routes(ingress, rule) {
+            rows.push(vec![host.clone(), route.path, route.url, route.backend]);
         }
     }
     let value = serde_json::to_value(ingress).unwrap_or_default();
     let mut model = detail("Ingress", ingress, &value, summary, now);
     model.tables.push(SummaryTable {
         title: "Rules".to_string(),
-        columns: ["Host", "Path", "Path type", "Backend"]
+        columns: ["Host", "Path", "Link", "Backends"]
             .map(String::from)
             .to_vec(),
         rows,
     });
+    let or_dash = |value: &Option<String>| {
+        value
+            .clone()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "-".to_string())
+    };
+    let points: Vec<Vec<String>> = ingress
+        .status
+        .iter()
+        .flat_map(|status| status.load_balancer.iter())
+        .flat_map(|balancer| balancer.ingress.iter().flatten())
+        .map(|point| vec![or_dash(&point.hostname), or_dash(&point.ip)])
+        .collect();
+    if !points.is_empty() {
+        model.tables.push(SummaryTable {
+            title: "Load-Balancer Ingress Points".to_string(),
+            columns: ["Hostname", "IP"].map(String::from).to_vec(),
+            rows: points,
+        });
+    }
     model
 }

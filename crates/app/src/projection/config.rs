@@ -1,8 +1,9 @@
 //! Built-in configuration kinds on the generic pipeline (#18): ConfigMaps
-//! and Secrets. A Secret's values stay masked everywhere the panel shows
-//! them until the user reveals one.
-
-use std::collections::BTreeMap;
+//! and Secrets, with Lens's list columns and detail fields (lensapp/lens
+//! master, the `config-maps/` and `config-secrets/` components; Lens's
+//! Namespace column is left out, as for every built-in kind). A Secret's
+//! values stay masked everywhere the panel shows them until the user
+//! reveals one.
 
 use astrolabe_kube::k8s_openapi::ByteString;
 use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Secret};
@@ -22,51 +23,28 @@ const LAST_APPLIED: &str = "kubectl.kubernetes.io/last-applied-configuration";
 /// How much of a ConfigMap value the detail previews.
 const PREVIEW_CHARS: usize = 80;
 
-/// Name / Data / Keys / Age: `kubectl get configmaps` plus the key names.
+/// Name / Keys / Age, as Lens's ConfigMaps list shows them: the keys of
+/// `data` (Lens leaves `binaryData` out).
 pub fn project_config_maps(config_maps: &[&ConfigMap], now: Timestamp) -> ResourceTable {
     let rows = config_maps
         .iter()
-        .map(|config| {
-            let keys = config_entries(config);
-            ResourceRow {
-                key: ObjectKey::of(*config),
-                cells: vec![
-                    config.metadata.name.clone().unwrap_or_default(),
-                    keys.len().to_string(),
-                    key_list(keys.keys().copied()),
-                    age_of(&config.metadata, now),
-                ],
-            }
+        .map(|config| ResourceRow {
+            key: ObjectKey::of(*config),
+            cells: vec![
+                config.metadata.name.clone().unwrap_or_default(),
+                key_list(config.data.iter().flatten().map(|(key, _)| key)),
+                age_of(&config.metadata, now),
+            ],
         })
         .collect();
     ResourceTable {
-        columns: ["Name", "Data", "Keys", "Age"].map(String::from).to_vec(),
+        columns: ["Name", "Keys", "Age"].map(String::from).to_vec(),
         rows,
     }
 }
 
-enum Entry<'a> {
-    Text(&'a str),
-    Binary(&'a ByteString),
-}
-
-/// `data` and `binaryData` together, by key (the API keeps them disjoint).
-fn config_entries(config: &ConfigMap) -> BTreeMap<&str, Entry<'_>> {
-    let text = config
-        .data
-        .iter()
-        .flatten()
-        .map(|(key, value)| (key.as_str(), Entry::Text(value)));
-    let binary = config
-        .binary_data
-        .iter()
-        .flatten()
-        .map(|(key, value)| (key.as_str(), Entry::Binary(value)));
-    text.chain(binary).collect()
-}
-
-fn key_list<'a>(keys: impl Iterator<Item = &'a str>) -> String {
-    keys.collect::<Vec<_>>().join(", ")
+fn key_list<'a>(keys: impl Iterator<Item = &'a String>) -> String {
+    keys.map(String::as_str).collect::<Vec<_>>().join(", ")
 }
 
 fn binary(bytes: &ByteString) -> String {
@@ -85,25 +63,20 @@ fn preview(value: &str) -> String {
     }
 }
 
-/// Status summary = immutability when set, plus a Data table previewing
-/// each value.
+/// Lens's ConfigMap details: a Data table of `data`, each value
+/// previewed (#12), and nothing else.
 pub fn config_map_detail(config: &ConfigMap, now: Timestamp) -> DetailModel {
-    let summary = config
-        .immutable
-        .map(|immutable| vec![("Immutable".to_string(), immutable.to_string())])
-        .unwrap_or_default();
-    let rows = config_entries(config)
-        .into_iter()
-        .map(|(key, entry)| {
-            let value = match entry {
-                Entry::Text(text) => preview(text),
-                Entry::Binary(bytes) => binary(bytes),
-            };
-            vec![key.to_string(), value]
-        })
+    let rows: Vec<Vec<String>> = config
+        .data
+        .iter()
+        .flatten()
+        .map(|(key, value)| vec![key.clone(), preview(value)])
         .collect();
     let value = serde_json::to_value(config).unwrap_or_default();
-    let mut model = detail("ConfigMap", config, &value, summary, now);
+    let mut model = detail("ConfigMap", config, &value, Vec::new(), now);
+    if rows.is_empty() {
+        return model;
+    }
     model.tables.push(SummaryTable {
         title: "Data".to_string(),
         columns: ["Key", "Value"].map(String::from).to_vec(),
@@ -112,27 +85,30 @@ pub fn config_map_detail(config: &ConfigMap, now: Timestamp) -> DetailModel {
     model
 }
 
-/// Name / Type / Data / Keys / Age: `kubectl get secrets` plus the key
-/// names.
+/// Name / Labels / Keys / Type / Age, as Lens's Secrets list shows them.
 pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
     let rows = secrets
         .iter()
-        .map(|secret| {
-            let data = secret.data.clone().unwrap_or_default();
-            ResourceRow {
-                key: ObjectKey::of(*secret),
-                cells: vec![
-                    secret.metadata.name.clone().unwrap_or_default(),
-                    secret.type_.clone().unwrap_or_default(),
-                    data.len().to_string(),
-                    key_list(data.keys().map(String::as_str)),
-                    age_of(&secret.metadata, now),
-                ],
-            }
+        .map(|secret| ResourceRow {
+            key: ObjectKey::of(*secret),
+            cells: vec![
+                secret.metadata.name.clone().unwrap_or_default(),
+                secret
+                    .metadata
+                    .labels
+                    .iter()
+                    .flatten()
+                    .map(|(key, value)| format!("{key}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                key_list(secret.data.iter().flatten().map(|(key, _)| key)),
+                secret.type_.clone().unwrap_or_default(),
+                age_of(&secret.metadata, now),
+            ],
         })
         .collect();
     ResourceTable {
-        columns: ["Name", "Type", "Data", "Keys", "Age"]
+        columns: ["Name", "Labels", "Keys", "Type", "Age"]
             .map(String::from)
             .to_vec(),
         rows,

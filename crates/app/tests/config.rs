@@ -1,4 +1,5 @@
-//! ConfigMaps and Secrets on the generic list/detail pipeline (#18).
+//! ConfigMaps and Secrets on the generic list/detail pipeline (#18), with
+//! Lens's columns and detail fields.
 
 use astrolabe::projection::SummaryTable;
 use astrolabe::projection::config::{
@@ -28,15 +29,15 @@ fn app_config() -> ConfigMap {
 }
 
 #[test]
-fn config_maps_list_counts_and_names_their_keys() {
+fn config_maps_list_names_their_data_keys() {
     let config = app_config();
 
     let table = project_config_maps(&[&config], now());
 
-    assert_eq!(table.columns, ["Name", "Data", "Keys", "Age"]);
+    assert_eq!(table.columns, ["Name", "Keys", "Age"]);
     assert_eq!(
         table.rows[0].cells,
-        ["app", "5", "crlf, logo.png, long, mode, nginx.conf", "60m"]
+        ["app", "crlf, long, mode, nginx.conf", "60m"]
     );
 }
 
@@ -52,7 +53,6 @@ fn a_config_map_detail_previews_each_value() {
             columns: ["Key", "Value"].map(String::from).to_vec(),
             rows: vec![
                 vec!["crlf".to_string(), "on".to_string()],
-                vec!["logo.png".to_string(), "<binary, 8 bytes>".to_string()],
                 vec!["long".to_string(), format!("{}…", "x".repeat(80))],
                 vec!["mode".to_string(), "production".to_string()],
                 vec!["nginx.conf".to_string(), "server {…".to_string()],
@@ -62,14 +62,13 @@ fn a_config_map_detail_previews_each_value() {
 }
 
 #[test]
-fn an_immutable_config_map_says_so() {
+fn a_config_map_without_data_has_no_data_table() {
     let mut config = app_config();
+    config.data = None;
     config.immutable = Some(true);
-    assert_eq!(
-        config_map_detail(&config, now()).status,
-        [("Immutable".to_string(), "true".to_string())]
-    );
-    assert!(config_map_detail(&app_config(), now()).status.is_empty());
+    let model = config_map_detail(&config, now());
+    assert!(model.status.is_empty());
+    assert!(model.tables.is_empty());
 }
 
 /// Synthetic Secret (plausible shape, not captured from a server):
@@ -78,7 +77,8 @@ fn db_secret() -> Secret {
     serde_json::from_value(serde_json::json!({
         "apiVersion": "v1", "kind": "Secret",
         "metadata": {"name": "db", "namespace": "default", "uid": "uid-secret",
-                     "creationTimestamp": "2026-10-22T11:00:00Z"},
+                     "creationTimestamp": "2026-10-22T11:00:00Z",
+                     "labels": {"app": "db", "tier": "data"}},
         "type": "Opaque",
         "data": {"password": "aHVudGVyMg==", "cert": "/w=="}
     }))
@@ -86,15 +86,15 @@ fn db_secret() -> Secret {
 }
 
 #[test]
-fn secrets_list_type_count_and_keys() {
+fn secrets_list_labels_keys_and_type() {
     let secret = db_secret();
 
     let table = project_secrets(&[&secret], now());
 
-    assert_eq!(table.columns, ["Name", "Type", "Data", "Keys", "Age"]);
+    assert_eq!(table.columns, ["Name", "Labels", "Keys", "Type", "Age"]);
     assert_eq!(
         table.rows[0].cells,
-        ["db", "Opaque", "2", "cert, password", "60m"]
+        ["db", "app=db, tier=data", "cert, password", "Opaque", "60m"]
     );
 }
 

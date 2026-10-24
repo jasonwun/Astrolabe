@@ -116,8 +116,11 @@ fn a_service_forwards_one_of_its_tcp_ports(cx: &mut TestAppContext) {
 
     ui.frame(|window, cx| {
         assert!(window.try_find_by_label("Service default/web").is_some());
-        let ports = window.within("detail-table-Ports");
-        assert!(ports.try_find_by_label("Target port").is_some());
+        assert!(
+            window
+                .try_find_by_label("Ports: 80:8080/TCP, 53/UDP")
+                .is_some()
+        );
         assert!(window.try_find("detail-logs").is_none());
         window.click("detail-forward", cx);
     });
@@ -223,6 +226,7 @@ fn an_ingress_detail_maps_rules_to_backends(cx: &mut TestAppContext) {
     ui.frame(|window, _| {
         let rules = window.within("detail-table-Rules");
         assert!(rules.try_find_by_label("shop.example").is_some());
+        assert!(rules.try_find_by_label("http://shop.example/").is_some());
         assert!(rules.try_find_by_label("web:80").is_some());
         assert!(window.try_find("detail-edit").is_some());
         assert!(window.try_find("detail-forward").is_none());
