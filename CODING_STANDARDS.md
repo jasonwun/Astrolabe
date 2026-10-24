@@ -21,7 +21,9 @@ kind e2e later disproved (#21 retro).
 A resolution that names a specific third-party API, type, or feature is
 verified against the pinned version's source or docs before being written
 down, and carries a "verified against <crate> <version>" note. Anything
-unverified is phrased as an open question, not a mechanism.
+unverified is phrased as an open question, not a mechanism. An upstream
+with no release to pin (Freelens `main`, kubectl `master`) is cited by
+commit (`Freelens 088d085`).
 
 Origin: #10 named saphyr's `MarkedYamlOwned` (records no collection spans
 in 0.0.6) and assumed a gpui-component gutter API (absent in 0.8.0); both
