@@ -6,7 +6,34 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    # Docs-only PRs (Markdown, docs/, dev/) skip every other job; a job
+    # skipped by its `if` reports success, so the required checks pass.
+    # The gates skip only on an explicit `false`: if this job fails, the
+    # rest still run rather than pass unchecked.
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          if printf '%s\n' "$files" | grep -qvE '\.md$|^docs/|^dev/'; then
+            echo code=true >> "$GITHUB_OUTPUT"
+          else
+            echo code=false >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +49,8 @@ jobs:
           fi
 
   build-test:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +61,8 @@ jobs:
   e2e:
     # kind needs Docker, which GitHub's macOS runners don't have, so this
     # job runs on Linux; astrolabe-kube is platform-agnostic.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +75,8 @@ jobs:
   mutants:
     # astrolabe-kube's zero-missed mutant bar (docs/agents/testing.md),
     # scoped to the code this PR touches. Linux: the crate is gpui-free.
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +95,8 @@ jobs:
     # A pre-aggregated-discovery apiserver (aggregated discovery is
     # default-on from 1.27): proves discover()'s per-group fallback on a
     # real server, which the hermetic suite only covers with a mock.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
