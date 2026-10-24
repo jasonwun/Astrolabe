@@ -15,7 +15,9 @@ use serde_json::Value;
 use crate::jsonpath;
 use crate::store::ObjectKey;
 
+pub mod config;
 pub mod events;
+pub mod network;
 pub mod workloads;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,7 +171,13 @@ pub struct DetailModel {
     pub replicas: Option<ReplicaCounts>,
     pub tables: Vec<SummaryTable>,
     pub conditions: Vec<ConditionRow>,
+    /// A Secret's keys, whose values the panel reveals only on request.
+    pub secret_keys: Vec<config::SecretKey>,
+    /// The YAML preview, values masked for a Secret.
     pub yaml: String,
+    /// What Edit opens when it differs from the preview: a Secret's real
+    /// manifest.
+    pub edit_yaml: Option<String>,
 }
 
 /// Status summary = the priority > 0 printer columns + `status.conditions`.
@@ -307,7 +315,9 @@ pub(crate) fn detail<K: Resource + Clone + Serialize>(
         replicas: None,
         tables: Vec::new(),
         conditions: conditions(value),
+        secret_keys: Vec::new(),
         yaml: object_yaml(object),
+        edit_yaml: None,
     }
 }
 

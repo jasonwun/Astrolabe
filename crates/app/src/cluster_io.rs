@@ -17,8 +17,8 @@ use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
-    CrdWatchMessage, ExecRequest, ForwardRequest, LogRequest, NamespaceWatchMessage, ObjectRef,
-    ObjectWatchMessage, Operation, WatchError, WatchKey, WatchMessage,
+    CrdWatchMessage, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, NamespaceWatchMessage,
+    ObjectRef, ObjectWatchMessage, Operation, WatchError, WatchKey, WatchMessage,
 };
 
 /// Retry interval for a watch the apiserver refused with 403.
@@ -452,7 +452,8 @@ impl ClusterIo {
         }
     }
 
-    /// Forward a localhost port to one Pod port: the same port when free.
+    /// Forward a localhost port to one Pod or Service port: the same port
+    /// when free.
     pub(crate) fn port_forward(&mut self, request: ForwardRequest) -> PortForward {
         let (sender, events) = mpsc::unbounded();
         match self {
@@ -483,20 +484,34 @@ impl ClusterIo {
                         }
                         Err(error) => return failed(format!("bind localhost: {error}")),
                     }
-                    let pod = &request.pod;
                     let connections = sender.clone();
-                    let result = astrolabe_kube::pod::port_forward(
-                        &client,
-                        pod.namespace.as_deref().unwrap_or_default(),
-                        &pod.name,
-                        port,
-                        listener,
-                        move |error| {
-                            let _ =
-                                connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
-                        },
-                    )
-                    .await;
+                    let on_error = move |error| {
+                        let _ = connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
+                    };
+                    let result = match &request.target {
+                        ForwardTarget::Pod(pod) => {
+                            astrolabe_kube::pod::port_forward(
+                                &client,
+                                pod.namespace.as_deref().unwrap_or_default(),
+                                &pod.name,
+                                port,
+                                listener,
+                                on_error,
+                            )
+                            .await
+                        }
+                        ForwardTarget::Service(service) => {
+                            astrolabe_kube::service::port_forward(
+                                &client,
+                                service.namespace.as_deref().unwrap_or_default(),
+                                &service.name,
+                                port,
+                                listener,
+                                on_error,
+                            )
+                            .await
+                        }
+                    };
                     if let Err(error) = result {
                         failed(format!("listener: {error}"));
                     }

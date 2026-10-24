@@ -270,10 +270,19 @@ pub struct ExecRequest {
     pub shell: String,
 }
 
-/// Forward a localhost port to `port` of Pod `pod` (#17).
+/// What a port-forward reaches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardTarget {
+    /// A container port of the Pod (#17).
+    Pod(ObjectKey),
+    /// A service port of the Service, reaching one of its Pods (#18).
+    Service(ObjectKey),
+}
+
+/// Forward a localhost port to `port` of `target`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardRequest {
-    pub pod: ObjectKey,
+    pub target: ForwardTarget,
     pub port: u16,
 }
 
@@ -286,7 +295,7 @@ pub enum ForwardState {
 }
 
 /// A port-forward the session keeps until stopped, whether or not its
-/// Pod's detail tab is open.
+/// target's detail tab is open.
 pub struct Forward {
     pub request: ForwardRequest,
     pub state: ForwardState,
@@ -670,11 +679,11 @@ impl Session {
         }
     }
 
-    /// The forwards to one Pod, in the order they started.
-    pub fn forwards<'a>(&'a self, pod: &'a ObjectKey) -> impl Iterator<Item = &'a Forward> {
+    /// The forwards to one Pod or Service, in the order they started.
+    pub fn forwards<'a>(&'a self, target: &'a ForwardTarget) -> impl Iterator<Item = &'a Forward> {
         self.forwards
             .iter()
-            .filter(move |forward| forward.request.pod == *pod)
+            .filter(move |forward| forward.request.target == *target)
     }
 
     fn forward_index(&self, request: &ForwardRequest) -> Option<usize> {

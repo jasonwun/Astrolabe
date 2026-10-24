@@ -1,17 +1,24 @@
-//! Built-in kind views (#17): each kind registers its list columns, its
+//! Built-in kind views (#17, #18): each kind registers its list columns, its
 //! status summary and its actions on the generic list/detail pipeline
 //! (#11/#16) instead of shipping a hand-written view, plus an optional
 //! related section listing another kind's objects tied to this one.
 
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
-use astrolabe_kube::k8s_openapi::api::core::v1::{Event, Pod};
+use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Event, Pod, Secret, Service};
+use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::k8s_openapi::serde::de::DeserializeOwned;
 use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 
+use crate::projection::config::{
+    config_map_detail, project_config_maps, project_secrets, secret_detail,
+};
 use crate::projection::events::{event_detail, event_involves, project_events};
+use crate::projection::network::{
+    ingress_detail, project_ingresses, project_services, service_detail,
+};
 use crate::projection::workloads::{
     deployment_detail, pod_detail, project_deployments, project_pods, selector_matches,
 };
@@ -25,6 +32,10 @@ pub enum BuiltinKind {
     Deployments,
     /// Not in navigation yet: shown as Pods' related section.
     Events,
+    Services,
+    Ingresses,
+    ConfigMaps,
+    Secrets,
 }
 
 /// A detail-tab toolbar action.
@@ -34,7 +45,8 @@ pub enum Action {
     Logs,
     /// Open a shell in a container (container picked when several).
     Exec,
-    /// Forward a localhost port to one of the Pod's declared ports.
+    /// Forward a localhost port to one of the Pod's declared ports, or to
+    /// one of the Service's ports.
     PortForward,
     /// Set a Deployment's desired replicas.
     Scale,
@@ -68,14 +80,22 @@ pub struct Related {
 }
 
 impl BuiltinKind {
-    /// Navigation order under Workloads.
-    pub const NAVIGATION: [BuiltinKind; 2] = [BuiltinKind::Pods, BuiltinKind::Deployments];
+    /// Navigation sections, in order, each with its kinds in order.
+    pub const NAVIGATION: [(&'static str, &'static [BuiltinKind]); 3] = [
+        ("Workloads", &[BuiltinKind::Pods, BuiltinKind::Deployments]),
+        ("Network", &[BuiltinKind::Services, BuiltinKind::Ingresses]),
+        ("Config", &[BuiltinKind::ConfigMaps, BuiltinKind::Secrets]),
+    ];
 
     pub fn registration(self) -> &'static Registration {
         match self {
             BuiltinKind::Pods => &PODS,
             BuiltinKind::Deployments => &DEPLOYMENTS,
             BuiltinKind::Events => &EVENTS,
+            BuiltinKind::Services => &SERVICES,
+            BuiltinKind::Ingresses => &INGRESSES,
+            BuiltinKind::ConfigMaps => &CONFIG_MAPS,
+            BuiltinKind::Secrets => &SECRETS,
         }
     }
 
@@ -133,6 +153,61 @@ static EVENTS: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
 };
+
+static SERVICES: Registration = Registration {
+    label: "Services",
+    resource: || ApiResource::erase::<Service>(&()),
+    list: |objects, now| typed_list(objects, now, project_services),
+    detail: |object, now| Some(service_detail(&parse::<Service>(object)?, now)),
+    actions: &[Action::PortForward, Action::Edit, Action::Delete],
+    cascade: service_cascade,
+    related: None,
+};
+
+static INGRESSES: Registration = Registration {
+    label: "Ingresses",
+    resource: || ApiResource::erase::<Ingress>(&()),
+    list: |objects, now| typed_list(objects, now, project_ingresses),
+    detail: |object, now| Some(ingress_detail(&parse::<Ingress>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Nothing else is deleted.",
+    related: None,
+};
+
+static CONFIG_MAPS: Registration = Registration {
+    label: "ConfigMaps",
+    resource: || ApiResource::erase::<ConfigMap>(&()),
+    list: |objects, now| typed_list(objects, now, project_config_maps),
+    detail: |object, now| Some(config_map_detail(&parse::<ConfigMap>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Nothing else is deleted.",
+    related: None,
+};
+
+static SECRETS: Registration = Registration {
+    label: "Secrets",
+    resource: || ApiResource::erase::<Secret>(&()),
+    list: |objects, now| typed_list(objects, now, project_secrets),
+    detail: |object, now| Some(secret_detail(&parse::<Secret>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Nothing else is deleted.",
+    related: None,
+};
+
+/// The EndpointSlice controller owns the slices of a Service with a
+/// selector, so they go with it; a selector-less Service's slices are
+/// someone else's and stay.
+fn service_cascade(service: &DynamicObject) -> &'static str {
+    let selects = parse::<Service>(service)
+        .and_then(|service| service.spec)
+        .and_then(|spec| spec.selector)
+        .is_some_and(|selector| !selector.is_empty());
+    if selects {
+        "Its EndpointSlices will be deleted too."
+    } else {
+        "Nothing else is deleted."
+    }
+}
 
 /// Events whose involvedObject is the Pod.
 fn pod_events<'a>(pod: &DynamicObject, events: &[&'a DynamicObject]) -> Vec<&'a DynamicObject> {

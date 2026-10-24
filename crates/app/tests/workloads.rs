@@ -1,7 +1,7 @@
 //! Pods and Deployments on the generic list/detail pipeline (#17).
 
 use astrolabe::projection::workloads::{
-    PodPort, deployment_detail, pod_detail, pod_ports, project_deployments, project_pods,
+    ForwardPort, deployment_detail, pod_detail, pod_ports, project_deployments, project_pods,
     running_containers, selector_matches,
 };
 use astrolabe::projection::{ReplicaCounts, SummaryTable};
@@ -520,15 +520,15 @@ fn pod_ports_are_the_running_containers_declared_tcp_ports_in_order() {
     assert_eq!(
         pod_ports(&pod),
         [
-            PodPort {
+            ForwardPort {
                 port: 15001,
                 label: "15001 (proxy)".to_string()
             },
-            PodPort {
+            ForwardPort {
                 port: 8080,
                 label: "8080/http (app)".to_string()
             },
-            PodPort {
+            ForwardPort {
                 port: 9901,
                 label: "9901/admin (sidecar)".to_string()
             },

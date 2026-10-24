@@ -1,24 +1,17 @@
 //! Built-in kind views (#17) through the workspace UI, on a scripted cluster.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::Duration;
+mod support;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
-    ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ExecInput, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, Operation,
 };
 use astrolabe::store::ObjectKey;
-use astrolabe::workspace::WorkspaceView;
-use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::kube::core::DynamicObject;
-use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
+use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use gpui_kit::{TestAppContext, VisualTestContext};
-
-type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
+use support::{Sender, Ui, key, open, snapshot};
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
@@ -56,148 +49,6 @@ fn web_deployment() -> DynamicObject {
                    "unavailableReplicas": 1}
     }))
     .unwrap()
-}
-
-fn key(kind: BuiltinKind, namespace: &str) -> WatchKey {
-    WatchKey {
-        cluster: "kind-a".to_string(),
-        kind: ResourceKind::Builtin(kind),
-        namespace: Some(namespace.to_string()),
-    }
-}
-
-fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
-    sender.try_send(Ok(Event::Init)).unwrap();
-    for object in objects {
-        sender.try_send(Ok(Event::InitApply(object))).unwrap();
-    }
-    sender.try_send(Ok(Event::InitDone)).unwrap();
-}
-
-type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
-type Operated = Rc<RefCell<Vec<Operation>>>;
-type Logged = Rc<RefCell<Vec<LogRequest>>>;
-type Forwarded = Rc<RefCell<Vec<ForwardRequest>>>;
-type Execed = Rc<RefCell<Vec<(ExecRequest, mpsc::UnboundedReceiver<ExecInput>)>>>;
-
-struct Ui<'a> {
-    cx: &'a mut VisualTestContext,
-    namespaces: Sender<Namespace>,
-    deleted: Deleted,
-    operated: Operated,
-    logged: Logged,
-    execed: Execed,
-    forwarded: Forwarded,
-}
-
-fn open(
-    cx: &mut TestAppContext,
-    watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
-) -> Ui<'_> {
-    cx.update(gpui_kit::init);
-    let (namespaces, namespace_events) = mpsc::channel(32);
-    let deleted: Deleted = Rc::default();
-    let operated: Operated = Rc::default();
-    let logged: Logged = Rc::default();
-    let execed: Execed = Rc::default();
-    let forwarded: Forwarded = Rc::default();
-    let mut cluster = ScriptedCluster::new(namespace_events)
-        .delete({
-            let deleted = deleted.clone();
-            move |object: &ObjectRef| {
-                let resource = &object.resource;
-                deleted.borrow_mut().push((
-                    format!("{}/{}", resource.api_version, resource.kind),
-                    object.key.namespace.clone(),
-                    object.key.name.clone(),
-                ));
-                Ok(())
-            }
-        })
-        .operate({
-            let operated = operated.clone();
-            move |operation: &Operation| {
-                operated.borrow_mut().push(operation.clone());
-                match operation {
-                    Operation::Scale { replicas: 0, .. } => Err("scale refused".to_string()),
-                    _ => Ok(()),
-                }
-            }
-        })
-        .logs({
-            let logged = logged.clone();
-            move |request: &LogRequest| {
-                logged.borrow_mut().push(request.clone());
-                vec![Ok(b"starting\n".to_vec()), Err("stream reset".to_string())]
-            }
-        })
-        .exec({
-            let execed = execed.clone();
-            move |request: &ExecRequest, input| {
-                execed.borrow_mut().push((request.clone(), input));
-                let exit = match request.shell.as_str() {
-                    "bash" => Ok(0),
-                    _ => Err("container not found (\"app\")".to_string()),
-                };
-                vec![
-                    ExecOutput::Bytes(b"/ # ".to_vec()),
-                    ExecOutput::Exited(exit),
-                ]
-            }
-        })
-        .port_forward({
-            let forwarded = forwarded.clone();
-            move |request: &ForwardRequest| {
-                forwarded.borrow_mut().push(request.clone());
-                let mut events = vec![ForwardEvent::Listening(request.port + 10_000)];
-                if request.port == 9901 {
-                    events.push(ForwardEvent::ConnectionFailed(
-                        "error forwarding port 9901: connection refused".to_string(),
-                    ));
-                }
-                events
-            }
-        });
-    for (key, events) in watches {
-        cluster = cluster.watch(key, events);
-    }
-    let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(vec![("kind-a".to_string(), cluster)], window, cx)
-    });
-    Ui {
-        cx,
-        namespaces,
-        deleted,
-        operated,
-        logged,
-        execed,
-        forwarded,
-    }
-}
-
-impl Ui<'_> {
-    fn settle(&mut self) {
-        self.cx.run_until_parked();
-        self.cx.executor().advance_clock(Duration::from_millis(400));
-        self.cx.run_until_parked();
-    }
-
-    fn namespaces(&mut self, names: &[&str]) {
-        let namespaces = names
-            .iter()
-            .map(|name| {
-                serde_json::from_value(serde_json::json!({"metadata": {"name": name}})).unwrap()
-            })
-            .collect();
-        snapshot(&mut self.namespaces, namespaces);
-    }
-
-    fn frame<R>(&mut self, f: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> R) -> R {
-        self.cx.update(|window, cx| {
-            window.render_frame(cx);
-            f(window, cx)
-        })
-    }
 }
 
 #[gpui_kit::test]
@@ -816,10 +667,13 @@ fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
         *ui.forwarded.borrow(),
         [
             ForwardRequest {
-                pod: pod.clone(),
+                target: ForwardTarget::Pod(pod.clone()),
                 port: 8080
             },
-            ForwardRequest { pod, port: 9901 },
+            ForwardRequest {
+                target: ForwardTarget::Pod(pod),
+                port: 9901
+            },
         ],
         "a port already forwarded is not forwarded twice"
     );
