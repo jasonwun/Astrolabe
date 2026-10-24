@@ -83,6 +83,11 @@ cargo mutants -p astrolabe-kube -j 4        # full run, ~90s
 cargo mutants -p astrolabe-kube -f <file>   # scoped to one file
 ```
 
+A `TIMEOUT` fails the run too (cargo-mutants 27.1 exits `Timeout` ahead of
+`FoundProblems`): a mutant that silences a callback leaves an unbounded
+`recv().await` hanging. Bound every wait on a channel or stream in kube
+tests with `tokio::time::timeout`.
+
 CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff.
 
 ## Scripted apiserver tests (gpui + real I/O)

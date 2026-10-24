@@ -78,3 +78,16 @@ finding.
 Origin: #42 asked for unchanged test assertions while replacing string
 row keys with `ObjectKey`; the implementer had to guess the line (#42
 retro).
+
+## Cluster-dependent copy and choices
+
+UI copy or choices that describe what the cluster will do (a delete's
+cascade, which containers can be exec'd) are derived from the fields that
+decide it (`ownerReferences`, `restartPolicy`, …), not written as a fixed
+string per kind. A test asserting such copy or choices uses a fixture that
+carries the deciding field, plus one that lacks it.
+
+Origin: #17 — a static "will create a replacement" delete warning passed a
+test whose Pod had no owner, and Exec offered run-once init containers that
+had already exited; the spec review caught both, the standards review
+neither (#17 retro).
