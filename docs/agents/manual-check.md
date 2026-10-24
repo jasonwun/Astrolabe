@@ -1,0 +1,50 @@
+# Manual UI check
+
+`gpui_kit` tests assert what the element tree contains, not what a person
+sees: invisible text (#52) and a tab with no close button (#51) both passed
+the suite. Before handing over a change that shows in the app, look at it
+on the dev cluster and attach the screenshots to the hand-over.
+
+Done when every view the change touches has been opened and screenshotted
+on `kind-astrolabe-dev`, and each screenshot has been read back.
+
+## 1. Seed the cluster
+
+```sh
+kubectl --context kind-astrolabe-dev apply -f dev/demo.yaml
+```
+
+`dev/demo.yaml` holds synthetic objects for every built-in kind in the
+`astrolabe-demo` namespace. Extend it when a change adds a kind or needs a
+shape it lacks (keep it labelled synthetic).
+
+## 2. Launch
+
+```sh
+cargo run -p astrolabe     # run_in_background; the process name is `astrolabe`
+```
+
+## 3. Look and drive, via Orca computer use
+
+`orca computer` drives the window from the shell (the bundled guide:
+`orca skills get computer-use`). GPUI exposes almost no accessibility tree,
+so navigate by coordinates read off a screenshot:
+
+```sh
+orca computer get-app-state --app astrolabe --json   # .result.screenshot.path → Read it
+orca computer click --app astrolabe --x 263 --y 302 --json
+```
+
+- Click coordinates are window points: screenshot pixels divided by
+  `.result.screenshot.scale` (2 on Retina).
+- Every action returns a fresh `.result.screenshot.path`; read it to see
+  the result rather than taking another snapshot.
+- Select `kind-astrolabe-dev` in the Clusters sidebar if it is not
+  already active, then `astrolabe-demo` in the namespace selector.
+
+## 4. Clean up
+
+```sh
+pkill -x astrolabe                  # the background task then exits 143
+kubectl --context kind-astrolabe-dev delete namespace astrolabe-demo
+```

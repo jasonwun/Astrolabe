@@ -33,7 +33,7 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Read it as in **Read an issue** above.
-The spec is the body plus the latest `## Agent Brief` comment, when one exists; the brief wins on scope and out-of-scope. Pass both to any spec reviewer.
+The spec is the body plus the latest `## Agent Brief` comment, when one exists; the brief wins on scope and out-of-scope. Pass both to any spec reviewer. When the spec aligns with Lens/Freelens, also pass the reviewer the fetched upstream files (`docs/agents/reference-products.md`) and have it check every column and field against them.
 
 ## Wayfinding operations
 
