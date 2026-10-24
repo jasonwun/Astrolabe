@@ -304,6 +304,7 @@ name = "astrolabe"
 version = "0.0.0"
 dependencies = [
  "astrolabe-kube",
+ "astrolabe-terminal",
  "futures",
  "gpui-kit",
  "regex",

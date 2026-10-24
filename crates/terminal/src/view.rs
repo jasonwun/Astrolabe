@@ -1,11 +1,11 @@
 //! GPUI side of the terminal: the view owns no terminal state, it renders
 //! [`RenderSnapshot`]s and turns input events into bytes. Engine events are
-//! drained with mandatory coalescing: after a blocking wait for the first
-//! event, the drain collects for at most 4 ms / 100 events and then fires
-//! exactly one `cx.notify()`.
+//! drained with mandatory coalescing: after an async wait for the first
+//! event, the drain lets a burst land for 4 ms, takes at most 100 events
+//! and then fires exactly one `cx.notify()`.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::*;
 
@@ -99,39 +99,23 @@ impl TerminalView {
         self.child_exited
     }
 
-    /// Background-recv + bounded foreground drain; one notify per batch.
+    /// Async wait + bounded drain; one notify per batch. Nothing blocks a
+    /// thread, so the drain also runs on GPUI's test executor.
     fn spawn_event_drain(&self, cx: &mut Context<Self>, events: Arc<EventStream>) {
         cx.spawn(async move |this, cx| {
             loop {
-                let first = {
-                    let events = events.clone();
-                    cx.background_executor()
-                        .spawn(async move { events.recv() })
-                        .await
+                let Some(first) = events.next().await else {
+                    break;
                 };
-                let Some(first) = first else { break };
                 let mut batch = vec![first];
-
-                let mut rest = {
-                    let events = events.clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            let deadline = Instant::now() + COALESCE_WINDOW;
-                            let mut v = Vec::new();
-                            while v.len() + 1 < COALESCE_MAX {
-                                match events.try_recv() {
-                                    Some(e) => v.push(e),
-                                    None if Instant::now() < deadline => {
-                                        std::thread::sleep(Duration::from_millis(1))
-                                    }
-                                    None => break,
-                                }
-                            }
-                            v
-                        })
-                        .await
-                };
-                batch.append(&mut rest);
+                // Let the rest of a burst land, then take what queued.
+                cx.background_executor().timer(COALESCE_WINDOW).await;
+                while batch.len() < COALESCE_MAX {
+                    match events.try_recv() {
+                        Some(event) => batch.push(event),
+                        None => break,
+                    }
+                }
 
                 if this
                     .update(cx, |view, cx| view.handle_events(batch, cx))
@@ -426,6 +410,12 @@ fn shape_rows(
     }
 
     Prepared { snapshot, lines }
+}
+
+impl Focusable for TerminalView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl Render for TerminalView {

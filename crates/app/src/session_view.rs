@@ -7,9 +7,16 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::resource_detail::{DetailTarget, EditorPanel, OpenEditor, ResourceDetailPanel};
+use crate::builtin::BuiltinKind;
+use crate::exec::ExecPanel;
+use crate::logs::LogsPanel;
+use crate::resource_detail::{
+    DetailTarget, EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel,
+};
 use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
-use crate::session::{ConnectionHealth, CustomKindId, ScriptedCluster, Session};
+use crate::session::{
+    ConnectionHealth, CustomKindId, ExecRequest, LogRequest, ScriptedCluster, Session,
+};
 use crate::workspace::STALE_MESSAGE;
 use crate::yaml_editor::YamlEditorView;
 
@@ -96,8 +103,44 @@ impl SessionView {
             this.open_editor(event.title.clone(), event.yaml.clone(), window, cx);
         })
         .detach();
+        cx.subscribe_in(&panel, window, |this, _, event: &OpenDetail, window, cx| {
+            this.open_detail(event.0.clone(), window, cx);
+        })
+        .detach();
+        cx.subscribe_in(&panel, window, |this, _, event: &OpenLogs, window, cx| {
+            this.open_logs(event.title.clone(), event.request.clone(), window, cx);
+        })
+        .detach();
+        cx.subscribe_in(&panel, window, |this, _, event: &OpenExec, window, cx| {
+            this.open_exec(event.title.clone(), event.request.clone(), window, cx);
+        })
+        .detach();
         self.add_tab(panel_handle(panel.clone()), window, cx);
         self.details.insert(target, panel);
+    }
+
+    fn open_logs(
+        &mut self,
+        title: String,
+        request: LogRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stream = self.session.update(cx, |session, _| session.logs(request));
+        let panel = cx.new(|cx| LogsPanel::new(title, stream, window, cx));
+        self.add_tab(panel_handle(panel), window, cx);
+    }
+
+    fn open_exec(
+        &mut self,
+        title: String,
+        request: ExecRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self.session.update(cx, |session, _| session.exec(request));
+        let panel = cx.new(|cx| ExecPanel::new(title, session, window, cx));
+        self.add_tab(panel_handle(panel), window, cx);
     }
 
     fn open_editor(
@@ -261,6 +304,19 @@ impl SessionView {
                     cx.listener(|this, _, window, cx| this.show(ListView::Namespaces, window, cx)),
                 ),
             )
+            .child(heading("Workloads"))
+            .children(BuiltinKind::NAVIGATION.map(|kind| {
+                let label = kind.registration().label;
+                item(
+                    format!("nav-{}", label.to_lowercase()).into(),
+                    label.to_string(),
+                    0,
+                    current == ListView::Builtin(kind),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.show(ListView::Builtin(kind), window, cx)
+                }))
+            }))
             // Custom Resources sits after the built-in resource sections.
             .child(heading("Custom Resources"))
             .child(

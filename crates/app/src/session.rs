@@ -11,12 +11,17 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
 use futures::{Stream, StreamExt, channel::mpsc};
-use gpui_kit::Context;
+use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
 
+use crate::builtin::BuiltinKind;
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{ScriptedCluster, SharedClient};
+pub use crate::cluster_io::{
+    ExecOutput, ExecSession, ForwardEvent, LogChunk, LogStream, PortForward, ScriptedCluster,
+    SharedClient,
+};
 use crate::store::{ObjectKey, Store};
+pub use astrolabe_kube::pod::ExecInput;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
 /// new CRD is served only once it turns Established, which arrives as an
@@ -58,12 +63,14 @@ impl WatchError {
 pub type WatchMessage<K> = Result<Event<K>, WatchError>;
 pub type NamespaceWatchMessage = WatchMessage<Namespace>;
 pub type CrdWatchMessage = WatchMessage<CustomResourceDefinition>;
-pub type CustomWatchMessage = WatchMessage<DynamicObject>;
+pub type ObjectWatchMessage = WatchMessage<DynamicObject>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ResourceKind {
     Namespaces,
     CustomResourceDefinitions,
+    /// A built-in kind with a registered view (#17).
+    Builtin(BuiltinKind),
     /// A CRD kind at its preferred version.
     Custom {
         group: String,
@@ -96,6 +103,13 @@ impl CustomKindId {
             kind: kind.kind.clone(),
         }
     }
+}
+
+/// The list on screen, whose watch follows the namespace selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Viewing {
+    Builtin(BuiltinKind),
+    Custom(CustomKindId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,6 +248,54 @@ pub struct ObjectRef {
     pub key: ObjectKey,
 }
 
+/// A one-shot change to a Deployment (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Operation {
+    Scale { key: ObjectKey, replicas: i32 },
+    RolloutRestart { key: ObjectKey },
+}
+
+/// Follow `container`'s log in Pod `pod` (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogRequest {
+    pub pod: ObjectKey,
+    pub container: String,
+}
+
+/// Run `shell` interactively in `container` of Pod `pod` (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecRequest {
+    pub pod: ObjectKey,
+    pub container: String,
+    pub shell: String,
+}
+
+/// Forward a localhost port to `port` of Pod `pod` (#17).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForwardRequest {
+    pub pod: ObjectKey,
+    pub port: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardState {
+    Starting,
+    /// Accepting on this localhost port.
+    Listening(u16),
+    Failed(String),
+}
+
+/// A port-forward the session keeps until stopped, whether or not its
+/// Pod's detail tab is open.
+pub struct Forward {
+    pub request: ForwardRequest,
+    pub state: ForwardState,
+    /// The latest connection's failure, while the listener goes on.
+    pub last_error: Option<String>,
+    /// Owns the I/O; dropping it stops the forward.
+    _reports: Task<()>,
+}
+
 pub struct Session {
     watch_key: WatchKey,
     namespaces: Watched<Namespace>,
@@ -244,9 +306,10 @@ pub struct Session {
     crd_generation: u64,
     discovery_runs: u64,
     catalog: Vec<CustomGroup>,
-    custom: BTreeMap<WatchKey, Watched<DynamicObject>>,
+    objects: BTreeMap<WatchKey, Watched<DynamicObject>>,
     namespace: String,
-    viewing: Option<CustomKindId>,
+    viewing: Option<Viewing>,
+    forwards: Vec<Forward>,
     io: ClusterIo,
 }
 
@@ -287,9 +350,10 @@ impl Session {
             crd_generation: 0,
             discovery_runs: 0,
             catalog: Vec::new(),
-            custom: BTreeMap::new(),
+            objects: BTreeMap::new(),
             namespace: "default".to_string(),
             viewing: None,
+            forwards: Vec::new(),
             io,
         };
         session.start_watch(
@@ -405,7 +469,7 @@ impl Session {
 
     fn rebuild_catalog(&mut self, cx: &mut Context<Self>) {
         self.catalog = crd::catalog(&self.crds.objects(), self.discovery.served());
-        if let Some(id) = self.viewing.clone() {
+        if let Some(Viewing::Custom(id)) = self.viewing.clone() {
             self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
         }
     }
@@ -418,8 +482,38 @@ impl Session {
         id: &CustomKindId,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
-        self.viewing = Some(id.clone());
+        self.viewing = Some(Viewing::Custom(id.clone()));
         self.ensure_custom_watch(id, Some(self.namespace.clone()), cx)
+    }
+
+    /// Enter a built-in kind's list: starts its watch for the current
+    /// namespace on first visit (lazy, then resident for the session).
+    pub fn open_builtin_list(&mut self, kind: BuiltinKind, cx: &mut Context<Self>) -> WatchKey {
+        self.viewing = Some(Viewing::Builtin(kind));
+        self.watch_builtin(kind, &self.namespace.clone(), cx)
+    }
+
+    /// Ensure the watch holding `kind`'s objects in `namespace`, whatever
+    /// the namespace selection (a detail tab or related section reads it).
+    pub fn watch_builtin(
+        &mut self,
+        kind: BuiltinKind,
+        namespace: &str,
+        cx: &mut Context<Self>,
+    ) -> WatchKey {
+        let key = self.builtin_watch_key(kind, namespace);
+        self.ensure_watch(key.clone(), (kind.registration().resource)(), cx);
+        key
+    }
+
+    /// The watch holding `kind`'s objects in `namespace` (every registered
+    /// built-in kind is namespaced).
+    pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: &str) -> WatchKey {
+        WatchKey {
+            cluster: self.watch_key.cluster.clone(),
+            kind: ResourceKind::Builtin(kind),
+            namespace: Some(namespace.to_string()),
+        }
     }
 
     /// Ensure the watch an object of kind `id` in `namespace` (`None` when
@@ -436,8 +530,8 @@ impl Session {
         self.ensure_custom_watch(id, namespace, cx)
     }
 
-    /// Leave the instance lists (another view is shown).
-    pub fn close_custom_list(&mut self) {
+    /// Leave the watched lists (Namespaces or Definitions is shown).
+    pub fn close_list(&mut self) {
         self.viewing = None;
     }
 
@@ -453,10 +547,16 @@ impl Session {
         };
         let resource = resource.clone();
         let key = self.custom_object_watch_key(kind, namespace.as_deref());
-        if self.custom.contains_key(&key) {
-            return Some(key);
+        self.ensure_watch(key.clone(), resource, cx);
+        Some(key)
+    }
+
+    /// Start the object watch `key` on `resource` unless it runs already.
+    fn ensure_watch(&mut self, key: WatchKey, resource: ApiResource, cx: &mut Context<Self>) {
+        if self.objects.contains_key(&key) {
+            return;
         }
-        self.custom.insert(
+        self.objects.insert(
             key.clone(),
             Watched::new(key.cluster.clone(), resource.kind.clone()),
         );
@@ -464,17 +564,14 @@ impl Session {
         let watched_key = key.clone();
         let namespace = key.namespace.clone();
         self.start_watch(
-            "custom resource",
-            move |scripted| scripted.custom.remove(&scripted_key),
-            move |client| {
-                astrolabe_kube::watch::custom_resources(client, &resource, namespace.as_deref())
-            },
-            move |session| session.custom.get_mut(&watched_key),
+            "object",
+            move |scripted| scripted.watches.remove(&scripted_key),
+            move |client| astrolabe_kube::watch::objects(client, &resource, namespace.as_deref()),
+            move |session| session.objects.get_mut(&watched_key),
             |_, _, _| {},
             cx,
         );
         cx.notify();
-        Some(key)
     }
 
     /// The watch a kind's list reads for the current namespace selection:
@@ -502,8 +599,14 @@ impl Session {
             return;
         }
         self.namespace = namespace;
-        if let Some(id) = self.viewing.clone() {
-            self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
+        match self.viewing.clone() {
+            Some(Viewing::Custom(id)) => {
+                self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
+            }
+            Some(Viewing::Builtin(kind)) => {
+                self.watch_builtin(kind, &self.namespace.clone(), cx);
+            }
+            None => {}
         }
         cx.notify();
     }
@@ -511,6 +614,91 @@ impl Session {
     /// Delete one object; resolves with the server's answer.
     pub fn delete(&mut self, object: ObjectRef) -> oneshot::Receiver<Result<(), String>> {
         self.io.delete(object)
+    }
+
+    /// Run one operation; resolves with the server's answer.
+    pub fn operate(&mut self, operation: Operation) -> oneshot::Receiver<Result<(), String>> {
+        self.io.operate(operation)
+    }
+
+    /// Follow one container's log, from a bounded tail.
+    pub fn logs(&mut self, request: LogRequest) -> LogStream {
+        self.io.logs(request)
+    }
+
+    /// Open an interactive shell in one container.
+    pub fn exec(&mut self, request: ExecRequest) -> ExecSession {
+        self.io.exec(request)
+    }
+
+    /// Start forwarding `request`, unless it already is; a failed forward
+    /// starts over.
+    pub fn forward_port(&mut self, request: ForwardRequest, cx: &mut Context<Self>) {
+        if let Some(index) = self.forward_index(&request) {
+            if !matches!(self.forwards[index].state, ForwardState::Failed(_)) {
+                return;
+            }
+            self.forwards.remove(index);
+        }
+        let mut forward = self.io.port_forward(request.clone());
+        let reports = {
+            let request = request.clone();
+            cx.spawn(async move |this, cx| {
+                while let Some(event) = forward.next().await {
+                    let applied = this.update(cx, |session, cx| {
+                        session.forward_reported(&request, event, cx)
+                    });
+                    if applied.is_err() {
+                        return;
+                    }
+                }
+            })
+        };
+        self.forwards.push(Forward {
+            request,
+            state: ForwardState::Starting,
+            last_error: None,
+            _reports: reports,
+        });
+        cx.notify();
+    }
+
+    pub fn stop_forward(&mut self, request: &ForwardRequest, cx: &mut Context<Self>) {
+        if let Some(index) = self.forward_index(request) {
+            self.forwards.remove(index);
+            cx.notify();
+        }
+    }
+
+    /// The forwards to one Pod, in the order they started.
+    pub fn forwards<'a>(&'a self, pod: &'a ObjectKey) -> impl Iterator<Item = &'a Forward> {
+        self.forwards
+            .iter()
+            .filter(move |forward| forward.request.pod == *pod)
+    }
+
+    fn forward_index(&self, request: &ForwardRequest) -> Option<usize> {
+        self.forwards
+            .iter()
+            .position(|forward| forward.request == *request)
+    }
+
+    fn forward_reported(
+        &mut self,
+        request: &ForwardRequest,
+        event: ForwardEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.forward_index(request) else {
+            return;
+        };
+        let forward = &mut self.forwards[index];
+        match event {
+            ForwardEvent::Listening(port) => forward.state = ForwardState::Listening(port),
+            ForwardEvent::ConnectionFailed(error) => forward.last_error = Some(error),
+            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error),
+        }
+        cx.notify();
     }
 
     /// The live session's shared client; `None` for scripted sessions.
@@ -553,8 +741,8 @@ impl Session {
             .find(|kind| kind.kind == id.kind)
     }
 
-    pub fn custom_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
-        self.custom.get(key)
+    pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
+        self.objects.get(key)
     }
 
     pub fn namespace(&self) -> &str {

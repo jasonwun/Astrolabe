@@ -1,4 +1,5 @@
-//! End-to-end verification of the #21 apply loop against a real cluster.
+//! End-to-end verification against a real cluster: the #21 apply loop and
+//! the #17 workload operations (scale, restart, logs, exec, port-forward).
 //!
 //! Requires a reachable cluster via the ambient kubeconfig (the dev loop
 //! uses `kind-astrolabe-dev`). All tests are `#[ignore]`d so the default
@@ -11,14 +12,18 @@
 use std::time::Duration;
 
 use astrolabe_kube::apply::{ApplyError, Location, apply_documents, precheck_documents};
-use astrolabe_kube::default_client;
-use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
+use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
+use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
+use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube;
-use astrolabe_kube::kube::api::{Api, DeleteParams, PostParams};
+use astrolabe_kube::kube::api::{Api, DeleteParams, ListParams, PostParams};
 use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
+use astrolabe_kube::pod::{self, ExecInput};
+use astrolabe_kube::{default_client, resource};
 use futures::StreamExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Unique namespace per test run; deleted on drop-best-effort at the end.
 fn unique_ns() -> String {
@@ -455,7 +460,7 @@ spec:
     };
     assert_eq!(resource.plural, "widgets");
 
-    let events = astrolabe_kube::watch::custom_resources(&client, resource, Some(&ns));
+    let events = astrolabe_kube::watch::objects(&client, resource, Some(&ns));
     futures::pin_mut!(events);
     let widget = format!(
         "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"
@@ -520,4 +525,154 @@ async fn crd_watch_without_rbac_reports_forbidden() {
     .await
     .expect("timed out waiting for the CRD list");
     assert!(astrolabe_kube::watch::is_forbidden(&error), "{error}");
+}
+
+/// Applies the nginx Deployment in a fresh namespace and waits until one of
+/// its Pods is Running and Ready; returns that Pod's name.
+async fn running_nginx(client: &kube::Client, ns: &str) -> String {
+    let snapshot = join_docs(&[ns_doc(ns), deployment_doc(ns, "IfNotPresent")]);
+    let report = apply_documents(client, &snapshot, false).await.unwrap();
+    assert!(report.ok, "setup should apply: {:?}", report.outcomes);
+    ready_pod(client, ns, None).await
+}
+
+/// Polls for a Ready nginx Pod whose name differs from `other_than`.
+async fn ready_pod(client: &kube::Client, ns: &str, other_than: Option<&str>) -> String {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), ns);
+    let params = ListParams::default().labels("app=nginx");
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            for pod in pods.list(&params).await.unwrap() {
+                let name = pod.metadata.name.clone().unwrap();
+                let ready = pod
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.conditions.as_ref())
+                    .is_some_and(|c| c.iter().any(|c| c.type_ == "Ready" && c.status == "True"));
+                let terminating = pod.metadata.deletion_timestamp.is_some();
+                if ready && !terminating && other_than != Some(name.as_str()) {
+                    return name;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for a Ready nginx Pod")
+}
+
+/// Scale sets the Deployment's replicas; rollout restart stamps the template
+/// and the Deployment replaces its Pod.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn scale_and_rollout_restart_a_deployment() {
+    let client = default_client().await.unwrap();
+    let ns = unique_ns();
+    let first = running_nginx(&client, &ns).await;
+    let deployments: Api<Deployment> = Api::namespaced(client.clone(), &ns);
+
+    resource::scale(&client, &ns, "nginx", 2).await.unwrap();
+    let scaled = deployments.get("nginx").await.unwrap();
+    assert_eq!(scaled.spec.unwrap().replicas, Some(2));
+    resource::scale(&client, &ns, "nginx", 1).await.unwrap();
+
+    let at: Timestamp = "2026-01-02T03:04:05Z".parse().unwrap();
+    resource::rollout_restart(&client, &ns, "nginx", at)
+        .await
+        .unwrap();
+    let restarted = deployments.get("nginx").await.unwrap();
+    let annotations = restarted
+        .spec
+        .unwrap()
+        .template
+        .metadata
+        .unwrap()
+        .annotations
+        .unwrap();
+    assert_eq!(
+        annotations["kubectl.kubernetes.io/restartedAt"],
+        "2026-01-02T03:04:05Z"
+    );
+    ready_pod(&client, &ns, Some(&first)).await;
+
+    delete_ns(&client, &ns).await;
+}
+
+/// Logs follow the container's stdout; exec runs a shell over a TTY and
+/// reports its exit code; port-forward carries an HTTP request to nginx.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn pod_logs_exec_and_port_forward() {
+    let client = default_client().await.unwrap();
+    let ns = unique_ns();
+    let pod_name = running_nginx(&client, &ns).await;
+
+    let logs = pod::logs(&client, &ns, &pod_name, "nginx").await.unwrap();
+    futures::pin_mut!(logs);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let mut seen = Vec::new();
+        while !String::from_utf8_lossy(&seen).contains("ready for start up") {
+            seen.extend(logs.next().await.expect("log stream ended").unwrap());
+        }
+    })
+    .await
+    .expect("timed out waiting for nginx's start-up log line");
+
+    let (input, input_rx) = futures::channel::mpsc::unbounded();
+    input
+        .unbounded_send(ExecInput::Resize { cols: 80, rows: 24 })
+        .unwrap();
+    input
+        .unbounded_send(ExecInput::Bytes(b"echo e2e-$((40 + 2)); exit 3\n".to_vec()))
+        .unwrap();
+    let mut output = Vec::new();
+    let code = tokio::time::timeout(
+        Duration::from_secs(20),
+        pod::exec(
+            &client,
+            &ns,
+            &pod_name,
+            "nginx",
+            &["sh".to_string()],
+            input_rx,
+            |bytes| output.extend(bytes),
+        ),
+    )
+    .await
+    .expect("timed out waiting for the shell to exit")
+    .unwrap();
+    assert_eq!(code, 3);
+    assert!(
+        String::from_utf8_lossy(&output).contains("e2e-42"),
+        "shell output: {:?}",
+        String::from_utf8_lossy(&output)
+    );
+    drop(input);
+
+    let listener = pod::bind_local(0).await.unwrap();
+    let local = listener.local_addr().unwrap();
+    let forward = pod::port_forward(&client, &ns, &pod_name, 80, listener, |e| {
+        panic!("connection failed: {e}")
+    });
+    let request = async {
+        let mut stream = tokio::net::TcpStream::connect(local).await.unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        String::from_utf8_lossy(&response).into_owned()
+    };
+    let response = tokio::time::timeout(Duration::from_secs(20), async {
+        tokio::select! {
+            ended = forward => panic!("port-forward ended: {ended:?}"),
+            response = request => response,
+        }
+    })
+    .await
+    .expect("timed out waiting for nginx through the forward");
+    assert!(response.starts_with("HTTP/1.1 200"), "response: {response}");
+
+    delete_ns(&client, &ns).await;
 }

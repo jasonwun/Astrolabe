@@ -12,6 +12,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 futures.workspace = true
 tracing.workspace = true
+# Exec stream pump and port-forward listener (#17): the IO traits
+# kube-client's streams use, and the local TCP listener.
+tokio = { workspace = true, features = ["io-util", "macros", "net"] }
 
 [dev-dependencies]
 http.workspace = true

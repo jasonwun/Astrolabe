@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::task::{Poll, Waker};
 use std::thread::JoinHandle;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -25,9 +26,9 @@ use alacritty_terminal::tty::{self, Options, Shell};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape as VteCursorShape, NamedColor};
 
 use super::{
-    BackendStats, ClipboardKind, CursorShape, DEFAULT_BG, DEFAULT_FG, ExitStatus, RenderSnapshot,
-    Rgba, SessionConfig, SnapshotCell, SnapshotCursor, StyleFlags, TerminalBackend, TerminalEvent,
-    TerminalModes,
+    BackendStats, ClipboardKind, CursorShape, DEFAULT_BG, DEFAULT_FG, ExitStatus, RemoteSink,
+    RenderSnapshot, Rgba, SessionConfig, SnapshotCell, SnapshotCursor, StyleFlags, TerminalBackend,
+    TerminalEvent, TerminalModes,
 };
 
 /// Formatter carried by alacritty's OSC52-load event; never leaves this module.
@@ -36,6 +37,8 @@ type ClipboardFormatter = Arc<dyn Fn(&str) -> String + Sync + Send + 'static>;
 /// Shared state between the engine's event listener(s) and the backend.
 struct Shared {
     tx: Sender<TerminalEvent>,
+    /// The task waiting in [`EventStream::next`], if any.
+    waker: Arc<Mutex<Option<Waker>>>,
     pending_clipboard: Mutex<Option<(ClipboardKind, ClipboardFormatter)>>,
     wakeups: AtomicU64,
     damage_full: AtomicU64,
@@ -44,9 +47,10 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(tx: Sender<TerminalEvent>) -> Self {
+    fn new(tx: Sender<TerminalEvent>, waker: Arc<Mutex<Option<Waker>>>) -> Self {
         Self {
             tx,
+            waker,
             pending_clipboard: Mutex::new(None),
             wakeups: AtomicU64::new(0),
             damage_full: AtomicU64::new(0),
@@ -61,6 +65,9 @@ impl Shared {
         }
         // A dead UI must never wedge the PTY reader thread.
         let _ = self.tx.send(event);
+        if let Some(waker) = self.waker.lock().unwrap().take() {
+            waker.wake();
+        }
     }
 }
 
@@ -133,13 +140,36 @@ fn convert_exit_status(status: std::process::ExitStatus) -> ExitStatus {
 
 /// Receiving end of the session's event stream (own event type only).
 ///
-/// `recv` blocks and must be called from a background thread; `try_recv`
-/// is for the coalescing drain on the UI side.
+/// `recv` blocks and must be called from a background thread; `next`
+/// waits without blocking a thread; `try_recv` is for the coalescing drain
+/// on the UI side.
 pub struct EventStream {
     rx: Mutex<Receiver<TerminalEvent>>,
+    waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl EventStream {
+    /// Wait for the next event without blocking a thread; `None` when the
+    /// session is gone.
+    pub async fn next(&self) -> Option<TerminalEvent> {
+        std::future::poll_fn(|cx| {
+            match self.rx.lock().unwrap().try_recv() {
+                Ok(event) => return Poll::Ready(Some(event)),
+                Err(mpsc::TryRecvError::Disconnected) => return Poll::Ready(None),
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            *self.waker.lock().unwrap() = Some(cx.waker().clone());
+            // An event sent between the check and the registration found
+            // no waker to wake: look again.
+            match self.rx.lock().unwrap().try_recv() {
+                Ok(event) => Poll::Ready(Some(event)),
+                Err(mpsc::TryRecvError::Disconnected) => Poll::Ready(None),
+                Err(mpsc::TryRecvError::Empty) => Poll::Pending,
+            }
+        })
+        .await
+    }
+
     /// Block until the next event; `None` when the session is gone.
     pub fn recv(&self) -> Option<TerminalEvent> {
         self.rx.lock().unwrap().recv().ok()
@@ -174,8 +204,10 @@ pub struct AlacrittyBackend {
     shared: Arc<Shared>,
     /// None for display-only terminals.
     io: Mutex<Option<IoHandle>>,
-    /// VT parser for display-only terminals.
+    /// VT parser for display-only and remote terminals.
     parser: Mutex<Option<ansi::Processor>>,
+    /// The far end of a remote terminal, until shutdown.
+    remote: Mutex<Option<Box<dyn RemoteSink>>>,
     last_size: Mutex<(usize, usize)>,
 }
 
@@ -194,7 +226,8 @@ fn make_term(
     EventStream,
 ) {
     let (tx, rx) = mpsc::channel();
-    let shared = Arc::new(Shared::new(tx));
+    let waker = Arc::new(Mutex::new(None));
+    let shared = Arc::new(Shared::new(tx, waker.clone()));
     let listener = SharedListener {
         shared: shared.clone(),
     };
@@ -206,7 +239,10 @@ fn make_term(
     (
         Arc::new(FairMutex::new(term)),
         shared,
-        EventStream { rx: Mutex::new(rx) },
+        EventStream {
+            rx: Mutex::new(rx),
+            waker,
+        },
     )
 }
 
@@ -252,6 +288,7 @@ impl AlacrittyBackend {
             shared,
             io: Mutex::new(Some(IoHandle { sender, joiner })),
             parser: Mutex::new(None),
+            remote: Mutex::new(None),
             last_size: Mutex::new((config.cols, config.rows)),
         };
         (backend, events)
@@ -266,9 +303,30 @@ impl AlacrittyBackend {
             shared,
             io: Mutex::new(None),
             parser: Mutex::new(Some(ansi::Processor::default())),
+            remote: Mutex::new(None),
             last_size: Mutex::new((cols, rows)),
         };
         (backend, events)
+    }
+
+    /// Remote terminal (`kubectl exec`): output is fed like a display-only
+    /// terminal's; input and resizes go to `sink`, which first learns the
+    /// starting size.
+    pub fn remote(
+        cols: usize,
+        rows: usize,
+        scrollback: usize,
+        sink: Box<dyn RemoteSink>,
+    ) -> (Self, EventStream) {
+        let (backend, events) = Self::display_only(cols, rows, scrollback);
+        sink.resize(cols as u16, rows as u16);
+        *backend.remote.lock().unwrap() = Some(sink);
+        (backend, events)
+    }
+
+    /// The remote process ended with `status`.
+    pub fn remote_exited(&self, status: ExitStatus) {
+        self.shared.emit(TerminalEvent::ChildExit(status));
     }
 
     /// Feed an ANSI byte stream into a display-only terminal.
@@ -299,6 +357,9 @@ impl TerminalBackend for AlacrittyBackend {
         if let Some(io) = self.io.lock().unwrap().as_ref() {
             let _ = io.sender.send(Msg::Input(Cow::Owned(bytes.to_vec())));
         }
+        if let Some(remote) = self.remote.lock().unwrap().as_ref() {
+            remote.input(bytes);
+        }
     }
 
     fn resize(&self, cols: usize, rows: usize, cell_width: u16, cell_height: u16) {
@@ -317,6 +378,9 @@ impl TerminalBackend for AlacrittyBackend {
                 cell_width,
                 cell_height,
             }));
+        }
+        if let Some(remote) = self.remote.lock().unwrap().as_ref() {
+            remote.resize(cols as u16, rows as u16);
         }
     }
 
@@ -461,6 +525,9 @@ impl TerminalBackend for AlacrittyBackend {
         if let Some(io) = self.io.lock().unwrap().take() {
             let _ = io.sender.send(Msg::Shutdown);
             let _ = io.joiner.join();
+        }
+        if let Some(remote) = self.remote.lock().unwrap().take() {
+            remote.close();
         }
     }
 }

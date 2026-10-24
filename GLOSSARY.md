@@ -31,6 +31,16 @@ _Avoid_: resync, reconnect (a reconnect is not a relist)
 Showing the previous snapshot while its watch is down or relisting.
 _Avoid_: outdated, offline
 
+## Views
+
+**Registration**:
+What a built-in kind plugs into the generic list and detail: its list columns, its status summary, its actions and, optionally, a related section. Built-in kinds have no hand-written views.
+_Avoid_: custom view, plugin
+
+**Related section**:
+A detail tab's list of other objects tied to the shown one (a Pod's Events, a Deployment's Pods), read from their own watches.
+_Avoid_: children, sub-resources
+
 ## Custom resources
 
 **Discovery**:
