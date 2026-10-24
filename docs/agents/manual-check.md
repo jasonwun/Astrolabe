@@ -6,7 +6,8 @@ the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
 Done when every view the change touches has been opened and screenshotted
-on `kind-astrolabe-dev`, and each screenshot has been read back.
+on `kind-astrolabe-dev`, each screenshot has been read back, and each is
+embedded in the PR.
 
 ## 1. Seed the cluster
 
@@ -42,7 +43,17 @@ orca computer click --app astrolabe --x 263 --y 302 --json
 - Select `kind-astrolabe-dev` in the Clusters sidebar if it is not
   already active, then `astrolabe-demo` in the namespace selector.
 
-## 4. Clean up
+## 4. Attach to the PR
+
+Copy the screenshots out of the temp directory under descriptive names,
+reference each in the PR body's Evidence as `![alt](./shot.png)`, and pass
+each to `--attach`; gh uploads them and rewrites the paths:
+
+```sh
+gh pr create --body-file body.md --attach ./shot.png   # also gh pr edit / gh pr comment
+```
+
+## 5. Clean up
 
 ```sh
 pkill -x astrolabe                  # the background task then exits 143
