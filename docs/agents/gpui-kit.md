@@ -4,6 +4,17 @@ Behaviour of the pinned `gpui-kit =0.8.0` (gpui-component / gpui-base 0.8.0)
 that only reading its source reveals. Verified against gpui-component 0.8.0
 and gpui-base 0.8.0.
 
+## Windows
+
+- Open application windows with `gpui_kit::open_window(options, cx, build)`,
+  never raw `cx.open_window`: it wraps the view in `base::Root`, whose
+  gpui-component plugin (`WindowState`, registered by `gpui_kit::init`)
+  supplies the theme's background, text colour and font, and hosts
+  tooltips. Without it, unpainted regions render black text on a black
+  window (#52). `build` returns the view, not another Root.
+
+Reference: `crates/app/src/main.rs`.
+
 ## DockArea panels
 
 - Add panels with `dock.add_panel_view(panel_handle(entity), placement, …)`
