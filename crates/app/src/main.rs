@@ -19,7 +19,8 @@ fn main() {
             KeyBinding::new("cmd-shift-p", TogglePalette, Some(yaml_editor::KEY_CONTEXT)),
         ]);
 
-        cx.open_window(WindowOptions::default(), |window, cx| {
+        // Not raw cx.open_window: the Root it adds paints the theme (#52).
+        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
             cx.new(|cx| WorkspaceView::new(window, cx))
         })
         .expect("failed to open window");
