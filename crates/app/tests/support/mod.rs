@@ -56,7 +56,10 @@ pub fn open(
     cx: &mut TestAppContext,
     watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
 ) -> Ui<'_> {
-    cx.update(gpui_kit::init);
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        astrolabe::keymap::bind(cx);
+    });
     let (namespaces, namespace_events) = mpsc::channel(32);
     let deleted: Deleted = Rc::default();
     let operated: Operated = Rc::default();

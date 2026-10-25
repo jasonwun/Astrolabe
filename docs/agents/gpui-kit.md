@@ -13,6 +13,11 @@ and gpui-base 0.8.0.
   tooltips. Without it, unpainted regions render black text on a black
   window (#52). `build` returns the view, not another Root.
 
+- `gpui_kit::application()` registers no assets: chain
+  `.with_assets(gpui_kit::assets::Assets)`, or every `IconName` icon
+  draws nothing while its button still takes clicks (#51). UI tests
+  cannot see this; only the manual check does.
+
 Reference: `crates/app/src/main.rs`.
 
 ## DockArea panels
@@ -25,6 +30,12 @@ Reference: `crates/app/src/main.rs`.
   `"Unnamed"`; `tab_name` alone does not title the tab.
 - Select an already-open tab with `dock.select_panel(PanelId::from(entity.entity_id()), …)`;
   `dock.panel(id).is_some()` tells whether the user has closed it since.
+- Per-tab close buttons are off until `DockSkin::set_close_button_visible(true, …)`
+  on the skin `DockSkin::dock_area` returns (#51).
+- Neither `add_panel_view` nor `select_panel` moves focus. Focus the
+  panel yourself, and have each panel `.track_focus(&self.focus_handle)`
+  on its root: focus left in a hidden tab is outside the dispatch tree,
+  so dock actions (`ClosePanel` on `cmd-w`) reach nothing (#51).
 
 Reference: `crates/app/src/session_view.rs`.
 

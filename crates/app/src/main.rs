@@ -1,37 +1,33 @@
 //! Astrolabe desktop application: GPUI entry point.
 
 use astrolabe::workspace::WorkspaceView;
-use astrolabe::yaml_editor::{self, ApplyManifest, RunPrecheck, TogglePalette};
+use astrolabe::{keymap, yaml_editor};
 use gpui_kit::*;
 
 fn main() {
     init_tracing();
-    gpui_kit::application().run(|cx| {
-        gpui_kit::init(cx);
-        yaml_editor::register_yaml_language(cx);
-        cx.bind_keys([
-            KeyBinding::new(
-                "cmd-shift-enter",
-                ApplyManifest,
-                Some(yaml_editor::KEY_CONTEXT),
-            ),
-            KeyBinding::new("f6", RunPrecheck, Some(yaml_editor::KEY_CONTEXT)),
-            KeyBinding::new("cmd-shift-p", TogglePalette, Some(yaml_editor::KEY_CONTEXT)),
-        ]);
+    // The bundled icon SVGs; without them every icon (e.g. a tab's close
+    // button) draws nothing (#51).
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(|cx| {
+            gpui_kit::init(cx);
+            yaml_editor::register_yaml_language(cx);
+            keymap::bind(cx);
 
-        // Not raw cx.open_window: the Root it adds paints the theme (#52).
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| WorkspaceView::new(window, cx))
-        })
-        .expect("failed to open window");
+            // Not raw cx.open_window: the Root it adds paints the theme (#52).
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| WorkspaceView::new(window, cx))
+            })
+            .expect("failed to open window");
 
-        cx.on_window_closed(|cx, _window_id| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-    });
+            cx.on_window_closed(|cx, _window_id| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+        });
 }
 
 /// Installs a `tracing` subscriber filtered by `RUST_LOG`. Without RUST_LOG
