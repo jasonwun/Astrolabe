@@ -100,6 +100,71 @@ fn navigation_groups_the_built_in_kinds(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_service_detail_renders_freelens_sections_tables_and_external_links(cx: &mut TestAppContext) {
+    let (mut services, service_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Services, "default"), service_events)],
+    );
+    let service = object(serde_json::json!({
+        "apiVersion": "v1", "kind": "Service",
+        "metadata": {"name": "web-lb", "namespace": "default", "uid": "uid-lb"},
+        "spec": {
+            "type": "LoadBalancer", "sessionAffinity": "ClientIP",
+            "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": 150}},
+            "topologyKeys": ["kubernetes.io/hostname"],
+            "ports": [{"port": 443, "targetPort": 8443}]
+        },
+        "status": {"loadBalancer": {
+            "ingress": [
+                {"ip": "9.9.9.9", "ports": [{"port": 443}]},
+                {"hostname": "second.example", "ports": [{"port": 80, "protocol": "UDP"}]}
+            ],
+            "conditions": [{
+                "lastTransitionTime": "2026-10-22T11:30:00Z",
+                "reason": "Ready", "status": "True", "type": "Ready",
+                "message": "load balancer is ready"
+            }]
+        }}
+    }));
+    open_detail(&mut ui, "services", &mut services, vec![service], "web-lb");
+
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Topology Keys: kubernetes.io/hostname")
+                .is_some()
+        );
+        let affinity = window.within("detail-section-Session Affinity Config");
+        assert!(
+            affinity
+                .try_find_by_label("Client IP Timeout: 2m 30s")
+                .is_some()
+        );
+        let balancer = window.within("detail-section-Load Balancer");
+        assert!(balancer.try_find_by_label("IP: 9.9.9.9").is_some());
+        let labels = balancer
+            .elements()
+            .iter()
+            .filter_map(|element| element.label().map(|label| label.to_string()))
+            .collect::<Vec<_>>();
+        let position = |label: &str| labels.iter().position(|known| known == label).unwrap();
+        assert!(position("TCP") < position("Hostname: second.example"));
+        assert!(position("Hostname: second.example") < position("UDP"));
+        let connection = window.within("detail-section-Connection");
+        assert!(connection.try_find("link-External IPs-0").is_some());
+        assert!(connection.try_find_by_label("9.9.9.9").is_some());
+        let conditions = window.within("detail-section-Conditions");
+        assert!(conditions.try_find_by_label("Reason: Ready").is_some());
+        assert!(
+            conditions
+                .try_find_by_label("Message: load balancer is ready")
+                .is_some()
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn a_service_forwards_one_of_its_tcp_ports(cx: &mut TestAppContext) {
     let (mut services, service_events) = mpsc::channel(32);
     let mut ui = open(

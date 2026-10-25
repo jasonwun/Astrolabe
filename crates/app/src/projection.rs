@@ -148,6 +148,54 @@ pub struct SummaryTable {
     pub rows: Vec<Vec<String>>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DetailValue {
+    pub text: String,
+    pub href: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DetailField {
+    pub label: String,
+    pub values: Vec<DetailValue>,
+}
+
+impl From<(&str, &str)> for DetailField {
+    fn from((label, value): (&str, &str)) -> Self {
+        Self {
+            label: label.to_string(),
+            values: vec![DetailValue {
+                text: value.to_string(),
+                href: None,
+            }],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DetailItem {
+    Field(DetailField),
+    Table(SummaryTable),
+}
+
+impl From<DetailField> for DetailItem {
+    fn from(field: DetailField) -> Self {
+        Self::Field(field)
+    }
+}
+
+impl From<SummaryTable> for DetailItem {
+    fn from(table: SummaryTable) -> Self {
+        Self::Table(table)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DetailSection {
+    pub title: String,
+    pub items: Vec<DetailItem>,
+}
+
 /// A workload's replica counts, drawn as the status summary's replica bar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReplicaCounts {
@@ -168,6 +216,7 @@ pub struct DetailModel {
     pub annotations: Vec<String>,
     pub owners: Vec<String>,
     pub status: Vec<(String, String)>,
+    pub sections: Vec<DetailSection>,
     pub replicas: Option<ReplicaCounts>,
     pub tables: Vec<SummaryTable>,
     pub conditions: Vec<ConditionRow>,
@@ -312,6 +361,7 @@ pub(crate) fn detail<K: Resource + Clone + Serialize>(
             .map(|owner| format!("{} {}", owner.kind, owner.name))
             .collect(),
         status,
+        sections: Vec::new(),
         replicas: None,
         tables: Vec::new(),
         conditions: conditions(value),
