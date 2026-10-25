@@ -4,13 +4,18 @@
 
 mod support;
 
-use gpui_kit::test::TestWindowExt;
+use astrolabe::builtin::BuiltinKind;
+use astrolabe_kube::kube::core::DynamicObject;
+use futures::channel::mpsc;
+use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Modifiers, MouseButton, Pixels, TestAppContext};
-use support::{Ui, open};
+use support::{Ui, key, open, snapshot};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
 const DETAIL_TAB: &str = "dock-tab-1";
+/// A tab the detail opens: Logs, Exec or Edit YAML.
+const CHILD_TAB: &str = "dock-tab-2";
 
 /// Open the Namespaces list holding `old`, then `old`'s detail tab.
 fn open_detail(ui: &mut Ui<'_>) {
@@ -108,4 +113,77 @@ fn a_closed_detail_reopens_as_a_fresh_selected_tab(cx: &mut TestAppContext) {
         "the reopened detail is displayed"
     );
     assert!(bounds(&mut ui, DETAIL_TAB).is_some());
+}
+
+/// Synthetic single-container Pod (plausible shape, not captured from a
+/// server).
+fn pod() -> DynamicObject {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {"containers": [{"name": "app", "image": "nginx"}]},
+        "status": {"phase": "Running"}
+    }))
+    .unwrap()
+}
+
+/// Open `web-1`'s detail, then the tab `open_child` opens from it, and
+/// check the child tab carries the close button and `cmd-w` closes it alone.
+fn closes_a_child_tab(cx: &mut TestAppContext, open_child: impl FnOnce(&mut Ui<'_>), label: &str) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-pods", cx));
+    snapshot(&mut pods, vec![pod()]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    ui.settle();
+    open_child(&mut ui);
+    ui.settle();
+    ui.frame(|window, _| assert!(window.try_find_by_label(label).is_some()));
+
+    // The last close button drawn is the child tab's.
+    let button = bounds(&mut ui, CLOSE_BUTTON).expect("the child tab draws a close button");
+    let child = bounds(&mut ui, CHILD_TAB).expect("the child tab is in the tab bar");
+    assert!(child.contains(&button.center()));
+
+    ui.frame(|window, cx| window.press("cmd-w", cx));
+    ui.settle();
+    ui.frame(|window, _| assert!(window.try_find_by_label(label).is_none()));
+    assert!(bounds(&mut ui, CHILD_TAB).is_none());
+    assert!(
+        bounds(&mut ui, DETAIL_TAB).is_some(),
+        "only the active tab closed"
+    );
+}
+
+#[gpui_kit::test]
+fn cmd_w_closes_a_logs_tab(cx: &mut TestAppContext) {
+    closes_a_child_tab(
+        cx,
+        |ui| ui.frame(|window, cx| window.click("detail-logs", cx)),
+        "Logs default/web-1 (app)",
+    );
+}
+
+#[gpui_kit::test]
+fn cmd_w_closes_an_exec_tab(cx: &mut TestAppContext) {
+    closes_a_child_tab(
+        cx,
+        |ui| {
+            ui.frame(|window, cx| window.click("detail-exec", cx));
+            ui.frame(|window, cx| window.click("pick-shell-sh", cx));
+        },
+        "Exec default/web-1 (app)",
+    );
+}
+
+#[gpui_kit::test]
+fn cmd_w_closes_an_editor_tab(cx: &mut TestAppContext) {
+    closes_a_child_tab(
+        cx,
+        |ui| ui.frame(|window, cx| window.click("detail-edit", cx)),
+        "Edit Pod default/web-1",
+    );
 }
