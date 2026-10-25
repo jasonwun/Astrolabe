@@ -93,3 +93,16 @@ Origin: #17 — a static "will create a replacement" delete warning passed a
 test whose Pod had no owner, and Exec offered run-once init containers that
 had already exited; the spec review caught both, the standards review
 neither (#17 retro).
+
+## Closable dock panels
+
+A change that adds a closable dock panel (a new `impl Panel for`) adds a
+case to `crates/app/tests/dock_tabs.rs` that opens the panel and closes it
+with `cmd-w`, and the panel's root carries
+`.track_focus(&self.focus_handle)`. Only the detail-tab cases fail when
+`SessionView` stops focusing a tab it shows, so a new panel's case guards
+its own focus path, not that one.
+
+Origin: #51 shipped the close test for detail tabs only; Logs, Exec and
+Edit YAML tabs focus an inner terminal or editor and went untested until
+the user asked (#51 retro).
