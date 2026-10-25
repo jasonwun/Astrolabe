@@ -1145,6 +1145,7 @@ impl Render for ResourceDetailPanel {
         let Some(resolved) = self.resolve(cx) else {
             let text = format!("{} no longer exists", self.display_name());
             return v_flex()
+                .track_focus(&self.focus_handle)
                 .size_full()
                 .child(
                     div()
@@ -1218,6 +1219,8 @@ impl Render for ResourceDetailPanel {
 
         v_flex()
             .id("detail-tab")
+            // The dock focuses the displayed panel; `cmd-w` dispatches from here.
+            .track_focus(&self.focus_handle)
             .aria_label(self.display_name())
             .test_support()
             .size_full()

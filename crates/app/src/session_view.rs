@@ -22,6 +22,9 @@ use crate::yaml_editor::YamlEditorView;
 
 pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource navigation may be stale";
 
+/// Key context around the session dock: `cmd-w` closes its active tab.
+pub const DOCK_KEY_CONTEXT: &str = "SessionDock";
+
 /// One cluster: resource navigation beside a DockArea whose center holds
 /// the list tab plus detail and editor tabs.
 pub struct SessionView {
@@ -55,7 +58,9 @@ impl SessionView {
             this.open_detail(event.0.clone(), window, cx);
         })
         .detach();
-        let (dock, _skin) = DockSkin::dock_area("session", None, window, cx);
+        let (dock, skin) = DockSkin::dock_area("session", None, window, cx);
+        // Off by default in the skin; the panels' `closable` still gates each tab.
+        skin.set_close_button_visible(true, cx);
         dock.update(cx, |dock, cx| {
             dock.add_panel_view(
                 panel_handle(list.clone()),
@@ -82,18 +87,26 @@ impl SessionView {
 
     fn show(&mut self, view: ListView, window: &mut Window, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| list.show(view, cx));
-        let id = PanelId::from(self.list.entity_id());
+        self.select(PanelId::from(self.list.entity_id()), window, cx);
+        cx.notify();
+    }
+
+    /// Display an open tab and focus it. `add_panel_view` and `select_panel`
+    /// move no focus, so without this the focus stays in the tab just
+    /// hidden, outside the dispatch path, and `cmd-w` reaches no tab group.
+    fn select(&mut self, id: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.dock
             .update(cx, |dock, cx| dock.select_panel(id, window, cx));
-        cx.notify();
+        if let Some(panel) = self.dock.read(cx).panel(id) {
+            panel.focus_handle(cx).focus(window, cx);
+        }
     }
 
     fn open_detail(&mut self, target: DetailTarget, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(panel) = self.details.get(&target) {
             let id = PanelId::from(panel.entity_id());
             if self.dock.read(cx).panel(id).is_some() {
-                self.dock
-                    .update(cx, |dock, cx| dock.select_panel(id, window, cx));
+                self.select(id, window, cx);
                 return;
             }
         }
@@ -165,9 +178,11 @@ impl SessionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let id = panel.panel_id(cx);
         self.dock.update(cx, |dock, cx| {
             dock.add_panel_view(panel, DockPlacement::Center, None, window, cx)
         });
+        self.select(id, window, cx);
         cx.notify();
     }
 
@@ -431,7 +446,14 @@ impl Render for SessionView {
                     .flex_1()
                     .min_h_0()
                     .child(self.render_nav(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(self.dock.clone())),
+                    .child(
+                        div()
+                            .key_context(DOCK_KEY_CONTEXT)
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .child(self.dock.clone()),
+                    ),
             )
     }
 }

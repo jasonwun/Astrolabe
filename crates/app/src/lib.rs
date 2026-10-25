@@ -7,6 +7,7 @@ pub mod builtin;
 mod cluster_io;
 pub mod exec;
 pub mod jsonpath;
+pub mod keymap;
 pub mod kube_bridge;
 pub mod logs;
 pub mod projection;
