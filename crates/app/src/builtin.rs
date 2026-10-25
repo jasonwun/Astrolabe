@@ -17,7 +17,7 @@ use crate::projection::config::{
 };
 use crate::projection::events::{event_detail, event_involves, project_events};
 use crate::projection::network::{
-    ingress_detail, project_ingresses, project_services, service_detail,
+    ingress_detail, project_ingresses, project_services, service_detail_with_raw,
 };
 use crate::projection::workloads::{
     deployment_detail, pod_detail, project_deployments, project_pods, selector_matches,
@@ -158,7 +158,13 @@ static SERVICES: Registration = Registration {
     label: "Services",
     resource: || ApiResource::erase::<Service>(&()),
     list: |objects, now| typed_list(objects, now, project_services),
-    detail: |object, now| Some(service_detail(&parse::<Service>(object)?, now)),
+    detail: |object, now| {
+        Some(service_detail_with_raw(
+            &parse::<Service>(object)?,
+            &object.data,
+            now,
+        ))
+    },
     actions: &[Action::PortForward, Action::Edit, Action::Delete],
     cascade: service_cascade,
     related: None,

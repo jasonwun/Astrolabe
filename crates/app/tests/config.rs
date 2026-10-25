@@ -1,5 +1,5 @@
 //! ConfigMaps and Secrets on the generic list/detail pipeline (#18), with
-//! Lens's columns and detail fields.
+//! Freelens 088d085's columns and detail fields.
 
 use astrolabe::projection::SummaryTable;
 use astrolabe::projection::config::{
@@ -86,15 +86,15 @@ fn db_secret() -> Secret {
 }
 
 #[test]
-fn secrets_list_labels_keys_and_type() {
+fn secrets_list_follows_freelens_columns() {
     let secret = db_secret();
 
     let table = project_secrets(&[&secret], now());
 
-    assert_eq!(table.columns, ["Name", "Labels", "Keys", "Type", "Age"]);
+    assert_eq!(table.columns, ["Name", "Keys", "Type", "Age"]);
     assert_eq!(
         table.rows[0].cells,
-        ["db", "app=db, tier=data", "cert, password", "Opaque", "60m"]
+        ["db", "cert, password", "Opaque", "60m"]
     );
 }
 

@@ -27,8 +27,8 @@ use crate::projection::config::{HIDDEN, SecretKey, secret_value};
 use crate::projection::network::service_ports;
 use crate::projection::workloads::{pod_containers, pod_ports, running_containers};
 use crate::projection::{
-    DetailModel, ReplicaCounts, ResourceTable, SummaryTable, custom_resource_detail,
-    definition_detail, namespace_detail,
+    DetailField, DetailItem, DetailModel, ReplicaCounts, ResourceTable, SummaryTable,
+    custom_resource_detail, definition_detail, namespace_detail,
 };
 use crate::resource_list::OpenDetail;
 use crate::session::{
@@ -991,8 +991,8 @@ fn button(
 }
 
 fn section(
-    id: &'static str,
-    title: &'static str,
+    id: impl Into<ElementId>,
+    title: impl Into<SharedString>,
     children: Vec<AnyElement>,
     cx: &App,
 ) -> AnyElement {
@@ -1006,7 +1006,7 @@ fn section(
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(title),
+                .child(title.into()),
         )
         .children(children)
         .into_any_element()
@@ -1020,6 +1020,44 @@ fn field(label: &str, value: &str) -> AnyElement {
         .test_support()
         .text_sm()
         .child(text)
+        .into_any_element()
+}
+
+fn detail_field(field: &DetailField, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let text = format!(
+        "{}: {}",
+        field.label,
+        field
+            .values
+            .iter()
+            .map(|value| value.text.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    h_flex()
+        .id(SharedString::from(format!("field-{}", field.label)))
+        .aria_label(text)
+        .test_support()
+        .gap_1()
+        .text_sm()
+        .child(format!("{}:", field.label))
+        .children(field.values.iter().enumerate().map(|(index, value)| {
+            let item = div()
+                .id(SharedString::from(format!("link-{}-{index}", field.label)))
+                .aria_label(value.text.clone())
+                .test_support()
+                .child(value.text.clone());
+            if let Some(href) = value.href.clone() {
+                item.text_color(theme.info)
+                    .underline()
+                    .cursor_pointer()
+                    .on_click(move |_, _, cx| cx.open_url(&href))
+                    .into_any_element()
+            } else {
+                item.into_any_element()
+            }
+        }))
         .into_any_element()
 }
 
@@ -1067,6 +1105,10 @@ fn replica_bar(counts: ReplicaCounts, cx: &App) -> AnyElement {
 }
 
 fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
+    summary_table_with_id(table, format!("detail-table-{}", table.title), cx)
+}
+
+fn summary_table_with_id(table: &SummaryTable, id: String, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let title = &table.title;
     let row = |id: SharedString, cells: &[String]| {
@@ -1086,7 +1128,7 @@ fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
             }))
     };
     v_flex()
-        .id(SharedString::from(format!("detail-table-{title}")))
+        .id(SharedString::from(id))
         .test_support()
         .pt_2()
         .text_sm()
@@ -1211,6 +1253,31 @@ impl Render for ResourceDetailPanel {
             .into_any_element();
         let metadata = section("detail-metadata", "Metadata", metadata, cx);
         let status = section("detail-status", "Status", status, cx);
+        let sections = model
+            .sections
+            .iter()
+            .map(|detail| {
+                let children = detail
+                    .items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| match item {
+                        DetailItem::Field(field) => detail_field(field, cx),
+                        DetailItem::Table(table) => summary_table_with_id(
+                            table,
+                            format!("detail-section-{}-table-{index}", detail.title),
+                            cx,
+                        ),
+                    })
+                    .collect();
+                section(
+                    format!("detail-section-{}", detail.title),
+                    detail.title.clone(),
+                    children,
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
         let related = resolved
             .related
             .map(|related| self.render_related(related, cx));
@@ -1244,6 +1311,7 @@ impl Render for ResourceDetailPanel {
                     .bg(background)
                     .child(metadata)
                     .child(status)
+                    .children(sections)
                     .children(related)
                     .child(yaml),
             )

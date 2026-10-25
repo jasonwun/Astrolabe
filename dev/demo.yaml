@@ -33,6 +33,12 @@ kind: Service
 metadata: {name: web, namespace: astrolabe-demo}
 spec:
   selector: {app: web}
+  sessionAffinity: ClientIP
+  sessionAffinityConfig: {clientIP: {timeoutSeconds: 150}}
+  internalTrafficPolicy: Cluster
+  trafficDistribution: PreferClose
+  publishNotReadyAddresses: false
+  externalIPs: [192.0.2.10]
   ports:
   - {name: http, port: 8080, targetPort: http, protocol: TCP}
   - {name: dns, port: 53, protocol: UDP}
@@ -51,6 +57,11 @@ metadata: {name: web-lb, namespace: astrolabe-demo}
 spec:
   type: LoadBalancer
   selector: {app: web}
+  allocateLoadBalancerNodePorts: false
+  loadBalancerClass: example.com/synthetic
+  loadBalancerIP: 192.0.2.20
+  externalTrafficPolicy: Local
+  externalIPs: [192.0.2.20]
   ports: [{port: 80, targetPort: 80}]
 ---
 apiVersion: networking.k8s.io/v1

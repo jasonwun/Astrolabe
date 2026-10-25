@@ -1,9 +1,8 @@
 //! Built-in configuration kinds on the generic pipeline (#18): ConfigMaps
-//! and Secrets, with Lens's list columns and detail fields (lensapp/lens
-//! master, the `config-maps/` and `config-secrets/` components; Lens's
-//! Namespace column is left out, as for every built-in kind). A Secret's
-//! values stay masked everywhere the panel shows them until the user
-//! reveals one.
+//! and Secrets, with Freelens's list columns and detail fields (Freelens
+//! 088d085, `config-maps/` and `config-secrets/`; Freelens's Namespace
+//! column is left out, as for every built-in kind). A Secret's values stay
+//! masked everywhere the panel shows them until the user reveals one.
 
 use astrolabe_kube::k8s_openapi::ByteString;
 use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Secret};
@@ -23,8 +22,8 @@ const LAST_APPLIED: &str = "kubectl.kubernetes.io/last-applied-configuration";
 /// How much of a ConfigMap value the detail previews.
 const PREVIEW_CHARS: usize = 80;
 
-/// Name / Keys / Age, as Lens's ConfigMaps list shows them: the keys of
-/// `data` (Lens leaves `binaryData` out).
+/// Name / Keys / Age, as Freelens's ConfigMaps list shows them: the keys of
+/// `data` (Freelens leaves `binaryData` out).
 pub fn project_config_maps(config_maps: &[&ConfigMap], now: Timestamp) -> ResourceTable {
     let rows = config_maps
         .iter()
@@ -63,7 +62,7 @@ fn preview(value: &str) -> String {
     }
 }
 
-/// Lens's ConfigMap details: a Data table of `data`, each value
+/// Freelens's ConfigMap details: a Data table of `data`, each value
 /// previewed (#12), and nothing else.
 pub fn config_map_detail(config: &ConfigMap, now: Timestamp) -> DetailModel {
     let rows: Vec<Vec<String>> = config
@@ -85,7 +84,7 @@ pub fn config_map_detail(config: &ConfigMap, now: Timestamp) -> DetailModel {
     model
 }
 
-/// Name / Labels / Keys / Type / Age, as Lens's Secrets list shows them.
+/// Name / Keys / Type / Age, as Freelens's Secrets list shows them.
 pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
     let rows = secrets
         .iter()
@@ -93,14 +92,6 @@ pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
             key: ObjectKey::of(*secret),
             cells: vec![
                 secret.metadata.name.clone().unwrap_or_default(),
-                secret
-                    .metadata
-                    .labels
-                    .iter()
-                    .flatten()
-                    .map(|(key, value)| format!("{key}={value}"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
                 key_list(secret.data.iter().flatten().map(|(key, _)| key)),
                 secret.type_.clone().unwrap_or_default(),
                 age_of(&secret.metadata, now),
@@ -108,9 +99,7 @@ pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
         })
         .collect();
     ResourceTable {
-        columns: ["Name", "Labels", "Keys", "Type", "Age"]
-            .map(String::from)
-            .to_vec(),
+        columns: ["Name", "Keys", "Type", "Age"].map(String::from).to_vec(),
         rows,
     }
 }

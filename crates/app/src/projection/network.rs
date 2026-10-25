@@ -1,7 +1,7 @@
 //! Built-in network kinds on the generic pipeline (#18): Services and
-//! Ingresses, with Lens's list columns and detail fields (lensapp/lens
-//! master, the `network-services/` and `network-ingresses/` components and
-//! the `Service`/`Ingress` kube objects). Lens's Namespace column is left
+//! Ingresses, with Freelens's list columns and detail fields (Freelens
+//! 088d085, `network-services/`, `network-ingresses/`, and the
+//! `Service`/`Ingress` kube objects). Freelens's Namespace column is left
 //! out, as for every built-in kind.
 
 use astrolabe_kube::k8s_openapi::api::core::v1::{Service, ServicePort};
@@ -10,11 +10,14 @@ use astrolabe_kube::k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::workloads::{ForwardPort, int_or_string};
-use super::{DetailModel, ResourceRow, ResourceTable, SummaryTable, age_of, detail};
+use super::{
+    DetailField, DetailModel, DetailSection, DetailValue, ResourceRow, ResourceTable, SummaryTable,
+    age_of, detail,
+};
 use crate::store::ObjectKey;
 
-/// Name / Type / Cluster IP / Ports / External IP / Selector / Age /
-/// Status, as Lens's Services list shows them.
+/// Name / Type / Cluster IP / External IP / Ports / Age / Status, as
+/// Freelens's Services list shows them.
 pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable {
     let rows = services
         .iter()
@@ -24,11 +27,10 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
                 key: ObjectKey::of(*service),
                 cells: vec![
                     service.metadata.name.clone().unwrap_or_default(),
-                    spec.type_.clone().unwrap_or_default(),
+                    spec.type_.clone().unwrap_or_else(|| "-".to_string()),
                     spec.cluster_ip.clone().unwrap_or_default(),
-                    port_list(service),
                     list_external_ips(service),
-                    selector(service).join(", "),
+                    port_list(service),
                     age_of(&service.metadata, now),
                     service_status(service).to_string(),
                 ],
@@ -40,9 +42,8 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
             "Name",
             "Type",
             "Cluster IP",
-            "Ports",
             "External IP",
-            "Selector",
+            "Ports",
             "Age",
             "Status",
         ]
@@ -52,7 +53,7 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
     }
 }
 
-/// Lens's `Service.getExternalIps`: the load balancer's ingress points
+/// Freelens's `Service.getExternalIps`: the load balancer's ingress points
 /// (each one's IP, else its hostname) once the status lists any, else
 /// `spec.externalIPs`.
 fn external_ips(service: &Service) -> Vec<String> {
@@ -95,7 +96,7 @@ fn list_external_ips(service: &Service) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-/// Lens's `Service.getStatus`: a LoadBalancer is Pending until it has an
+/// Freelens's `Service.getStatus`: a LoadBalancer is Pending until it has an
 /// external IP; every other Service is Active.
 fn service_status(service: &Service) -> &'static str {
     let balancer = service
@@ -109,7 +110,7 @@ fn service_status(service: &Service) -> &'static str {
     }
 }
 
-/// Lens's `ServicePort.toString`: `port:nodePort/protocol`, else
+/// Freelens's `ServicePort.toString`: `port:nodePort/protocol`, else
 /// `port:targetPort/protocol` when the target differs, else
 /// `port/protocol`.
 fn port_text(port: &ServicePort) -> String {
@@ -143,44 +144,268 @@ fn selector(service: &Service) -> Vec<String> {
         .collect()
 }
 
-/// Lens's Service details: selector, type, session affinity, then the
-/// connection (cluster IPs, IP families and policy, external IPs, ports,
-/// a LoadBalancer's requested IP), each optional one only when set.
-pub fn service_detail(service: &Service, now: Timestamp) -> DetailModel {
-    let spec = service.spec.clone().unwrap_or_default();
-    let mut summary = vec![
-        ("Selector", selector(service).join(", ")),
-        ("Type", spec.type_.clone().unwrap_or_default()),
-        (
-            "Session Affinity",
-            spec.session_affinity.clone().unwrap_or_default(),
-        ),
-        ("Cluster IP", spec.cluster_ip.clone().unwrap_or_default()),
-    ];
-    let mut optional = |label, values: Vec<String>| {
-        if !values.is_empty() {
-            summary.push((label, values.join(", ")));
-        }
-    };
-    optional("Cluster IPs", spec.cluster_ips.clone().unwrap_or_default());
-    optional("IP families", spec.ip_families.clone().unwrap_or_default());
-    optional(
-        "IP family policy",
-        spec.ip_family_policy.clone().into_iter().collect(),
-    );
-    optional("External IPs", external_ips(service));
-    summary.push(("Ports", port_list(service)));
-    if spec.type_.as_deref() == Some("LoadBalancer")
-        && let Some(ip) = spec.load_balancer_ip.clone().filter(|ip| !ip.is_empty())
-    {
-        summary.push(("Load Balancer IP", ip));
+/// Freelens's non-compact `formatDuration`, with its input in seconds.
+fn format_duration(seconds: i64) -> String {
+    fn meaningful(parts: &[(i64, &str)]) -> String {
+        parts
+            .iter()
+            .filter(|(value, _)| *value > 0)
+            .map(|(value, suffix)| format!("{value}{suffix}"))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
-    let value = serde_json::to_value(service).unwrap_or_default();
-    let summary = summary
-        .into_iter()
-        .map(|(label, value)| (label.to_string(), value))
-        .collect();
-    detail("Service", service, &value, summary, now)
+
+    if seconds < 0 {
+        return "0s".to_string();
+    }
+    if seconds < 120 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    if minutes < 180 {
+        return meaningful(&[(minutes, "m"), (seconds % 60, "s")]);
+    }
+    let hours = minutes / 60;
+    if hours < 48 {
+        return meaningful(&[(hours, "h"), (minutes % 60, "m")]);
+    }
+    let days = hours / 24;
+    if days < 8 {
+        return meaningful(&[(days, "d"), (hours % 24, "h"), (minutes % 60, "m")]);
+    }
+    let years = seconds * 400 / (86_400 * 146_097);
+    if years < 2 {
+        return meaningful(&[(days, "d"), (hours % 24, "h"), (minutes % 60, "m")]);
+    }
+    let months = days * 4_800 / 146_097;
+    let remaining_days = days - (months * 146_097 + 4_799) / 4_800;
+    meaningful(&[
+        (years, "y"),
+        (remaining_days, "d"),
+        (hours % 24, "h"),
+        (minutes % 60, "m"),
+    ])
+}
+
+/// Freelens's Service details: base fields, optional Load Balancer fields,
+/// then the Connection section.
+pub fn service_detail(service: &Service, now: Timestamp) -> DetailModel {
+    let raw = serde_json::to_value(service).unwrap_or_default();
+    service_detail_with_raw(service, &raw, now)
+}
+
+/// `raw` retains fields that the current Kubernetes types no longer model.
+pub fn service_detail_with_raw(
+    service: &Service,
+    raw: &serde_json::Value,
+    now: Timestamp,
+) -> DetailModel {
+    let spec = service.spec.clone().unwrap_or_default();
+    let mut summary = Vec::new();
+    let selector = selector(service);
+    if !selector.is_empty() {
+        summary.push(("Selector".to_string(), selector.join(", ")));
+    }
+    summary.push(("Type".to_string(), spec.type_.clone().unwrap_or_default()));
+    summary.push((
+        "Session Affinity".to_string(),
+        spec.session_affinity.clone().unwrap_or_default(),
+    ));
+    for (label, value) in [
+        ("Internal Traffic Policy", &spec.internal_traffic_policy),
+        ("Traffic Distribution", &spec.traffic_distribution),
+    ] {
+        if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
+            summary.push((label.to_string(), value.clone()));
+        }
+    }
+    if let Some(keys) = raw
+        .pointer("/spec/topologyKeys")
+        .and_then(serde_json::Value::as_array)
+    {
+        let keys = keys
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        summary.push(("Topology Keys".to_string(), keys));
+    }
+    if let Some(value) = spec.publish_not_ready_addresses {
+        summary.push(("Publish Not Ready Address".to_string(), value.to_string()));
+    }
+
+    let mut sections = Vec::new();
+    if let Some(config) = &spec.session_affinity_config {
+        let mut items = Vec::new();
+        if let Some(client_ip) = &config.client_ip {
+            items.push(
+                DetailField::from((
+                    "Client IP Timeout",
+                    format_duration(client_ip.timeout_seconds.unwrap_or_default() as i64).as_str(),
+                ))
+                .into(),
+            );
+        }
+        sections.push(DetailSection {
+            title: "Session Affinity Config".to_string(),
+            items,
+        });
+    }
+    if spec.type_.as_deref() == Some("LoadBalancer") {
+        let mut items = Vec::new();
+        if let Some(value) = spec.allocate_load_balancer_node_ports {
+            items.push(
+                DetailField::from((
+                    "Allocate Load Balancer Node Ports",
+                    value.to_string().as_str(),
+                ))
+                .into(),
+            );
+        }
+        for (label, value) in [
+            ("Load Balancer IP", &spec.load_balancer_ip),
+            ("Load Balancer Class", &spec.load_balancer_class),
+            ("External Traffic Policy", &spec.external_traffic_policy),
+        ] {
+            if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
+                items.push(DetailField::from((label, value.as_str())).into());
+            }
+        }
+        if let Some(port) = spec.health_check_node_port.filter(|port| *port != 0) {
+            items.push(
+                DetailField::from(("Health Check Node Port", port.to_string().as_str())).into(),
+            );
+        }
+        for point in service
+            .status
+            .iter()
+            .flat_map(|status| status.load_balancer.iter())
+            .flat_map(|balancer| balancer.ingress.iter().flatten())
+        {
+            for (label, value) in [
+                ("Hostname", &point.hostname),
+                ("IP", &point.ip),
+                ("IP Mode", &point.ip_mode),
+            ] {
+                if let Some(value) = value.as_ref().filter(|value| !value.is_empty()) {
+                    items.push(DetailField::from((label, value.as_str())).into());
+                }
+            }
+            if let Some(ports) = &point.ports {
+                items.push(
+                    SummaryTable {
+                        title: "Ports".to_string(),
+                        columns: ["Port", "Protocol", "Error"].map(String::from).to_vec(),
+                        rows: ports
+                            .iter()
+                            .map(|port| {
+                                vec![
+                                    port.port.to_string(),
+                                    if port.protocol.is_empty() {
+                                        "TCP".to_string()
+                                    } else {
+                                        port.protocol.clone()
+                                    },
+                                    port.error.clone().unwrap_or_default(),
+                                ]
+                            })
+                            .collect(),
+                    }
+                    .into(),
+                );
+            }
+        }
+        sections.push(DetailSection {
+            title: "Load Balancer".to_string(),
+            items,
+        });
+    }
+
+    let mut connection = Vec::new();
+    let mut push = |label, value: String| {
+        connection.push(DetailField::from((label, value.as_str())).into());
+    };
+    if let Some(value) = spec.cluster_ip.clone().filter(|value| !value.is_empty()) {
+        push("Cluster IP", value);
+    }
+    if let Some(values) = spec.cluster_ips.clone().filter(|values| !values.is_empty()) {
+        push("Cluster IPs", values.join(", "));
+    }
+    if let Some(value) = spec
+        .ip_family_policy
+        .clone()
+        .filter(|value| !value.is_empty())
+    {
+        push("IP family policy", value);
+    }
+    if let Some(values) = spec.ip_families.clone().filter(|values| !values.is_empty()) {
+        push("IP families", values.join(", "));
+    }
+    let ports = spec.ports.as_deref().unwrap_or_default();
+    let protocol = if ports.iter().any(|port| port.port == 443) {
+        Some("https")
+    } else if ports.iter().any(|port| port.port == 80) {
+        Some("http")
+    } else {
+        None
+    };
+    let mut ips = external_ips(service);
+    if ips.is_empty()
+        && let Some(name) = spec.external_name.as_ref().filter(|name| !name.is_empty())
+    {
+        ips.push(name.clone());
+    }
+    if !ips.is_empty() {
+        connection.push(
+            DetailField {
+                label: "External IPs".to_string(),
+                values: ips
+                    .into_iter()
+                    .map(|ip| DetailValue {
+                        href: protocol.map(|protocol| format!("{protocol}://{ip}")),
+                        text: ip,
+                    })
+                    .collect(),
+            }
+            .into(),
+        );
+    }
+    if !ports.is_empty() {
+        connection.push(DetailField::from(("Ports", port_list(service).as_str())).into());
+    }
+    sections.push(DetailSection {
+        title: "Connection".to_string(),
+        items: connection,
+    });
+    if let Some(conditions) = raw
+        .pointer("/status/loadBalancer/conditions")
+        .and_then(serde_json::Value::as_array)
+    {
+        let mut items = Vec::new();
+        for condition in conditions {
+            let text = |label| condition.get(label).and_then(serde_json::Value::as_str);
+            for label in ["Last Transition Time", "Reason", "Status"] {
+                let key = match label {
+                    "Last Transition Time" => "lastTransitionTime",
+                    "Reason" => "reason",
+                    _ => "status",
+                };
+                items.push(DetailField::from((label, text(key).unwrap_or_default())).into());
+            }
+            if let Some(kind) = text("type").filter(|kind| !kind.is_empty()) {
+                items.push(DetailField::from(("Type", kind)).into());
+            }
+            items.push(DetailField::from(("Message", text("message").unwrap_or_default())).into());
+        }
+        sections.push(DetailSection {
+            title: "Conditions".to_string(),
+            items,
+        });
+    }
+
+    let mut model = detail("Service", service, raw, summary, now);
+    model.sections = sections;
+    model
 }
 
 /// The service ports Port Forward offers: TCP only, as port-forward
@@ -211,7 +436,7 @@ pub fn service_ports(service: &Service) -> Vec<ForwardPort> {
         .collect()
 }
 
-/// Name / LoadBalancers / Rules / Age, as Lens's Ingresses list shows
+/// Name / LoadBalancers / Rules / Age, as Freelens's Ingresses list shows
 /// them.
 pub fn project_ingresses(ingresses: &[&Ingress], now: Timestamp) -> ResourceTable {
     let rows = ingresses
@@ -238,7 +463,7 @@ pub fn project_ingresses(ingresses: &[&Ingress], now: Timestamp) -> ResourceTabl
     }
 }
 
-/// Lens's `Ingress.getLoadBalancers`: each ingress point's hostname, else
+/// Freelens's `Ingress.getLoadBalancers`: each ingress point's hostname, else
 /// its IP.
 fn load_balancers(ingress: &Ingress) -> Vec<String> {
     ingress
@@ -271,7 +496,7 @@ fn has_tls(ingress: &Ingress) -> bool {
         .is_some_and(|tls| !tls.is_empty())
 }
 
-/// One path of a rule, as Lens's `computeRuleDeclarations` reads it.
+/// One path of a rule, as Freelens's `computeRuleDeclarations` reads it.
 struct Route {
     path: String,
     url: String,
@@ -297,7 +522,7 @@ fn routes(ingress: &Ingress, rule: &IngressRule) -> Vec<Route> {
         .collect()
 }
 
-/// Lens's `getBackendServiceNamePort`: `service:port` (the port's number,
+/// Freelens's `getBackendServiceNamePort`: `service:port` (the port's number,
 /// else its name), `<unknown>` for anything but a Service backend.
 fn backend_text(backend: &IngressBackend) -> String {
     backend
@@ -314,7 +539,7 @@ fn backend_text(backend: &IngressBackend) -> String {
         .unwrap_or_else(|| "<unknown>".to_string())
 }
 
-/// Lens's `Ingress.getPorts`: 80 when a rule has paths (or, with no rules,
+/// Freelens's `Ingress.getPorts`: 80 when a rule has paths (or, with no rules,
 /// the default backend's port number), plus 443 with TLS.
 fn ingress_ports(ingress: &Ingress) -> String {
     let spec = ingress.spec.clone().unwrap_or_default();
@@ -342,7 +567,7 @@ fn ingress_ports(ingress: &Ingress) -> String {
         .join(", ")
 }
 
-/// Lens's Ingress details: ports, TLS secrets, the default backend
+/// Freelens's Ingress details: ports, TLS secrets, the default backend
 /// Service, a Rules table mapping each host and path to its backend, and
 /// the load balancer's ingress points.
 pub fn ingress_detail(ingress: &Ingress, now: Timestamp) -> DetailModel {
@@ -355,7 +580,7 @@ pub fn ingress_detail(ingress: &Ingress, now: Timestamp) -> DetailModel {
             .collect();
         summary.push(("TLS".to_string(), secrets.join(", ")));
     }
-    // Lens names the default backend only when it has both name and port.
+    // Freelens names the default backend only when it has both name and port.
     if let Some(backend) = spec.default_backend.as_ref().filter(|backend| {
         backend
             .service
@@ -368,7 +593,7 @@ pub fn ingress_detail(ingress: &Ingress, now: Timestamp) -> DetailModel {
     for rule in rules(ingress) {
         let host = rule.host.clone().unwrap_or_default();
         if rule.http.is_none() {
-            // Lens titles a rule without paths by its host alone.
+            // Freelens titles a rule without paths by its host alone.
             if !host.is_empty() {
                 rows.push(vec![host, String::new(), String::new(), String::new()]);
             }
