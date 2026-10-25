@@ -91,9 +91,9 @@ impl SessionView {
         cx.notify();
     }
 
-    /// Display an open tab and focus it. The dock moves no focus itself, so
-    /// without this the focus stays in the tab just hidden, outside the
-    /// dispatch path, and `cmd-w` reaches no tab group.
+    /// Display an open tab and focus it. `add_panel_view` and `select_panel`
+    /// move no focus, so without this the focus stays in the tab just
+    /// hidden, outside the dispatch path, and `cmd-w` reaches no tab group.
     fn select(&mut self, id: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         self.dock
             .update(cx, |dock, cx| dock.select_panel(id, window, cx));
@@ -178,12 +178,11 @@ impl SessionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let focus = panel.focus_handle(cx);
+        let id = panel.panel_id(cx);
         self.dock.update(cx, |dock, cx| {
             dock.add_panel_view(panel, DockPlacement::Center, None, window, cx)
         });
-        // The new tab is displayed; focus it, as `select` does.
-        focus.focus(window, cx);
+        self.select(id, window, cx);
         cx.notify();
     }
 

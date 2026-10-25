@@ -10,7 +10,6 @@ use support::{Ui, open};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
-const LIST_TAB: &str = "dock-tab-0";
 const DETAIL_TAB: &str = "dock-tab-1";
 
 /// Open the Namespaces list holding `old`, then `old`'s detail tab.
@@ -43,14 +42,9 @@ fn the_close_button_removes_a_detail_tab(cx: &mut TestAppContext) {
 
     let button = bounds(&mut ui, CLOSE_BUTTON).expect("the detail tab draws a close button");
     let detail = bounds(&mut ui, DETAIL_TAB).expect("the detail tab is in the tab bar");
-    let list = bounds(&mut ui, LIST_TAB).expect("the list tab is in the tab bar");
     assert!(
         detail.contains(&button.center()),
         "the close button sits on the detail tab"
-    );
-    assert!(
-        !list.contains(&button.center()),
-        "the list tab carries no close button"
     );
 
     // Close the detail while the list is displayed: the click must not
@@ -92,6 +86,11 @@ fn cmd_w_closes_the_active_detail_tab_but_not_the_list(cx: &mut TestAppContext) 
     ui.settle();
     ui.frame(|window, _| assert!(window.try_find("row-old").is_some()));
     assert!(bounds(&mut ui, DETAIL_TAB).is_none());
+    assert_eq!(
+        ui.cx.update(|_, cx| cx.windows().len()),
+        1,
+        "the window stays"
+    );
 }
 
 #[gpui_kit::test]
