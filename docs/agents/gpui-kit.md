@@ -13,10 +13,10 @@ and gpui-base 0.8.0.
   tooltips. Without it, unpainted regions render black text on a black
   window (#52). `build` returns the view, not another Root.
 
-- `gpui_kit::application()` registers no assets: chain
-  `.with_assets(gpui_kit::assets::Assets)`, or every `IconName` icon
-  draws nothing while its button still takes clicks (#51). UI tests
-  cannot see this; only the manual check does.
+- Start the app with `astrolabe::application()` (clippy enforces it): it
+  registers the icon assets that `gpui_kit::application()` leaves out.
+  Without them every `IconName` icon draws nothing while its button still
+  takes clicks, which UI tests cannot see (#51).
 
 Reference: `crates/app/src/main.rs`.
 
@@ -54,5 +54,12 @@ Reference: `crates/app/src/session_view.rs`.
   beneath it. When a click causes an unrelated state change (e.g. the
   dock switches tabs), suspect a missing `.occlude()` first. The
   namespace menu over the dock tab bar is the reference case (#41).
+
+- `cx.debug_bounds(selector)` returns one element: the last one drawn
+  under that selector. Index-free selectors such as
+  `dock-tab-close-button` therefore name only the last tab's button, so an
+  assertion that a button is absent from an earlier tab proves nothing.
+  Assert on the element the selector does return (e.g. it lies inside
+  `dock-tab-{n}`), or on its absence once a single candidate is left (#51).
 
 Reference: `crates/app/tests/crd_views.rs`.

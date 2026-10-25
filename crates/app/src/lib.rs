@@ -18,3 +18,11 @@ mod session_view;
 pub mod store;
 pub mod workspace;
 pub mod yaml_editor;
+
+/// The GPUI application with the bundled icon SVGs registered. Without
+/// them every icon (e.g. a tab's close button) draws nothing while its
+/// button still takes clicks (#51).
+#[allow(clippy::disallowed_methods)]
+pub fn application() -> gpui_kit::Application {
+    gpui_kit::application().with_assets(gpui_kit::assets::Assets)
+}
