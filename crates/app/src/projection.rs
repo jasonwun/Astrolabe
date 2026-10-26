@@ -15,9 +15,11 @@ use serde_json::Value;
 use crate::jsonpath;
 use crate::store::ObjectKey;
 
+pub mod autoscaling;
 pub mod config;
 pub mod events;
 pub mod network;
+pub mod quotas;
 pub mod workloads;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
