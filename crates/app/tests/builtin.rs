@@ -146,6 +146,32 @@ fn every_builtin_registration_matches_its_contract() {
             actions: EDIT_DELETE,
             related: None,
         },
+        Contract {
+            kind: BuiltinKind::ResourceQuotas,
+            columns: &["Name", "Age"],
+            actions: EDIT_DELETE,
+            related: None,
+        },
+        Contract {
+            kind: BuiltinKind::LimitRanges,
+            columns: &["Name", "Age"],
+            actions: EDIT_DELETE,
+            related: None,
+        },
+        Contract {
+            kind: BuiltinKind::HorizontalPodAutoscalers,
+            columns: &[
+                "Name",
+                "Metrics",
+                "Min Pods",
+                "Max Pods",
+                "Replicas",
+                "Age",
+                "Conditions",
+            ],
+            actions: EDIT_DELETE,
+            related: None,
+        },
     ];
     let now = Timestamp::now();
     assert_eq!(contracts.len(), BuiltinKind::ALL.len());

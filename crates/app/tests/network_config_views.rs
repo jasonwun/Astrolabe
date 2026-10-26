@@ -92,6 +92,9 @@ fn navigation_groups_the_built_in_kinds(cx: &mut TestAppContext) {
             "Config",
             "ConfigMaps",
             "Secrets",
+            "ResourceQuotas",
+            "LimitRanges",
+            "HorizontalPodAutoscalers",
             "Custom Resources",
         ]
         .map(position);

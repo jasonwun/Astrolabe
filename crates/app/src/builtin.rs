@@ -4,8 +4,11 @@
 //! related section listing another kind's objects tied to this one.
 
 use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
+use astrolabe_kube::k8s_openapi::api::autoscaling::v2::HorizontalPodAutoscaler;
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
-use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Event, Pod, Secret, Service};
+use astrolabe_kube::k8s_openapi::api::core::v1::{
+    ConfigMap, Event, LimitRange, Pod, ResourceQuota, Secret, Service,
+};
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::k8s_openapi::serde::de::DeserializeOwned;
@@ -13,12 +16,16 @@ use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 
+use crate::projection::autoscaling::{hpa_detail, project_hpas};
 use crate::projection::config::{
     config_map_detail, project_config_maps, project_secrets, secret_detail,
 };
 use crate::projection::events::{event_detail, event_involves, project_events};
 use crate::projection::network::{
     ingress_detail, project_ingresses, project_services, service_detail_with_raw,
+};
+use crate::projection::quotas::{
+    limit_range_detail, project_limit_ranges, project_resource_quotas, resource_quota_detail,
 };
 use crate::projection::workloads::{
     cronjob_detail, daemonset_detail, deployment_detail, job_detail, pod_detail, project_cronjobs,
@@ -43,6 +50,9 @@ pub enum BuiltinKind {
     Ingresses,
     ConfigMaps,
     Secrets,
+    ResourceQuotas,
+    LimitRanges,
+    HorizontalPodAutoscalers,
 }
 
 /// A detail-tab toolbar action.
@@ -104,7 +114,17 @@ impl BuiltinKind {
             ],
         ),
         ("Network", &[BuiltinKind::Services, BuiltinKind::Ingresses]),
-        ("Config", &[BuiltinKind::ConfigMaps, BuiltinKind::Secrets]),
+        // Freelens's Config order.
+        (
+            "Config",
+            &[
+                BuiltinKind::ConfigMaps,
+                BuiltinKind::Secrets,
+                BuiltinKind::ResourceQuotas,
+                BuiltinKind::LimitRanges,
+                BuiltinKind::HorizontalPodAutoscalers,
+            ],
+        ),
         ("Events", &[BuiltinKind::Events]),
     ];
 
@@ -122,10 +142,13 @@ impl BuiltinKind {
             BuiltinKind::Ingresses => &INGRESSES,
             BuiltinKind::ConfigMaps => &CONFIG_MAPS,
             BuiltinKind::Secrets => &SECRETS,
+            BuiltinKind::ResourceQuotas => &RESOURCE_QUOTAS,
+            BuiltinKind::LimitRanges => &LIMIT_RANGES,
+            BuiltinKind::HorizontalPodAutoscalers => &HORIZONTAL_POD_AUTOSCALERS,
         }
     }
 
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::Pods,
         Self::Deployments,
         Self::StatefulSets,
@@ -138,6 +161,9 @@ impl BuiltinKind {
         Self::Ingresses,
         Self::ConfigMaps,
         Self::Secrets,
+        Self::ResourceQuotas,
+        Self::LimitRanges,
+        Self::HorizontalPodAutoscalers,
     ];
 
     /// The singular kind, as titles name it.
@@ -317,6 +343,36 @@ static SECRETS: Registration = Registration {
     resource: || ApiResource::erase::<Secret>(&()),
     list: |objects, now| typed_list(objects, now, project_secrets),
     detail: |object, now| Some(secret_detail(&parse::<Secret>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Nothing else is deleted.",
+    related: None,
+};
+
+static RESOURCE_QUOTAS: Registration = Registration {
+    label: "ResourceQuotas",
+    resource: || ApiResource::erase::<ResourceQuota>(&()),
+    list: |objects, now| typed_list(objects, now, project_resource_quotas),
+    detail: |object, now| Some(resource_quota_detail(&parse::<ResourceQuota>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Nothing else is deleted.",
+    related: None,
+};
+
+static LIMIT_RANGES: Registration = Registration {
+    label: "LimitRanges",
+    resource: || ApiResource::erase::<LimitRange>(&()),
+    list: |objects, now| typed_list(objects, now, project_limit_ranges),
+    detail: |object, now| Some(limit_range_detail(&parse::<LimitRange>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Nothing else is deleted.",
+    related: None,
+};
+
+static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
+    label: "HorizontalPodAutoscalers",
+    resource: || ApiResource::erase::<HorizontalPodAutoscaler>(&()),
+    list: |objects, now| typed_list(objects, now, project_hpas),
+    detail: |object, now| Some(hpa_detail(&parse::<HorizontalPodAutoscaler>(object)?, now)),
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
