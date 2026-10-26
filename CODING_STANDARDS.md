@@ -89,6 +89,13 @@ decide it (`ownerReferences`, `restartPolicy`, …), not written as a fixed
 string per kind. A test asserting such copy or choices uses a fixture that
 carries the deciding field, plus one that lacks it.
 
+For a controller, deletion still garbage-collects dependents through their
+`ownerReferences`; an empty related snapshot means no dependents are
+currently listed, not that the delete has no cascade semantics. Reviewers
+must not recommend "nothing else is deleted" from that empty state alone.
+Tests cover both owned dependents and an empty related snapshot while
+preserving the controller's cascade warning.
+
 Origin: #17 — a static "will create a replacement" delete warning passed a
 test whose Pod had no owner, and Exec offered run-once init containers that
 had already exited; the spec review caught both, the standards review

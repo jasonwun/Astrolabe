@@ -24,7 +24,7 @@ shape it lacks (keep it labelled synthetic).
 ## 2. Launch
 
 ```sh
-cargo run -p astrolabe     # run_in_background; the process name is `astrolabe`
+cargo run -p astrolabe     # run_in_background + disable_timeout; process name: astrolabe
 ```
 
 ## 3. Look and drive, via Orca computer use

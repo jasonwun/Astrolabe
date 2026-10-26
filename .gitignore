@@ -6,6 +6,9 @@
 # Spikes never land on the main branch; they live on their prototype/* branches
 /spikes/
 
+# Fetched references and other local-only working material
+/.scratch/
+
 # Cargo: this is an application, so Cargo.lock is committed
 
 # Environment / secrets
