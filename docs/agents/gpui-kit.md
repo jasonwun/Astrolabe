@@ -39,6 +39,18 @@ Reference: `crates/app/src/main.rs`.
 
 Reference: `crates/app/src/session_view.rs`.
 
+## Tables (`TableState` / `DataTable`)
+
+- `TableState` caches column widths in `col_groups` and re-reads
+  `delegate.column()` only on `refresh()`. A delegate whose widths depend
+  on the panel width calls `refresh` when that width changes (#68).
+- `DataTable` is `bordered` by default (`border_1`): the columns' viewport
+  is the element's width minus 2px.
+- Cells render as `w(column width).overflow_hidden().whitespace_nowrap()`.
+  A header cell's id is `("col-header", ix)`.
+
+Reference: `crates/app/src/resource_list.rs`.
+
 ## UI tests (`gpui_kit::test`)
 
 - `try_find_by_label` panics on a label that matches more than one element
@@ -63,7 +75,8 @@ Reference: `crates/app/src/session_view.rs`.
   `dock-tab-{n}`), or on its absence once a single candidate is left (#51).
 
 - Render order: compare `window.try_find(id).bounds().origin.y` across
-  ids. `try_find` takes an `&'static str` (or `String`), and the returned
+  ids. `try_find` takes an `&'static str`, a `String`, or a tuple id such
+  as `("col-header", 6usize)` (the index must be `usize`), and the returned
   `ElementSnapshot` has no `id()`; its API is in `gpui-base`'s
   `src/test_support.rs` in the cargo registry (#20).
 - Detail ids: a summary table is `detail-table-<title>`, a status field
