@@ -7,9 +7,10 @@ on the dev cluster and attach the screenshots to the hand-over.
 
 Run this check after review fixes. Done when every view the final change
 touches has been opened and screenshotted on `kind-astrolabe-dev`, each
-screenshot has been read back, and each is embedded in the PR. Repeat the
-affected views and replace their evidence after any later UI change, so
-the PR shows the final UI diff.
+screenshot has been read back, each is embedded in the PR, and every
+out-of-scope problem the check finds is a `needs-triage` issue linked from
+the PR body. Repeat the affected views and replace their evidence after
+any later UI change, so the PR shows the final UI diff.
 
 ## 1. Seed the cluster
 
@@ -34,15 +35,22 @@ cargo run -p astrolabe     # run_in_background + disable_timeout; process name: 
 so navigate by coordinates read off a screenshot:
 
 ```sh
-orca computer get-app-state --app astrolabe --json   # .result.screenshot.path → Read it
+orca computer get-app-state --app astrolabe --json   # .result.screenshot.{path,scale}
 orca computer click --app astrolabe --x 263 --y 302 --json
 ```
 
-- Click coordinates are window points: screenshot pixels divided by
-  `.result.screenshot.scale` (2 on Retina). Read shows a wide screenshot
-  downscaled (e.g. 3024 px wide shown at 2000), so first multiply what
-  you read off the image by original width / shown width (#52):
-  `point = shown × (original / shown width) ÷ scale`.
+- Read a screenshot only after shrinking it to window points. A Retina
+  original carries four times the pixels, and eight of them overflowed
+  #20's context window. At one pixel per point, coordinates read off the
+  image are click coordinates as they stand (`$P` and `$SCALE` from
+  `.result.screenshot`):
+
+  ```sh
+  W=$(sips -g pixelWidth "$P" | awk '/pixelWidth/ {print $2}')
+  sips --resampleWidth $((W / SCALE)) "$P" --out "$SCRATCH/view.png"   # Read this
+  ```
+
+  Keep the original for the PR's evidence.
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - The app has only the light theme: nothing calls

@@ -69,7 +69,9 @@ through the typed model.
 ## What follows upstream, what doesn't
 
 - **Follows upstream:** which columns and fields exist, their order and
-  titles, and how each value is derived.
+  titles, and how each value is derived. Sidebar order follows each
+  kind's `*sidebar-item.injectable.tsx` `orderNumber`, even where an
+  issue lists the kinds in another order (#20).
 - **Astrolabe's own:** widget styling (badges, tooltips, row truncation).
 - **Accepted deviations:** built-in kind lists leave out the Namespace
   column (#17). Any other deviation is a question for the user before it

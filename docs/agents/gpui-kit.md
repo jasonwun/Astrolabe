@@ -62,4 +62,12 @@ Reference: `crates/app/src/session_view.rs`.
   Assert on the element the selector does return (e.g. it lies inside
   `dock-tab-{n}`), or on its absence once a single candidate is left (#51).
 
+- Render order: compare `window.try_find(id).bounds().origin.y` across
+  ids. `try_find` takes an `&'static str` (or `String`), and the returned
+  `ElementSnapshot` has no `id()`; its API is in `gpui-base`'s
+  `src/test_support.rs` in the cargo registry (#20).
+- Detail ids: a summary table is `detail-table-<title>`, a status field
+  `field-<label>`, and every condition row `field-Condition`, whatever
+  its type (`crates/app/src/resource_detail.rs`).
+
 Reference: `crates/app/tests/crd_views.rs`.
