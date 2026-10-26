@@ -204,3 +204,135 @@ fn a_limit_range_detail_shows_a_section_per_limit_type(cx: &mut TestAppContext) 
         assert!(window.try_find("detail-related").is_none());
     });
 }
+
+/// The right edge of each id's bounds, panicking on one that does not
+/// render.
+fn right(window: &gpui_kit::Window, id: impl Into<gpui_kit::ElementId>) -> gpui_kit::Pixels {
+    let id = id.into();
+    window
+        .try_find(id.clone())
+        .unwrap_or_else(|| panic!("{id} not rendered"))
+        .bounds()
+        .right()
+}
+
+#[gpui_kit::test]
+fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
+    let (mut hpas, hpa_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(
+            key(BuiltinKind::HorizontalPodAutoscalers, "default"),
+            hpa_events,
+        )],
+    );
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(1300.), gpui_kit::px(800.)));
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-horizontalpodautoscalers", cx));
+    snapshot(
+        &mut hpas,
+        vec![object(serde_json::json!({
+            "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
+            "metadata": {"name": "web", "namespace": "default", "uid": "uid-hpa"},
+            "spec": {
+                "scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "web"},
+                "maxReplicas": 10
+            }
+        }))],
+    );
+    ui.settle();
+
+    ui.frame(|window, _| {
+        let table = window.try_find("list-table").unwrap().bounds();
+        assert!(table.size.width < gpui_kit::px(1280.), "{table:?}");
+        let conditions = window
+            .try_find("column-6")
+            .expect("Conditions header")
+            .bounds();
+        assert!(window.try_find_by_label("Conditions").is_some());
+        assert!(
+            conditions.left() >= table.left(),
+            "{conditions:?} {table:?}"
+        );
+        assert!(
+            conditions.right() <= table.right(),
+            "{conditions:?} {table:?}"
+        );
+        // The last column's cell ends at the table's inner (1px border)
+        // edge: no gap after it, and nothing hidden past it.
+        let last = window
+            .try_find(("col-header", 6usize))
+            .expect("Conditions cell")
+            .bounds();
+        assert_eq!(
+            last.right(),
+            table.right() - gpui_kit::px(1.),
+            "{last:?} {table:?}"
+        );
+    });
+
+    // Narrower: the columns shrink with the window.
+    let wide = ui.frame(|window, _| right(window, "column-0"));
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(800.)));
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(right(window, "column-0") < wide);
+        assert_eq!(
+            right(window, ("col-header", 6usize)),
+            right(window, "list-table") - gpui_kit::px(1.)
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut TestAppContext) {
+    let (mut hpas, hpa_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(
+            key(BuiltinKind::HorizontalPodAutoscalers, "default"),
+            hpa_events,
+        )],
+    );
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(800.)));
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-horizontalpodautoscalers", cx));
+    snapshot(
+        &mut hpas,
+        vec![object(serde_json::json!({
+            "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
+            "metadata": {"name": "web", "namespace": "default", "uid": "uid-hpa"},
+            "spec": {
+                "scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "web"},
+                "maxReplicas": 10
+            }
+        }))],
+    );
+    ui.settle();
+
+    let table = ui.frame(|window, _| window.try_find("list-table").unwrap().bounds());
+    assert!(table.size.width < gpui_kit::px(7. * 80.), "{table:?}");
+    ui.cx.simulate_event(gpui_kit::ScrollWheelEvent {
+        position: table.center(),
+        delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+            gpui_kit::px(-1000.),
+            gpui_kit::px(0.),
+        )),
+        ..Default::default()
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        let last = window
+            .try_find(("col-header", 6usize))
+            .expect("Conditions cell")
+            .bounds();
+        assert!(last.size.width >= gpui_kit::px(80.), "{last:?}");
+        assert!(last.left() >= table.left(), "{last:?} {table:?}");
+        assert!(last.right() <= table.right(), "{last:?} {table:?}");
+    });
+}

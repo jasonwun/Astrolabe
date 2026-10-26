@@ -344,6 +344,36 @@ fn definitions_list_filters_by_group_and_opens_crd_detail(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+fn definitions_columns_fill_the_panel_with_the_name_column_widest(cx: &mut TestAppContext) {
+    let mut ui = open(cx, Vec::new());
+    snapshot(&mut ui.namespaces, Vec::new());
+    snapshot(&mut ui.crds, vec![crontab_crd(true)]);
+    ui.settle();
+
+    ui.frame(|window, cx| window.click("nav-definitions", cx));
+    ui.settle();
+    ui.frame(|window, _| {
+        let bounds = |id: &'static str| window.try_find(id).unwrap().bounds();
+        let table = bounds("list-table");
+        let (resource, group, age) = (bounds("column-0"), bounds("column-1"), bounds("column-5"));
+        // Name 2 : others 1, each header inside its cell's padding.
+        assert!(
+            resource.size.width > group.size.width * 1.8,
+            "{resource:?} {group:?}"
+        );
+        // The last column's cell ends at the table's inner (1px border)
+        // edge: no gap after it, and nothing hidden past it.
+        let last = window.try_find(("col-header", 5usize)).unwrap().bounds();
+        assert!(age.right() <= last.right(), "{age:?} {last:?}");
+        assert_eq!(
+            last.right(),
+            table.right() - gpui_kit::px(1.),
+            "{last:?} {table:?}"
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn unserved_preferred_version_shows_an_error_not_an_empty_table(cx: &mut TestAppContext) {
     let mut ui = open(cx, Vec::new());
     snapshot(&mut ui.namespaces, Vec::new());

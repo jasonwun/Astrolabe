@@ -2,7 +2,8 @@
 //! list columns and detail fields (Freelens 14a491f,
 //! `config-horizontal-pod-autoscalers/` and the `HorizontalPodAutoscaler`
 //! kube object). Freelens's Namespace column is left out, as for every
-//! built-in kind.
+//! built-in kind. The list's column weights are Freelens's (Freelens
+//! 14a491f, `config-horizontal-pod-autoscalers/list-view.scss`).
 //!
 //! Watched as `autoscaling/v2`, as Freelens does, so only its v2 metric
 //! parser applies: the server converts v1 objects, and v1's
@@ -23,6 +24,10 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::{DetailModel, DetailSection, ResourceRow, ResourceTable, SummaryTable, age_of, detail};
 use crate::store::ObjectKey;
+
+/// Column weights of [`project_hpas`]'s list: Name, Metrics and Conditions
+/// 1.5, Age 0.5, the rest 1.
+pub const HPA_COLUMN_WEIGHTS: &[f32] = &[1.5, 1.5, 1., 1., 1., 0.5, 1.5];
 
 /// Name / Metrics / Min Pods / Max Pods / Replicas / Age / Conditions, as
 /// Freelens's HPA list shows them.

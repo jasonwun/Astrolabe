@@ -16,7 +16,7 @@ use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 
-use crate::projection::autoscaling::{hpa_detail, project_hpas};
+use crate::projection::autoscaling::{HPA_COLUMN_WEIGHTS, hpa_detail, project_hpas};
 use crate::projection::config::{
     config_map_detail, project_config_maps, project_secrets, secret_detail,
 };
@@ -88,6 +88,9 @@ pub struct Registration {
     /// What else deleting this object takes with it, for the confirmation.
     pub cascade: fn(&DynamicObject) -> &'static str,
     pub related: Option<Related>,
+    /// The list's column weights, one per column; `None` takes
+    /// [`default_column_weights`](crate::projection::default_column_weights).
+    pub column_weights: Option<&'static [f32]>,
 }
 
 /// A detail's related section: `kind`'s objects in the same namespace that
@@ -196,6 +199,7 @@ static PODS: Registration = Registration {
         kind: BuiltinKind::Events,
         select: pod_events,
     }),
+    column_weights: None,
 };
 
 static DEPLOYMENTS: Registration = Registration {
@@ -215,6 +219,7 @@ static DEPLOYMENTS: Registration = Registration {
         kind: BuiltinKind::Pods,
         select: deployment_pods,
     }),
+    column_weights: None,
 };
 
 static STATEFULSETS: Registration = Registration {
@@ -234,6 +239,7 @@ static STATEFULSETS: Registration = Registration {
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "StatefulSet"),
     }),
+    column_weights: None,
 };
 
 static REPLICASETS: Registration = Registration {
@@ -248,6 +254,7 @@ static REPLICASETS: Registration = Registration {
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "ReplicaSet"),
     }),
+    column_weights: None,
 };
 
 static DAEMONSETS: Registration = Registration {
@@ -262,6 +269,7 @@ static DAEMONSETS: Registration = Registration {
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "DaemonSet"),
     }),
+    column_weights: None,
 };
 
 static JOBS: Registration = Registration {
@@ -276,6 +284,7 @@ static JOBS: Registration = Registration {
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "Job"),
     }),
+    column_weights: None,
 };
 
 static CRONJOBS: Registration = Registration {
@@ -290,6 +299,7 @@ static CRONJOBS: Registration = Registration {
         kind: BuiltinKind::Jobs,
         select: |object, jobs| owned_by(object, jobs, "CronJob"),
     }),
+    column_weights: None,
 };
 
 static EVENTS: Registration = Registration {
@@ -300,6 +310,7 @@ static EVENTS: Registration = Registration {
     actions: &[],
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: None,
 };
 
 static SERVICES: Registration = Registration {
@@ -316,6 +327,7 @@ static SERVICES: Registration = Registration {
     actions: &[Action::PortForward, Action::Edit, Action::Delete],
     cascade: service_cascade,
     related: None,
+    column_weights: None,
 };
 
 static INGRESSES: Registration = Registration {
@@ -326,6 +338,7 @@ static INGRESSES: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: None,
 };
 
 static CONFIG_MAPS: Registration = Registration {
@@ -336,6 +349,7 @@ static CONFIG_MAPS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: None,
 };
 
 static SECRETS: Registration = Registration {
@@ -346,6 +360,7 @@ static SECRETS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: None,
 };
 
 static RESOURCE_QUOTAS: Registration = Registration {
@@ -356,6 +371,7 @@ static RESOURCE_QUOTAS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: None,
 };
 
 static LIMIT_RANGES: Registration = Registration {
@@ -366,6 +382,7 @@ static LIMIT_RANGES: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: None,
 };
 
 static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
@@ -376,6 +393,7 @@ static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
+    column_weights: Some(HPA_COLUMN_WEIGHTS),
 };
 
 /// The EndpointSlice controller owns the slices of a Service with a
