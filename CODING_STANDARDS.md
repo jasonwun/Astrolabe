@@ -106,3 +106,17 @@ its own focus path, not that one.
 Origin: #51 shipped the close test for detail tabs only; Logs, Exec and
 Edit YAML tabs focus an inner terminal or editor and went untested until
 the user asked (#51 retro).
+
+## Upstream-alignment assertions
+
+A projection test distinguishes missing (`None`), empty strings, empty
+collections, and collections containing an empty item whenever upstream
+renders those states differently. When upstream interleaves fields and
+tables per item, assert a single ordered sequence at the real rendering
+boundary so each child's values remain attached to that item; separate
+assertions over all fields and all tables cannot catch interleaving
+regressions.
+
+Origin: #55 review found empty-value and repeated-ingress rendering bugs
+that the existing presence/absence and separate field/table assertions did
+not catch (#55 retro).

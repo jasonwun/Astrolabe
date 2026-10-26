@@ -36,6 +36,16 @@ Cite the pinned commit in the module doc of the projection that follows
 it (`Freelens 088d085, network-services/`), so a later reader can diff
 against what was copied.
 
+## Typed projections
+
+Check the pinned `k8s-openapi` type against every upstream field before
+projecting from it: deserialization discards fields the typed model does
+not know. For example, `Service` loses `topologyKeys` and load-balancer
+conditions. Preserve such fields from `DynamicObject` or the registration's
+original JSON rather than a typed round-trip. Test them through the real
+registration/UI path with a fixture that fails if the field passes only
+through the typed model.
+
 ## What follows upstream, what doesn't
 
 - **Follows upstream:** which columns and fields exist, their order and
