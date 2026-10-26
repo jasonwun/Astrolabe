@@ -286,3 +286,53 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut TestAppContext) {
+    let (mut hpas, hpa_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(
+            key(BuiltinKind::HorizontalPodAutoscalers, "default"),
+            hpa_events,
+        )],
+    );
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(800.)));
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-horizontalpodautoscalers", cx));
+    snapshot(
+        &mut hpas,
+        vec![object(serde_json::json!({
+            "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
+            "metadata": {"name": "web", "namespace": "default", "uid": "uid-hpa"},
+            "spec": {
+                "scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "web"},
+                "maxReplicas": 10
+            }
+        }))],
+    );
+    ui.settle();
+
+    let table = ui.frame(|window, _| window.try_find("list-table").unwrap().bounds());
+    assert!(table.size.width < gpui_kit::px(7. * 80.), "{table:?}");
+    ui.cx.simulate_event(gpui_kit::ScrollWheelEvent {
+        position: table.center(),
+        delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+            gpui_kit::px(-1000.),
+            gpui_kit::px(0.),
+        )),
+        ..Default::default()
+    });
+    ui.settle();
+    ui.frame(|window, _| {
+        let last = window
+            .try_find(("col-header", 6usize))
+            .expect("Conditions cell")
+            .bounds();
+        assert!(last.size.width >= gpui_kit::px(80.), "{last:?}");
+        assert!(last.left() >= table.left(), "{last:?} {table:?}");
+        assert!(last.right() <= table.right(), "{last:?} {table:?}");
+    });
+}
