@@ -207,9 +207,10 @@ fn a_limit_range_detail_shows_a_section_per_limit_type(cx: &mut TestAppContext) 
 
 /// The right edge of each id's bounds, panicking on one that does not
 /// render.
-fn right(window: &gpui_kit::Window, id: &'static str) -> gpui_kit::Pixels {
+fn right(window: &gpui_kit::Window, id: impl Into<gpui_kit::ElementId>) -> gpui_kit::Pixels {
+    let id = id.into();
     window
-        .try_find(id)
+        .try_find(id.clone())
         .unwrap_or_else(|| panic!("{id} not rendered"))
         .bounds()
         .right()
@@ -259,10 +260,16 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
             conditions.right() <= table.right(),
             "{conditions:?} {table:?}"
         );
-        // No gap after the last column: only its cell padding is left.
-        assert!(
-            table.right() - conditions.right() < gpui_kit::px(20.),
-            "{conditions:?} {table:?}"
+        // The last column's cell ends at the table's inner (1px border)
+        // edge: no gap after it, and nothing hidden past it.
+        let last = window
+            .try_find(("col-header", 6usize))
+            .expect("Conditions cell")
+            .bounds();
+        assert_eq!(
+            last.right(),
+            table.right() - gpui_kit::px(1.),
+            "{last:?} {table:?}"
         );
     });
 
@@ -273,6 +280,9 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
     ui.settle();
     ui.frame(|window, _| {
         assert!(right(window, "column-0") < wide);
-        assert!(right(window, "column-6") <= right(window, "list-table"));
+        assert_eq!(
+            right(window, ("col-header", 6usize)),
+            right(window, "list-table") - gpui_kit::px(1.)
+        );
     });
 }

@@ -51,34 +51,34 @@ pub fn default_column_weights(count: usize) -> Vec<f32> {
 /// the rounding remainder, so the widths fill `available` exactly.
 pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
     let mut clamped = vec![false; weights.len()];
-    let (free, weight) = loop {
+    let (free, unclamped_weight) = loop {
         let clamped_count = clamped.iter().filter(|clamped| **clamped).count();
         let free = available - MIN_COLUMN_WIDTH * clamped_count as f32;
-        let weight: f32 = weights
+        let unclamped_weight: f32 = weights
             .iter()
             .zip(&clamped)
             .filter(|(_, clamped)| !**clamped)
             .map(|(weight, _)| weight)
             .sum();
         let mut changed = false;
-        for (column, clamped) in weights.iter().zip(clamped.iter_mut()) {
-            if !*clamped && free * column / weight < MIN_COLUMN_WIDTH {
+        for (column_weight, clamped) in weights.iter().zip(clamped.iter_mut()) {
+            if !*clamped && free * column_weight / unclamped_weight < MIN_COLUMN_WIDTH {
                 *clamped = true;
                 changed = true;
             }
         }
         if !changed {
-            break (free, weight);
+            break (free, unclamped_weight);
         }
     };
     let mut widths: Vec<f32> = weights
         .iter()
         .zip(&clamped)
-        .map(|(column, clamped)| {
+        .map(|(column_weight, clamped)| {
             if *clamped {
                 MIN_COLUMN_WIDTH
             } else {
-                (free * column / weight).floor()
+                (free * column_weight / unclamped_weight).floor()
             }
         })
         .collect();

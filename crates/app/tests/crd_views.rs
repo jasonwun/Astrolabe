@@ -361,10 +361,14 @@ fn definitions_columns_fill_the_panel_with_the_name_column_widest(cx: &mut TestA
             resource.size.width > group.size.width * 1.8,
             "{resource:?} {group:?}"
         );
-        assert!(age.right() <= table.right(), "{age:?} {table:?}");
-        assert!(
-            table.right() - age.right() < gpui_kit::px(20.),
-            "{age:?} {table:?}"
+        // The last column's cell ends at the table's inner (1px border)
+        // edge: no gap after it, and nothing hidden past it.
+        let last = window.try_find(("col-header", 5usize)).unwrap().bounds();
+        assert!(age.right() <= last.right(), "{age:?} {last:?}");
+        assert_eq!(
+            last.right(),
+            table.right() - gpui_kit::px(1.),
+            "{last:?} {table:?}"
         );
     });
 }

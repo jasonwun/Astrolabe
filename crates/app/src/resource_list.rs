@@ -69,7 +69,7 @@ impl ResourceListPanel {
                 RowsTable {
                     table: ResourceTable::default(),
                     weights: Vec::new(),
-                    width: 0.,
+                    measured_width: 0.,
                     widths: Vec::new(),
                     open_row: None,
                     open_all_cells: false,
@@ -313,10 +313,16 @@ impl ResourceListPanel {
         self.stale = stale;
         let open_all_cells = self.view == ListView::Builtin(BuiltinKind::Events);
         self.table.update(cx, |state, cx| {
-            let weights = weights.map_or_else(
-                || default_column_weights(table.columns.len()),
-                <[f32]>::to_vec,
+            debug_assert!(
+                weights.is_none_or(|weights| weights.len() == table.columns.len()),
+                "column weights do not match the list's columns"
             );
+            let weights = weights
+                .filter(|weights| weights.len() == table.columns.len())
+                .map_or_else(
+                    || default_column_weights(table.columns.len()),
+                    <[f32]>::to_vec,
+                );
             let rows = state.delegate_mut();
             rows.table = table;
             rows.weights = weights;
@@ -466,10 +472,9 @@ impl Render for ResourceListPanel {
                             let table = self.table.clone();
                             move |bounds, _, cx| {
                                 table.update(cx, |state, cx| {
-                                    let width = f32::from(bounds.size.width);
-                                    if state.delegate().width != width {
-                                        state.delegate_mut().width = width;
-                                        state.delegate_mut().fit_columns();
+                                    // The table's 1px border on each side.
+                                    let inner = f32::from(bounds.size.width) - 2.;
+                                    if state.delegate_mut().set_width(inner) {
                                         state.refresh(cx);
                                         cx.notify();
                                     }
@@ -490,9 +495,9 @@ type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 pub(crate) struct RowsTable {
     table: ResourceTable,
     weights: Vec<f32>,
-    /// The table's last measured width.
-    width: f32,
-    /// `weights` fitted to `width`.
+    /// The table's last measured inner width.
+    measured_width: f32,
+    /// `weights` fitted to `measured_width`.
     widths: Vec<f32>,
     open_row: Option<OpenRow>,
     open_all_cells: bool,
@@ -504,7 +509,18 @@ impl RowsTable {
     }
 
     fn fit_columns(&mut self) {
-        self.widths = column_widths(self.width, &self.weights);
+        self.widths = column_widths(self.measured_width, &self.weights);
+    }
+
+    /// Refits the columns to a newly measured width; false when it is
+    /// unchanged.
+    fn set_width(&mut self, width: f32) -> bool {
+        if self.measured_width == width {
+            return false;
+        }
+        self.measured_width = width;
+        self.fit_columns();
+        true
     }
 }
 
@@ -530,13 +546,7 @@ impl TableDelegate for RowsTable {
         _cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let name = self.table.columns[col_ix].clone();
-        div()
-            .id(SharedString::from(format!("column-{col_ix}")))
-            .aria_label(name.clone())
-            .test_support()
-            .w_full()
-            .text_ellipsis()
-            .child(name)
+        text_cell(format!("column-{col_ix}"), name).test_support()
     }
 
     fn render_td(
@@ -557,24 +567,24 @@ impl TableDelegate for RowsTable {
             } else {
                 format!("event-row-{key}-{col_ix}")
             };
-            return div()
-                .id(SharedString::from(id))
-                .aria_label(cell.clone())
+            return text_cell(id, cell)
                 .test_support()
-                .w_full()
-                .text_ellipsis()
                 .cursor_pointer()
-                .child(cell)
                 .on_click(move |_, _, cx| open_row(&key, cx))
                 .into_any_element();
         }
-        div()
-            .id(SharedString::from(format!("cell-{row_ix}-{col_ix}")))
-            .aria_label(cell.clone())
+        text_cell(format!("cell-{row_ix}-{col_ix}"), cell)
             .test_support()
-            .w_full()
-            .text_ellipsis()
-            .child(cell)
             .into_any_element()
     }
+}
+
+/// A labeled header or body cell whose overlong text ends in an ellipsis.
+fn text_cell(id: String, text: String) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .aria_label(text.clone())
+        .w_full()
+        .text_ellipsis()
+        .child(text)
 }
