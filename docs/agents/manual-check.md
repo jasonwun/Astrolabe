@@ -50,7 +50,17 @@ orca computer click --app astrolabe --x 263 --y 302 --json
   sips --resampleWidth $((W / SCALE)) "$P" --out "$SCRATCH/view.png"   # Read this
   ```
 
-  Keep the original for the PR's evidence.
+  Keep the original for the PR's evidence. When only one region
+  matters, crop to it as well (`sips --cropToHeightWidth`): a whole
+  window still reads at 120-170KB, a cropped table at about 16KB (#68).
+- Resize the window with System Events:
+
+  ```sh
+  osascript -e 'tell application "System Events" to tell process "astrolabe" to set size of window 1 to {900, 800}'
+  ```
+- `orca computer scroll` does not move a GPUI horizontal scroll. Prove
+  horizontal scrolling with a UI test that sends `ScrollWheelEvent`
+  (`crates/app/tests/autoscaling_quotas_views.rs`) (#68).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - The app has only the light theme: nothing calls

@@ -127,3 +127,14 @@ regressions.
 Origin: #55 review found empty-value and repeated-ingress rendering bugs
 that the existing presence/absence and separate field/table assertions did
 not catch (#55 retro).
+
+## Layout assertions
+
+A UI test that asserts a size or an edge compares it, within 1px, with
+the boundary the user sees: the inner viewport, not an outer wrapper. A
+loose tolerance against the wrapper is a finding: it hides off-by-border
+overflow.
+
+Origin: #68's first test allowed 20px against the `list-table` wrapper,
+and missed columns 2px wider than `DataTable`'s bordered viewport (#68
+retro).
