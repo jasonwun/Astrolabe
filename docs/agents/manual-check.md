@@ -5,9 +5,11 @@ sees: invisible text (#52) and a tab with no close button (#51) both passed
 the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
-Done when every view the change touches has been opened and screenshotted
-on `kind-astrolabe-dev`, each screenshot has been read back, and each is
-embedded in the PR.
+Run this check after review fixes. Done when every view the final change
+touches has been opened and screenshotted on `kind-astrolabe-dev`, each
+screenshot has been read back, and each is embedded in the PR. Repeat the
+affected views and replace their evidence after any later UI change, so
+the PR shows the final UI diff.
 
 ## 1. Seed the cluster
 
