@@ -7,6 +7,7 @@
 use astrolabe_kube::crd::KindResource;
 use std::collections::BTreeSet;
 
+use astrolabe_kube::k8s_openapi::api::batch::v1::CronJob;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod, Secret, Service};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -297,11 +298,11 @@ impl ResourceDetailPanel {
             Ok(replicas) if replicas >= 0 => replicas,
             _ => return self.show_notice("Replicas must be a whole number, 0 or more", cx),
         };
-        let DetailTarget::Builtin { key, .. } = &self.target else {
+        let Some(resolved) = self.resolve(cx) else {
             return;
         };
         let operation = Operation::Scale {
-            key: key.clone(),
+            object: resolved.object,
             replicas,
         };
         let result = self
@@ -318,10 +319,12 @@ impl ResourceDetailPanel {
     }
 
     fn rollout_restart(&mut self, cx: &mut Context<Self>) {
-        let DetailTarget::Builtin { key, .. } = &self.target else {
+        let Some(resolved) = self.resolve(cx) else {
             return;
         };
-        let operation = Operation::RolloutRestart { key: key.clone() };
+        let operation = Operation::RolloutRestart {
+            object: resolved.object,
+        };
         let result = self
             .session
             .update(cx, |session, _| session.operate(operation));
@@ -330,6 +333,44 @@ impl ResourceDetailPanel {
             "Restarting…",
             "Restart requested".to_string(),
             "Restart",
+            cx,
+        );
+    }
+
+    fn set_suspend(&mut self, suspend: bool, cx: &mut Context<Self>) {
+        let Some(resolved) = self.resolve(cx) else {
+            return;
+        };
+        let operation = Operation::SetSuspend {
+            object: resolved.object,
+            suspend,
+        };
+        let result = self
+            .session
+            .update(cx, |session, _| session.operate(operation));
+        let (pending, done, verb) = if suspend {
+            ("Suspending…", "Suspended", "Suspend")
+        } else {
+            ("Resuming…", "Resumed", "Resume")
+        };
+        self.report(result, pending, done.to_string(), verb, cx);
+    }
+
+    fn trigger(&mut self, cx: &mut Context<Self>) {
+        let Some(resolved) = self.resolve(cx) else {
+            return;
+        };
+        let operation = Operation::TriggerCronJob {
+            object: resolved.object,
+        };
+        let result = self
+            .session
+            .update(cx, |session, _| session.operate(operation));
+        self.report(
+            result,
+            "Triggering…",
+            "Job creation requested".to_string(),
+            "Trigger",
             cx,
         );
     }
@@ -725,6 +766,10 @@ impl ResourceDetailPanel {
         let theme = cx.theme();
         let border = theme.border;
         let button = |id: &'static str, label: &'static str| button(id, label, border);
+        let suspended = self
+            .typed::<CronJob>(BuiltinKind::CronJobs, cx)
+            .and_then(|cronjob| cronjob.spec.suspend)
+            .unwrap_or(false);
         h_flex()
             .gap_2()
             .p_2()
@@ -745,6 +790,15 @@ impl ResourceDetailPanel {
                         .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
                     Action::RolloutRestart => button("detail-restart", "Rollout Restart")
                         .on_click(cx.listener(|panel, _, _, cx| panel.rollout_restart(cx))),
+                    Action::Suspend => button(
+                        "detail-suspend",
+                        if suspended { "Resume" } else { "Suspend" },
+                    )
+                    .on_click(
+                        cx.listener(move |panel, _, _, cx| panel.set_suspend(!suspended, cx)),
+                    ),
+                    Action::Trigger => button("detail-trigger", "Trigger")
+                        .on_click(cx.listener(|panel, _, _, cx| panel.trigger(cx))),
                     Action::Edit => button("detail-edit", "Edit YAML")
                         .on_click(cx.listener(|panel, _, _, cx| panel.edit(cx))),
                     Action::Delete => button("detail-delete", "Delete")

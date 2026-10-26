@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
+use astrolabe_kube::k8s_openapi::api::core::v1::Event;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -49,6 +50,7 @@ pub struct ResourceListPanel {
     state: ListState,
     stale: bool,
     group_filter: BTreeSet<String>,
+    notice: Option<String>,
     focus_handle: FocusHandle,
 }
 
@@ -65,6 +67,7 @@ impl ResourceListPanel {
                 RowsTable {
                     table: ResourceTable::default(),
                     open_row: None,
+                    open_all_cells: false,
                 },
                 window,
                 cx,
@@ -86,6 +89,7 @@ impl ResourceListPanel {
             state: ListState::Table,
             stale: false,
             group_filter: BTreeSet::new(),
+            notice: None,
             focus_handle: cx.focus_handle(),
         };
         panel.refresh(cx);
@@ -107,27 +111,101 @@ impl ResourceListPanel {
             ListView::Namespaces | ListView::Definitions => session.close_list(),
         });
         self.view = view;
+        self.notice = None;
         self.refresh(cx);
     }
 
     fn open_row(&mut self, key: &ObjectKey, cx: &mut Context<Self>) {
         let target = match &self.view {
-            ListView::Namespaces => DetailTarget::Namespace {
+            ListView::Namespaces => Ok(DetailTarget::Namespace {
                 name: key.name.clone(),
-            },
-            ListView::Builtin(kind) => DetailTarget::Builtin {
+            }),
+            ListView::Builtin(BuiltinKind::Events) => self.event_target(key, cx),
+            ListView::Builtin(kind) => Ok(DetailTarget::Builtin {
                 kind: *kind,
                 key: key.clone(),
-            },
-            ListView::Definitions => DetailTarget::Definition {
+            }),
+            ListView::Definitions => Ok(DetailTarget::Definition {
                 name: key.name.clone(),
-            },
-            ListView::Custom(id) => DetailTarget::Custom {
+            }),
+            ListView::Custom(id) => Ok(DetailTarget::Custom {
                 id: id.clone(),
                 key: key.clone(),
-            },
+            }),
         };
-        cx.emit(OpenDetail(target));
+        match target {
+            Ok(target) => {
+                self.notice = None;
+                cx.emit(OpenDetail(target));
+            }
+            Err(notice) => {
+                self.notice = Some(notice);
+                cx.notify();
+            }
+        }
+    }
+
+    fn event_target(&self, key: &ObjectKey, cx: &App) -> Result<DetailTarget, String> {
+        let session = self.session.read(cx);
+        let namespace = key.namespace.as_deref().unwrap_or_default();
+        let event = session
+            .object_watch(&session.builtin_watch_key(BuiltinKind::Events, namespace))
+            .and_then(|watch| watch.get(Some(namespace), &key.name))
+            .and_then(|object| object.clone().try_parse::<Event>().ok())
+            .ok_or_else(|| format!("Cannot open Event {key}: object is unavailable"))?;
+        let involved = event.involved_object;
+        let kind = involved.kind.unwrap_or_default();
+        let name = involved.name.unwrap_or_default();
+        let target = format!("{kind}/{name}");
+        if name.is_empty() {
+            return Err(format!(
+                "Cannot open involved object {target}: name is missing"
+            ));
+        }
+        let namespaced_key = || {
+            ObjectKey::new(
+                involved
+                    .namespace
+                    .clone()
+                    .or_else(|| event.metadata.namespace.clone()),
+                name.clone(),
+            )
+        };
+        let api_version = involved.api_version.clone();
+        if let Some(kind) = BuiltinKind::from_kind(&kind)
+            && api_version
+                .as_ref()
+                .is_none_or(|version| *version == (kind.registration().resource)().api_version)
+        {
+            return Ok(DetailTarget::Builtin {
+                kind,
+                key: namespaced_key(),
+            });
+        }
+        match (kind.as_str(), api_version.as_deref()) {
+            ("Namespace", None | Some("v1")) => Ok(DetailTarget::Namespace { name }),
+            ("CustomResourceDefinition", None | Some("apiextensions.k8s.io/v1")) => {
+                Ok(DetailTarget::Definition { name })
+            }
+            _ => {
+                let group = api_version
+                    .and_then(|version| version.split_once('/').map(|(group, _)| group.to_string()))
+                    .unwrap_or_default();
+                let id = CustomKindId { group, kind };
+                if let Some(custom) = session.custom_kind(&id) {
+                    let key = if custom.namespaced {
+                        namespaced_key()
+                    } else {
+                        ObjectKey::cluster_scoped(name)
+                    };
+                    Ok(DetailTarget::Custom { id, key })
+                } else {
+                    Err(format!(
+                        "Cannot open involved object {target}: kind is not registered"
+                    ))
+                }
+            }
+        }
     }
 
     fn toggle_group(&mut self, group: String, cx: &mut Context<Self>) {
@@ -224,8 +302,10 @@ impl ResourceListPanel {
         };
         self.state = state;
         self.stale = stale;
+        let open_all_cells = self.view == ListView::Builtin(BuiltinKind::Events);
         self.table.update(cx, |state, cx| {
             state.delegate_mut().table = table;
+            state.delegate_mut().open_all_cells = open_all_cells;
             state.refresh(cx);
         });
         cx.notify();
@@ -334,6 +414,18 @@ impl Render for ResourceListPanel {
                         ),
                 )
             })
+            .when_some(self.notice.clone(), |this, text| {
+                this.child(
+                    div()
+                        .id("list-notice")
+                        .aria_label(text.clone())
+                        .test_support()
+                        .p_2()
+                        .text_sm()
+                        .text_color(theme.warning)
+                        .child(text),
+                )
+            })
             .when(self.view == ListView::Definitions, |this| {
                 this.child(self.render_group_filter(cx))
             })
@@ -359,11 +451,12 @@ impl Render for ResourceListPanel {
 
 type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 
-/// Table delegate over a projected [`ResourceTable`]; the first cell of
-/// each row opens its detail.
+/// Table delegate over a projected [`ResourceTable`]; the first cell opens
+/// details, or every cell for the global Events view.
 pub(crate) struct RowsTable {
     table: ResourceTable,
     open_row: Option<OpenRow>,
+    open_all_cells: bool,
 }
 
 impl RowsTable {
@@ -410,12 +503,17 @@ impl TableDelegate for RowsTable {
     ) -> impl IntoElement {
         let row = self.row(row_ix);
         let cell = row.cells[col_ix].clone();
-        if col_ix == 0
+        if (col_ix == 0 || self.open_all_cells)
             && let Some(open_row) = self.open_row.clone()
         {
             let key = row.key.clone();
+            let id = if col_ix == 0 {
+                format!("row-{key}")
+            } else {
+                format!("event-row-{key}-{col_ix}")
+            };
             return div()
-                .id(SharedString::from(format!("row-{key}")))
+                .id(SharedString::from(id))
                 .aria_label(cell.clone())
                 .test_support()
                 .cursor_pointer()

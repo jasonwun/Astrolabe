@@ -571,14 +571,19 @@ async fn scale_and_rollout_restart_a_deployment() {
     let ns = unique_ns();
     let first = running_nginx(&client, &ns).await;
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &ns);
+    let deployment = ApiResource::erase::<Deployment>(&());
 
-    resource::scale(&client, &ns, "nginx", 2).await.unwrap();
+    resource::scale(&client, &deployment, &ns, "nginx", 2)
+        .await
+        .unwrap();
     let scaled = deployments.get("nginx").await.unwrap();
     assert_eq!(scaled.spec.unwrap().replicas, Some(2));
-    resource::scale(&client, &ns, "nginx", 1).await.unwrap();
+    resource::scale(&client, &deployment, &ns, "nginx", 1)
+        .await
+        .unwrap();
 
     let at: Timestamp = "2026-01-02T03:04:05Z".parse().unwrap();
-    resource::rollout_restart(&client, &ns, "nginx", at)
+    resource::rollout_restart(&client, &deployment, &ns, "nginx", at)
         .await
         .unwrap();
     let restarted = deployments.get("nginx").await.unwrap();

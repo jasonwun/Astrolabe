@@ -8,6 +8,7 @@ gpui-kit = { workspace = true, features = ["tree-sitter-yaml", "test-support"] }
 astrolabe-kube.workspace = true
 astrolabe-terminal.workspace = true
 regex.workspace = true
+cronspeak.workspace = true
 futures.workspace = true
 tokio.workspace = true
 tracing.workspace = true

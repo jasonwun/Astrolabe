@@ -305,6 +305,7 @@ version = "0.0.0"
 dependencies = [
  "astrolabe-kube",
  "astrolabe-terminal",
+ "cronspeak",
  "futures",
  "gpui-kit",
  "regex",
@@ -1303,6 +1304,12 @@ checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "cronspeak"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63659405036abbf4a6dc10d3b947671892a327208fbd0dd6db9391e261cd6310"
 
 [[package]]
 name = "crossbeam-deque"

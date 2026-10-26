@@ -248,11 +248,13 @@ pub struct ObjectRef {
     pub key: ObjectKey,
 }
 
-/// A one-shot change to a Deployment (#17).
+/// A one-shot change to a registered workload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operation {
-    Scale { key: ObjectKey, replicas: i32 },
-    RolloutRestart { key: ObjectKey },
+    Scale { object: ObjectRef, replicas: i32 },
+    RolloutRestart { object: ObjectRef },
+    SetSuspend { object: ObjectRef, suspend: bool },
+    TriggerCronJob { object: ObjectRef },
 }
 
 /// Follow `container`'s log in Pod `pod` (#17).

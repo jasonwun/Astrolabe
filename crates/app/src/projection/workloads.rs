@@ -1,17 +1,20 @@
-//! Built-in workload kinds on the generic pipeline (#17): Pods and
-//! Deployments project to list rows and detail models like any kind.
+//! Built-in workload kinds on the generic pipeline (#17, #19).
+//! P3 projections follow Freelens 14a491f, `workloads-*` components.
 
 use std::collections::BTreeMap;
 
-use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
-use astrolabe_kube::k8s_openapi::api::core::v1::{Container, ContainerState, ContainerStatus, Pod};
+use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
+use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job, JobSpec};
+use astrolabe_kube::k8s_openapi::api::core::v1::{
+    Container, ContainerState, ContainerStatus, Pod, PodTemplateSpec,
+};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::{
-    DetailModel, ReplicaCounts, ResourceRow, ResourceTable, SummaryTable, age_of, detail,
-    format_age,
+    DetailField, DetailItem, DetailModel, DetailSection, ReplicaCounts, ResourceRow, ResourceTable,
+    SummaryTable, age_of, detail, format_age,
 };
 use crate::store::ObjectKey;
 
@@ -472,4 +475,676 @@ pub fn selector_text(selector: &LabelSelector) -> String {
         }
     });
     labels.chain(expressions).collect::<Vec<_>>().join(",")
+}
+
+/// Name / Ready / Desired / Age (Freelens 14a491f, workloads-statefulsets).
+pub fn project_statefulsets(statefulsets: &[&StatefulSet], now: Timestamp) -> ResourceTable {
+    let rows = statefulsets
+        .iter()
+        .map(|statefulset| ResourceRow {
+            key: ObjectKey::of(*statefulset),
+            cells: vec![
+                statefulset.metadata.name.clone().unwrap_or_default(),
+                statefulset
+                    .status
+                    .as_ref()
+                    .and_then(|status| status.ready_replicas)
+                    .unwrap_or_default()
+                    .to_string(),
+                statefulset
+                    .spec
+                    .as_ref()
+                    .and_then(|spec| spec.replicas)
+                    .unwrap_or_default()
+                    .to_string(),
+                age_of(&statefulset.metadata, now),
+            ],
+        })
+        .collect();
+    ResourceTable {
+        columns: ["Name", "Ready", "Desired", "Age"]
+            .map(String::from)
+            .to_vec(),
+        rows,
+    }
+}
+
+pub fn statefulset_detail(statefulset: &StatefulSet, now: Timestamp) -> DetailModel {
+    let spec = statefulset.spec.clone().unwrap_or_default();
+    let template = spec.template.spec.clone().unwrap_or_default();
+    let mut summary = Vec::new();
+    let selector = selector_text(&spec.selector);
+    if !selector.is_empty() {
+        summary.push(("Selector".to_string(), selector));
+    }
+    push_template_fields(
+        &mut summary,
+        &template.node_selector,
+        template
+            .containers
+            .iter()
+            .map(|container| container.image.clone().unwrap_or_default())
+            .collect(),
+        &template,
+    );
+    let status = statefulset.status.clone().unwrap_or_default();
+    let value = serde_json::to_value(statefulset).unwrap_or_default();
+    let mut model = detail("StatefulSet", statefulset, &value, summary, now);
+    model.replicas = Some(ReplicaCounts {
+        desired: spec.replicas.unwrap_or_default(),
+        updated: status.updated_replicas.unwrap_or_default(),
+        available: status.available_replicas.unwrap_or_default(),
+        unavailable: status.replicas - status.available_replicas.unwrap_or_default(),
+    });
+    model
+}
+
+fn push_template_fields(
+    summary: &mut Vec<(String, String)>,
+    node_selector: &Option<BTreeMap<String, String>>,
+    images: Vec<String>,
+    spec: &astrolabe_kube::k8s_openapi::api::core::v1::PodSpec,
+) {
+    push_node_selector(summary, node_selector);
+    if !images.is_empty() {
+        summary.push(("Images".to_string(), images.join(",")));
+    }
+    push_pod_policies(summary, spec);
+}
+
+fn push_node_selector(
+    summary: &mut Vec<(String, String)>,
+    node_selector: &Option<BTreeMap<String, String>>,
+) {
+    let nodes = node_selector
+        .iter()
+        .flatten()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    if !nodes.is_empty() {
+        summary.push(("Node Selector".to_string(), nodes));
+    }
+}
+
+fn push_pod_policies(
+    summary: &mut Vec<(String, String)>,
+    spec: &astrolabe_kube::k8s_openapi::api::core::v1::PodSpec,
+) {
+    let tolerations = spec
+        .tolerations
+        .iter()
+        .flatten()
+        .map(|toleration| {
+            let mut text = toleration.key.clone().unwrap_or_default();
+            if toleration.operator.as_deref() == Some("Equal") {
+                text.push('=');
+                text.push_str(toleration.value.as_deref().unwrap_or_default());
+            }
+            if let Some(effect) = &toleration.effect {
+                text.push(':');
+                text.push_str(effect);
+            }
+            if let Some(seconds) = toleration.toleration_seconds {
+                text.push_str(&format!(" for {seconds}s"));
+            }
+            text
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    if !tolerations.is_empty() {
+        summary.push(("Tolerations".to_string(), tolerations));
+    }
+    let affinities = spec.affinity.as_ref().map_or(0, |affinity| {
+        [
+            affinity.node_affinity.is_some(),
+            affinity.pod_affinity.is_some(),
+            affinity.pod_anti_affinity.is_some(),
+        ]
+        .into_iter()
+        .filter(|present| *present)
+        .count()
+    });
+    if affinities != 0 {
+        summary.push(("Affinities".to_string(), affinities.to_string()));
+    }
+}
+
+pub fn project_replicasets(replicasets: &[&ReplicaSet], now: Timestamp) -> ResourceTable {
+    let rows = replicasets
+        .iter()
+        .map(|replicaset| {
+            let status = replicaset.status.as_ref();
+            ResourceRow {
+                key: ObjectKey::of(*replicaset),
+                cells: vec![
+                    replicaset.metadata.name.clone().unwrap_or_default(),
+                    replicaset
+                        .spec
+                        .as_ref()
+                        .and_then(|spec| spec.replicas)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .and_then(|status| status.available_replicas)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .and_then(|status| status.ready_replicas)
+                        .unwrap_or_default()
+                        .to_string(),
+                    age_of(&replicaset.metadata, now),
+                ],
+            }
+        })
+        .collect();
+    ResourceTable {
+        columns: ["Name", "Desired", "Current", "Ready", "Age"]
+            .map(String::from)
+            .to_vec(),
+        rows,
+    }
+}
+
+pub fn replicaset_detail(replicaset: &ReplicaSet, now: Timestamp) -> DetailModel {
+    let spec = replicaset.spec.clone().unwrap_or_default();
+    let mut summary = vec![("Selector".to_string(), selector_text(&spec.selector))];
+    push_pod_template_fields(&mut summary, spec.template.as_ref(), false);
+    let status = replicaset.status.clone().unwrap_or_default();
+    summary.push((
+        "Replicas".to_string(),
+        format!(
+            "{} current / {} desired",
+            status.available_replicas.unwrap_or_default(),
+            status.replicas
+        ),
+    ));
+    let value = serde_json::to_value(replicaset).unwrap_or_default();
+    let mut model = detail("ReplicaSet", replicaset, &value, summary, now);
+    model.replicas = Some(ReplicaCounts {
+        desired: spec.replicas.unwrap_or_default(),
+        updated: status.fully_labeled_replicas.unwrap_or_default(),
+        available: status.available_replicas.unwrap_or_default(),
+        unavailable: status.replicas - status.available_replicas.unwrap_or_default(),
+    });
+    model
+}
+
+pub fn project_daemonsets(daemonsets: &[&DaemonSet], now: Timestamp) -> ResourceTable {
+    let rows = daemonsets
+        .iter()
+        .map(|daemonset| {
+            let status = daemonset.status.as_ref();
+            let template = daemonset.spec.as_ref().map(|spec| &spec.template);
+            ResourceRow {
+                key: ObjectKey::of(*daemonset),
+                cells: vec![
+                    daemonset.metadata.name.clone().unwrap_or_default(),
+                    status
+                        .map(|status| status.desired_number_scheduled)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .map(|status| status.current_number_scheduled)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .map(|status| status.number_ready)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .and_then(|status| status.updated_number_scheduled)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .and_then(|status| status.number_available)
+                        .unwrap_or_default()
+                        .to_string(),
+                    node_selectors(template),
+                    age_of(&daemonset.metadata, now),
+                ],
+            }
+        })
+        .collect();
+    ResourceTable {
+        columns: [
+            "Name",
+            "Desired",
+            "Current",
+            "Ready",
+            "Updated",
+            "Available",
+            "Node Selector",
+            "Age",
+        ]
+        .map(String::from)
+        .to_vec(),
+        rows,
+    }
+}
+
+pub fn daemonset_detail(daemonset: &DaemonSet, now: Timestamp) -> DetailModel {
+    let spec = daemonset.spec.clone().unwrap_or_default();
+    let mut summary = vec![("Selector".to_string(), selector_text(&spec.selector))];
+    push_pod_template_fields(&mut summary, Some(&spec.template), true);
+    if let Some(strategy) = spec.update_strategy.and_then(|strategy| strategy.type_) {
+        summary.push(("Strategy Type".to_string(), strategy));
+    }
+    let status = daemonset.status.clone().unwrap_or_default();
+    let value = serde_json::to_value(daemonset).unwrap_or_default();
+    let mut model = detail("DaemonSet", daemonset, &value, summary, now);
+    model.replicas = Some(ReplicaCounts {
+        desired: status.desired_number_scheduled,
+        updated: status.updated_number_scheduled.unwrap_or_default(),
+        available: status.number_available.unwrap_or_default(),
+        unavailable: status.number_unavailable.unwrap_or_default(),
+    });
+    model
+}
+
+fn node_selectors(template: Option<&PodTemplateSpec>) -> String {
+    template
+        .and_then(|template| template.spec.as_ref())
+        .and_then(|spec| spec.node_selector.as_ref())
+        .into_iter()
+        .flatten()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn push_pod_template_fields(
+    summary: &mut Vec<(String, String)>,
+    template: Option<&PodTemplateSpec>,
+    include_init: bool,
+) {
+    let Some(spec) = template.and_then(|template| template.spec.as_ref()) else {
+        return;
+    };
+    let images = spec
+        .containers
+        .iter()
+        .chain(
+            spec.init_containers
+                .iter()
+                .flatten()
+                .filter(move |_| include_init),
+        )
+        .map(|container| container.image.clone().unwrap_or_default())
+        .collect();
+    push_template_fields(summary, &spec.node_selector, images, spec);
+}
+
+pub fn project_jobs(jobs: &[&Job], now: Timestamp) -> ResourceTable {
+    let rows = jobs
+        .iter()
+        .map(|job| {
+            let spec = job.spec.as_ref();
+            let status = job.status.as_ref();
+            ResourceRow {
+                key: ObjectKey::of(*job),
+                cells: vec![
+                    job.metadata.name.clone().unwrap_or_default(),
+                    (!spec.and_then(|spec| spec.suspend).unwrap_or(false)).to_string(),
+                    job_status(job).to_string(),
+                    status
+                        .and_then(|status| status.succeeded)
+                        .unwrap_or_default()
+                        .to_string(),
+                    spec.and_then(|spec| spec.completions)
+                        .unwrap_or_default()
+                        .to_string(),
+                    spec.and_then(|spec| spec.parallelism)
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                    job_duration(job, now),
+                    age_of(&job.metadata, now),
+                ],
+            }
+        })
+        .collect();
+    ResourceTable {
+        columns: [
+            "Name",
+            "Resumed",
+            "Status",
+            "Succeeded",
+            "Completions",
+            "Parallelism",
+            "Duration",
+            "Age",
+        ]
+        .map(String::from)
+        .to_vec(),
+        rows,
+    }
+}
+
+fn job_status(job: &Job) -> &'static str {
+    let Some(status) = &job.status else {
+        return "Unknown";
+    };
+    let Some(conditions) = status
+        .conditions
+        .as_ref()
+        .filter(|conditions| !conditions.is_empty())
+    else {
+        return "Unknown";
+    };
+    let has = |kind| conditions.iter().any(|condition| condition.type_ == kind);
+    if has("Complete") {
+        "Complete"
+    } else if has("Failed") {
+        "Failed"
+    } else if job.metadata.deletion_timestamp.is_some() {
+        if job
+            .metadata
+            .finalizers
+            .as_ref()
+            .is_some_and(|items| !items.is_empty())
+        {
+            "Finalizing"
+        } else {
+            "Terminating"
+        }
+    } else if has("Suspended") {
+        "Suspended"
+    } else if has("FailureTarget") {
+        "FailureTarget"
+    } else {
+        "Running"
+    }
+}
+
+fn job_duration(job: &Job, now: Timestamp) -> String {
+    let Some(start) = job
+        .status
+        .as_ref()
+        .and_then(|status| status.start_time.as_ref())
+    else {
+        return "0s".to_string();
+    };
+    let end = job
+        .status
+        .as_ref()
+        .and_then(|status| status.completion_time.as_ref())
+        .map(|time| time.0)
+        .unwrap_or(now);
+    format_age(start.0, end)
+}
+
+pub fn job_detail(job: &Job, now: Timestamp) -> DetailModel {
+    let spec = job.spec.clone().unwrap_or_default();
+    let status = job.status.clone().unwrap_or_default();
+    let mut summary = Vec::new();
+    if let Some(selector) = spec.selector.as_ref() {
+        let selector = selector_text(selector);
+        if !selector.is_empty() {
+            summary.push(("Selector".to_string(), selector));
+        }
+    }
+    if let Some(template) = &spec.template.spec {
+        push_node_selector(&mut summary, &template.node_selector);
+    }
+    summary.push(("Status".to_string(), job_status(job).to_string()));
+    summary.extend(job_spec_fields(&spec));
+    if let Some(start) = &status.start_time {
+        summary.push(("Start Time".to_string(), timestamp(start.0, now)));
+    }
+    if let Some(completed) = &status.completion_time {
+        summary.push(("Completed At".to_string(), timestamp(completed.0, now)));
+    }
+    if status.start_time.is_some() && status.completion_time.is_some() {
+        summary.push(("Duration".to_string(), job_duration(job, now)));
+    }
+    summary.extend(active_deadline_field(&spec));
+    let active = status.active.unwrap_or_default();
+    let active = match status.ready {
+        Some(ready) => format!("{active} Active ({ready} Ready)"),
+        None => format!("{active} Active"),
+    };
+    summary.push((
+        "Pods Statuses".to_string(),
+        format!(
+            "{} / {} Succeeded / {} Failed",
+            active,
+            status.succeeded.unwrap_or_default(),
+            status.failed.unwrap_or_default()
+        ),
+    ));
+    if let Some(indexes) = status.completed_indexes {
+        summary.push(("Completed Indexes".to_string(), indexes));
+    }
+    if let Some(template) = &spec.template.spec {
+        push_pod_policies(&mut summary, template);
+    }
+    let value = serde_json::to_value(job).unwrap_or_default();
+    detail("Job", job, &value, summary, now)
+}
+
+pub fn project_cronjobs(cronjobs: &[&CronJob], now: Timestamp) -> ResourceTable {
+    let rows = cronjobs
+        .iter()
+        .map(|cronjob| {
+            let spec = &cronjob.spec;
+            let status = cronjob.status.as_ref();
+            ResourceRow {
+                key: ObjectKey::of(*cronjob),
+                cells: vec![
+                    cronjob.metadata.name.clone().unwrap_or_default(),
+                    cronjob_schedule(cronjob),
+                    spec.time_zone.clone().unwrap_or_default(),
+                    (!spec.suspend.unwrap_or(false)).to_string(),
+                    status
+                        .and_then(|status| status.active.as_ref())
+                        .map(|jobs| jobs.len())
+                        .unwrap_or_default()
+                        .to_string(),
+                    status
+                        .and_then(|status| status.last_schedule_time.as_ref())
+                        .map(|time| format_age(time.0, now))
+                        .unwrap_or_else(|| "-".to_string()),
+                    age_of(&cronjob.metadata, now),
+                ],
+            }
+        })
+        .collect();
+    ResourceTable {
+        columns: [
+            "Name",
+            "Schedule",
+            "Timezone",
+            "Resumed",
+            "Active",
+            "Last schedule",
+            "Age",
+        ]
+        .map(String::from)
+        .to_vec(),
+        rows,
+    }
+}
+
+fn cronjob_schedule(cronjob: &CronJob) -> String {
+    if cronjob_never_run(cronjob) {
+        "never".to_string()
+    } else {
+        cronjob.spec.schedule.clone()
+    }
+}
+
+fn cronjob_never_run(cronjob: &CronJob) -> bool {
+    let spec = &cronjob.spec;
+    let parts = spec.schedule.split(' ').collect::<Vec<_>>();
+    !spec.schedule.starts_with('@')
+        && parts.len() == 5
+        && match (parts[2].parse::<usize>(), parts[3].parse::<usize>()) {
+            (Ok(day), Ok(month)) if (1..=12).contains(&month) => {
+                day > [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+            }
+            _ => false,
+        }
+}
+
+fn cronjob_schedule_description(cronjob: &CronJob) -> String {
+    let schedule = cronjob
+        .spec
+        .schedule
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let description = cronspeak::describe(&schedule)
+        .unwrap_or_else(|_| "Unrecognized cron expression syntax".to_string());
+    let never = if cronjob_never_run(cronjob) {
+        ", never ran"
+    } else {
+        ""
+    };
+    format!("{schedule} ({description}{never})")
+}
+
+pub fn cronjob_detail(cronjob: &CronJob, now: Timestamp) -> DetailModel {
+    let spec = cronjob.spec.clone();
+    let status = cronjob.status.clone().unwrap_or_default();
+    let mut summary = vec![
+        (
+            "Schedule".to_string(),
+            cronjob_schedule_description(cronjob),
+        ),
+        (
+            "Timezone".to_string(),
+            spec.time_zone.clone().unwrap_or_default(),
+        ),
+    ];
+    if spec
+        .starting_deadline_seconds
+        .is_some_and(|seconds| seconds != 0)
+    {
+        summary.push((
+            "Starting Deadline Seconds".to_string(),
+            human_seconds(spec.starting_deadline_seconds.unwrap_or_default()),
+        ));
+    }
+    if let Some(policy) = spec.concurrency_policy {
+        summary.push(("Concurrency Policy".to_string(), policy));
+    }
+    summary.push((
+        "Resumed".to_string(),
+        (!spec.suspend.unwrap_or(false)).to_string(),
+    ));
+    if spec
+        .successful_jobs_history_limit
+        .is_some_and(|limit| limit != 0)
+    {
+        summary.push((
+            "Successful Jobs History Limit".to_string(),
+            spec.successful_jobs_history_limit
+                .unwrap_or_default()
+                .to_string(),
+        ));
+    }
+    if spec
+        .failed_jobs_history_limit
+        .is_some_and(|limit| limit != 0)
+    {
+        summary.push((
+            "Failed Jobs History Limit".to_string(),
+            spec.failed_jobs_history_limit
+                .unwrap_or_default()
+                .to_string(),
+        ));
+    }
+    if let Some(last) = status.last_schedule_time {
+        summary.push(("Last Schedule".to_string(), timestamp(last.0, now)));
+    }
+    if let Some(last) = status.last_successful_time {
+        summary.push(("Last Successful Run".to_string(), timestamp(last.0, now)));
+    }
+    summary.push((
+        "Active".to_string(),
+        status
+            .active
+            .map(|jobs| jobs.len())
+            .unwrap_or_default()
+            .to_string(),
+    ));
+    let value = serde_json::to_value(cronjob).unwrap_or_default();
+    let mut model = detail("CronJob", cronjob, &value, summary, now);
+    if let Some(template) = &spec.job_template.spec {
+        model.sections.push(DetailSection {
+            title: "Template".to_string(),
+            items: job_template_fields(template)
+                .into_iter()
+                .map(DetailItem::Field)
+                .collect(),
+        });
+    }
+    model
+}
+
+fn job_template_fields(spec: &JobSpec) -> Vec<DetailField> {
+    job_spec_fields(spec)
+        .into_iter()
+        .chain(active_deadline_field(spec))
+        .map(|(label, value)| DetailField::from((label.as_str(), value.as_str())))
+        .collect()
+}
+
+fn job_spec_fields(spec: &JobSpec) -> Vec<(String, String)> {
+    let mut fields = vec![
+        (
+            "Parallelism".to_string(),
+            spec.parallelism
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "Completions".to_string(),
+            spec.completions.unwrap_or_default().to_string(),
+        ),
+    ];
+    if let Some(mode) = &spec.completion_mode {
+        fields.push(("Completion Mode".to_string(), mode.clone()));
+    }
+    fields.push((
+        "Resumed".to_string(),
+        (!spec.suspend.unwrap_or(false)).to_string(),
+    ));
+    if let Some(limit) = spec.backoff_limit {
+        fields.push(("Backoff Limit".to_string(), limit.to_string()));
+    }
+    if let Some(seconds) = spec.ttl_seconds_after_finished {
+        fields.push((
+            "TTL Seconds After Finished".to_string(),
+            human_seconds(i64::from(seconds)),
+        ));
+    }
+    fields
+}
+
+fn active_deadline_field(spec: &JobSpec) -> Option<(String, String)> {
+    spec.active_deadline_seconds
+        .filter(|seconds| *seconds != 0)
+        .map(|seconds| {
+            (
+                "Active Deadline Seconds".to_string(),
+                human_seconds(seconds),
+            )
+        })
+}
+
+fn timestamp(time: Timestamp, now: Timestamp) -> String {
+    format!("{time} ({} ago)", format_age(time, now))
+}
+
+fn human_seconds(seconds: i64) -> String {
+    if seconds == 0 {
+        "0s".to_string()
+    } else if seconds % 3600 == 0 {
+        format!("{}h", seconds / 3600)
+    } else if seconds % 60 == 0 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
 }
