@@ -125,28 +125,30 @@ impl BuiltinKind {
         }
     }
 
+    pub const ALL: [Self; 12] = [
+        Self::Pods,
+        Self::Deployments,
+        Self::StatefulSets,
+        Self::ReplicaSets,
+        Self::DaemonSets,
+        Self::Jobs,
+        Self::CronJobs,
+        Self::Events,
+        Self::Services,
+        Self::Ingresses,
+        Self::ConfigMaps,
+        Self::Secrets,
+    ];
+
     /// The singular kind, as titles name it.
     pub fn kind(self) -> String {
         (self.registration().resource)().kind
     }
 
     pub fn from_kind(kind: &str) -> Option<Self> {
-        [
-            Self::Pods,
-            Self::Deployments,
-            Self::StatefulSets,
-            Self::ReplicaSets,
-            Self::DaemonSets,
-            Self::Jobs,
-            Self::CronJobs,
-            Self::Events,
-            Self::Services,
-            Self::Ingresses,
-            Self::ConfigMaps,
-            Self::Secrets,
-        ]
-        .into_iter()
-        .find(|candidate| candidate.kind() == kind)
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.kind() == kind)
     }
 }
 

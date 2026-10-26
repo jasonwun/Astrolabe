@@ -79,9 +79,13 @@ git worktree remove ../cov-base
 kill or justify every missed mutant:
 
 ```sh
-cargo mutants -p astrolabe-kube -j 4        # full run, ~90s
-cargo mutants -p astrolabe-kube -f <file>   # scoped to one file
+dev/mutants.sh -p astrolabe-kube -j 4                       # full run, ~90s
+dev/mutants.sh -p astrolabe-kube -f crates/kube/src/resource.rs -j 4
 ```
+
+Use repository-relative paths with `-f`. `Found 0 mutants to test` means the
+filter missed its target, not that the bar passed; the wrapper turns that
+result into a failure.
 
 A `TIMEOUT` fails the run too (cargo-mutants 27.1 exits `Timeout` ahead of
 `FoundProblems`): a mutant that silences a callback leaves an unbounded

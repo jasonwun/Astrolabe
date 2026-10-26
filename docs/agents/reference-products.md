@@ -25,16 +25,36 @@ before any column or field is written:
 
 ## Fetching
 
-Pin a commit, then fetch raw files into the scratchpad:
+Pin a commit, then fetch raw files into the ignored scratch directory. Read
+or search the saved files for the functions you need instead of printing
+whole components into the conversation:
 
 ```sh
 SHA=$(gh api repos/freelensapp/freelens/commits/main --jq .sha)
-curl -sfL "https://raw.githubusercontent.com/freelensapp/freelens/$SHA/packages/core/src/renderer/components/network-services/services.tsx"
+DEST=.scratch/freelens/$SHA
+mkdir -p "$DEST"
+curl -sfL "https://raw.githubusercontent.com/freelensapp/freelens/$SHA/packages/core/src/renderer/components/network-services/services.tsx" \
+  -o "$DEST/services.tsx"
 ```
 
 Cite the pinned commit in the module doc of the projection that follows
 it (`Freelens 088d085, network-services/`), so a later reader can diff
 against what was copied.
+
+## Field inventory
+
+Before writing a projection, list every upstream column and detail field in
+render order. For each one record the source field, presence condition,
+derived-value function, and how missing values, empty strings, empty
+collections and collections containing an empty item render. Map each entry
+to a projection or UI assertion. This makes omitted fields and order changes
+visible before implementation.
+
+Inspect suspicious upstream control flow instead of copying it blindly. A
+presence predicate that hides a populated field, a constant that should be a
+count, or an order contradicted by the source values needs an explicit
+semantic check against the Kubernetes fields and, when it changes the agreed
+contract, the deviation question below.
 
 ## Typed projections
 
