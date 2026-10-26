@@ -4,10 +4,12 @@ mod support;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{
-    ExecInput, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, Operation,
+    ExecInput, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, ObjectRef, Operation,
 };
 use astrolabe::store::ObjectKey;
+use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_kube::kube::discovery::ApiResource;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
@@ -253,18 +255,22 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
     ui.settle();
     ui.frame(|window, _| assert!(window.try_find_by_label("Restart requested").is_some()));
 
+    let object = || ObjectRef {
+        resource: ApiResource::erase::<Deployment>(&()),
+        key: web.clone(),
+    };
     assert_eq!(
         *ui.operated.borrow(),
         [
             Operation::Scale {
-                key: web.clone(),
+                object: object(),
                 replicas: 5
             },
             Operation::Scale {
-                key: web.clone(),
+                object: object(),
                 replicas: 0
             },
-            Operation::RolloutRestart { key: web },
+            Operation::RolloutRestart { object: object() },
         ]
     );
 }
@@ -383,11 +389,16 @@ fn a_pod_detail_lists_its_events(cx: &mut TestAppContext) {
                 .try_find_by_label("Event default/web-1.backoff")
                 .is_some()
         );
+        assert!(window.try_find("detail-metadata").is_some());
+        assert!(window.try_find("detail-status").is_some());
+        assert!(window.try_find("detail-yaml").is_some());
+        assert!(window.try_find("detail-edit").is_none());
+        assert!(window.try_find("detail-delete").is_none());
         assert!(
             window
                 .within("detail-status")
                 .try_find_by_label("Involved object: pod/web-1")
-                .is_some()
+                .is_none()
         );
     });
 }

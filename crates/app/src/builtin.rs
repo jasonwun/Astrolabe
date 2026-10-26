@@ -1,9 +1,10 @@
-//! Built-in kind views (#17, #18): each kind registers its list columns, its
+//! Built-in kind views (#17-#19): each kind registers its list columns, its
 //! status summary and its actions on the generic list/detail pipeline
 //! (#11/#16) instead of shipping a hand-written view, plus an optional
 //! related section listing another kind's objects tied to this one.
 
-use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
+use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
+use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Event, Pod, Secret, Service};
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -20,7 +21,9 @@ use crate::projection::network::{
     ingress_detail, project_ingresses, project_services, service_detail_with_raw,
 };
 use crate::projection::workloads::{
-    deployment_detail, pod_detail, project_deployments, project_pods, selector_matches,
+    cronjob_detail, daemonset_detail, deployment_detail, job_detail, pod_detail, project_cronjobs,
+    project_daemonsets, project_deployments, project_jobs, project_pods, project_replicasets,
+    project_statefulsets, replicaset_detail, selector_matches, statefulset_detail,
 };
 use crate::projection::{DetailModel, ResourceTable};
 
@@ -30,7 +33,11 @@ use crate::projection::{DetailModel, ResourceTable};
 pub enum BuiltinKind {
     Pods,
     Deployments,
-    /// Not in navigation yet: shown as Pods' related section.
+    StatefulSets,
+    ReplicaSets,
+    DaemonSets,
+    Jobs,
+    CronJobs,
     Events,
     Services,
     Ingresses,
@@ -48,9 +55,11 @@ pub enum Action {
     /// Forward a localhost port to one of the Pod's declared ports, or to
     /// one of the Service's ports.
     PortForward,
-    /// Set a Deployment's desired replicas.
+    /// Set a workload's desired replicas.
     Scale,
     RolloutRestart,
+    Suspend,
+    Trigger,
     Edit,
     Delete,
 }
@@ -81,16 +90,33 @@ pub struct Related {
 
 impl BuiltinKind {
     /// Navigation sections, in order, each with its kinds in order.
-    pub const NAVIGATION: [(&'static str, &'static [BuiltinKind]); 3] = [
-        ("Workloads", &[BuiltinKind::Pods, BuiltinKind::Deployments]),
+    pub const NAVIGATION: [(&'static str, &'static [BuiltinKind]); 4] = [
+        (
+            "Workloads",
+            &[
+                BuiltinKind::Pods,
+                BuiltinKind::Deployments,
+                BuiltinKind::StatefulSets,
+                BuiltinKind::DaemonSets,
+                BuiltinKind::ReplicaSets,
+                BuiltinKind::Jobs,
+                BuiltinKind::CronJobs,
+            ],
+        ),
         ("Network", &[BuiltinKind::Services, BuiltinKind::Ingresses]),
         ("Config", &[BuiltinKind::ConfigMaps, BuiltinKind::Secrets]),
+        ("Events", &[BuiltinKind::Events]),
     ];
 
     pub fn registration(self) -> &'static Registration {
         match self {
             BuiltinKind::Pods => &PODS,
             BuiltinKind::Deployments => &DEPLOYMENTS,
+            BuiltinKind::StatefulSets => &STATEFULSETS,
+            BuiltinKind::ReplicaSets => &REPLICASETS,
+            BuiltinKind::DaemonSets => &DAEMONSETS,
+            BuiltinKind::Jobs => &JOBS,
+            BuiltinKind::CronJobs => &CRONJOBS,
             BuiltinKind::Events => &EVENTS,
             BuiltinKind::Services => &SERVICES,
             BuiltinKind::Ingresses => &INGRESSES,
@@ -102,6 +128,25 @@ impl BuiltinKind {
     /// The singular kind, as titles name it.
     pub fn kind(self) -> String {
         (self.registration().resource)().kind
+    }
+
+    pub fn from_kind(kind: &str) -> Option<Self> {
+        [
+            Self::Pods,
+            Self::Deployments,
+            Self::StatefulSets,
+            Self::ReplicaSets,
+            Self::DaemonSets,
+            Self::Jobs,
+            Self::CronJobs,
+            Self::Events,
+            Self::Services,
+            Self::Ingresses,
+            Self::ConfigMaps,
+            Self::Secrets,
+        ]
+        .into_iter()
+        .find(|candidate| candidate.kind() == kind)
     }
 }
 
@@ -144,12 +189,87 @@ static DEPLOYMENTS: Registration = Registration {
     }),
 };
 
+static STATEFULSETS: Registration = Registration {
+    label: "StatefulSets",
+    resource: || ApiResource::erase::<StatefulSet>(&()),
+    list: |objects, now| typed_list(objects, now, project_statefulsets),
+    detail: |object, now| Some(statefulset_detail(&parse::<StatefulSet>(object)?, now)),
+    actions: &[
+        Action::Scale,
+        Action::RolloutRestart,
+        Action::Edit,
+        Action::Delete,
+    ],
+    cascade: |_| "Its Pods will be deleted too.",
+    related: Some(Related {
+        title: "Pods",
+        kind: BuiltinKind::Pods,
+        select: |object, pods| owned_by(object, pods, "StatefulSet"),
+    }),
+};
+
+static REPLICASETS: Registration = Registration {
+    label: "ReplicaSets",
+    resource: || ApiResource::erase::<ReplicaSet>(&()),
+    list: |objects, now| typed_list(objects, now, project_replicasets),
+    detail: |object, now| Some(replicaset_detail(&parse::<ReplicaSet>(object)?, now)),
+    actions: &[Action::Scale, Action::Edit, Action::Delete],
+    cascade: |_| "Its Pods will be deleted too.",
+    related: Some(Related {
+        title: "Pods",
+        kind: BuiltinKind::Pods,
+        select: |object, pods| owned_by(object, pods, "ReplicaSet"),
+    }),
+};
+
+static DAEMONSETS: Registration = Registration {
+    label: "DaemonSets",
+    resource: || ApiResource::erase::<DaemonSet>(&()),
+    list: |objects, now| typed_list(objects, now, project_daemonsets),
+    detail: |object, now| Some(daemonset_detail(&parse::<DaemonSet>(object)?, now)),
+    actions: &[Action::RolloutRestart, Action::Edit, Action::Delete],
+    cascade: |_| "Its Pods will be deleted too.",
+    related: Some(Related {
+        title: "Pods",
+        kind: BuiltinKind::Pods,
+        select: |object, pods| owned_by(object, pods, "DaemonSet"),
+    }),
+};
+
+static JOBS: Registration = Registration {
+    label: "Jobs",
+    resource: || ApiResource::erase::<Job>(&()),
+    list: |objects, now| typed_list(objects, now, project_jobs),
+    detail: |object, now| Some(job_detail(&parse::<Job>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: |_| "Its Pods will be deleted too.",
+    related: Some(Related {
+        title: "Pods",
+        kind: BuiltinKind::Pods,
+        select: |object, pods| owned_by(object, pods, "Job"),
+    }),
+};
+
+static CRONJOBS: Registration = Registration {
+    label: "CronJobs",
+    resource: || ApiResource::erase::<CronJob>(&()),
+    list: |objects, now| typed_list(objects, now, project_cronjobs),
+    detail: |object, now| Some(cronjob_detail(&parse::<CronJob>(object)?, now)),
+    actions: &[Action::Suspend, Action::Trigger, Action::Delete],
+    cascade: |_| "Its Jobs and their Pods will be deleted too.",
+    related: Some(Related {
+        title: "Jobs",
+        kind: BuiltinKind::Jobs,
+        select: |object, jobs| owned_by(object, jobs, "CronJob"),
+    }),
+};
+
 static EVENTS: Registration = Registration {
     label: "Events",
     resource: || ApiResource::erase::<Event>(&()),
     list: |objects, now| typed_list(objects, now, project_events),
     detail: |object, now| Some(event_detail(&parse::<Event>(object)?, now)),
-    actions: DEFAULT_ACTIONS,
+    actions: &[],
     cascade: |_| "Nothing else is deleted.",
     related: None,
 };
@@ -256,6 +376,33 @@ fn deployment_pods<'a>(
     pods.iter()
         .copied()
         .filter(|pod| selector_matches(&selector, pod.metadata.labels.as_ref()))
+        .collect()
+}
+
+fn owned_by<'a>(
+    owner: &DynamicObject,
+    objects: &[&'a DynamicObject],
+    kind: &str,
+) -> Vec<&'a DynamicObject> {
+    objects
+        .iter()
+        .copied()
+        .filter(|object| {
+            object
+                .metadata
+                .owner_references
+                .iter()
+                .flatten()
+                .any(|reference| {
+                    reference.kind == kind
+                        && Some(&reference.name) == owner.metadata.name.as_ref()
+                        && owner
+                            .metadata
+                            .uid
+                            .as_ref()
+                            .is_none_or(|uid| &reference.uid == uid)
+                })
+        })
         .collect()
 }
 

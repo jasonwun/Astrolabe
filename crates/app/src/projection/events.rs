@@ -1,6 +1,6 @@
-//! The Events list component (#17): kubectl's event columns, newest first.
+//! The Events list component (#17, #19): kubectl's event columns, newest first.
 //! A related section reuses it pre-filtered by involvedObject; the global
-//! Events view (P3) will reuse it unfiltered.
+//! Events view reuses it unfiltered. Events use generic three-section details.
 
 use astrolabe_kube::k8s_openapi::api::core::v1::Event;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -42,31 +42,8 @@ pub fn project_events(events: &[&Event], now: Timestamp) -> ResourceTable {
 }
 
 pub fn event_detail(event: &Event, now: Timestamp) -> DetailModel {
-    let text = |value: &Option<String>| value.clone().unwrap_or_default();
-    let mut summary = vec![
-        ("Type".to_string(), text(&event.type_)),
-        ("Reason".to_string(), text(&event.reason)),
-        ("Involved object".to_string(), target(event)),
-        ("Message".to_string(), message(event)),
-        ("Count".to_string(), count(event).to_string()),
-        ("First seen".to_string(), since(first_seen(event), now)),
-        ("Last seen".to_string(), since(last_seen(event), now)),
-    ];
-    let source = event
-        .reporting_component
-        .clone()
-        .filter(|component| !component.is_empty())
-        .or_else(|| {
-            event
-                .source
-                .as_ref()
-                .and_then(|source| source.component.clone())
-        });
-    if let Some(source) = source {
-        summary.push(("Source".to_string(), source));
-    }
     let value = serde_json::to_value(event).unwrap_or_default();
-    detail("Event", event, &value, summary, now)
+    detail("Event", event, &value, Vec::new(), now)
 }
 
 /// Whether `event` is about the object of `kind` with `meta`: by uid when

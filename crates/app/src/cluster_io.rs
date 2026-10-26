@@ -318,7 +318,7 @@ impl ClusterIo {
         }
     }
 
-    /// Scale or restart a Deployment.
+    /// Run a registered workload operation.
     pub(crate) fn operate(
         &mut self,
         operation: Operation,
@@ -330,21 +330,41 @@ impl ClusterIo {
                 spawn_cluster(async move {
                     let client = client.await?;
                     let result = match &operation {
-                        Operation::Scale { key, replicas } => {
+                        Operation::Scale { object, replicas } => {
                             astrolabe_kube::resource::scale(
                                 &client,
-                                key.namespace.as_deref().unwrap_or_default(),
-                                &key.name,
+                                &object.resource,
+                                object.key.namespace.as_deref().unwrap_or_default(),
+                                &object.key.name,
                                 *replicas,
                             )
                             .await
                         }
-                        Operation::RolloutRestart { key } => {
+                        Operation::RolloutRestart { object } => {
                             astrolabe_kube::resource::rollout_restart(
                                 &client,
-                                key.namespace.as_deref().unwrap_or_default(),
-                                &key.name,
+                                &object.resource,
+                                object.key.namespace.as_deref().unwrap_or_default(),
+                                &object.key.name,
                                 astrolabe_kube::k8s_openapi::jiff::Timestamp::now(),
+                            )
+                            .await
+                        }
+                        Operation::SetSuspend { object, suspend } => {
+                            astrolabe_kube::resource::suspend(
+                                &client,
+                                &object.resource,
+                                object.key.namespace.as_deref().unwrap_or_default(),
+                                &object.key.name,
+                                *suspend,
+                            )
+                            .await
+                        }
+                        Operation::TriggerCronJob { object } => {
+                            astrolabe_kube::resource::trigger_cron_job(
+                                &client,
+                                object.key.namespace.as_deref().unwrap_or_default(),
+                                &object.key.name,
                             )
                             .await
                         }
