@@ -204,3 +204,75 @@ fn a_limit_range_detail_shows_a_section_per_limit_type(cx: &mut TestAppContext) 
         assert!(window.try_find("detail-related").is_none());
     });
 }
+
+/// The right edge of each id's bounds, panicking on one that does not
+/// render.
+fn right(window: &gpui_kit::Window, id: &'static str) -> gpui_kit::Pixels {
+    window
+        .try_find(id)
+        .unwrap_or_else(|| panic!("{id} not rendered"))
+        .bounds()
+        .right()
+}
+
+#[gpui_kit::test]
+fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
+    let (mut hpas, hpa_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(
+            key(BuiltinKind::HorizontalPodAutoscalers, "default"),
+            hpa_events,
+        )],
+    );
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(1300.), gpui_kit::px(800.)));
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-horizontalpodautoscalers", cx));
+    snapshot(
+        &mut hpas,
+        vec![object(serde_json::json!({
+            "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
+            "metadata": {"name": "web", "namespace": "default", "uid": "uid-hpa"},
+            "spec": {
+                "scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "web"},
+                "maxReplicas": 10
+            }
+        }))],
+    );
+    ui.settle();
+
+    ui.frame(|window, _| {
+        let table = window.try_find("list-table").unwrap().bounds();
+        assert!(table.size.width < gpui_kit::px(1280.), "{table:?}");
+        let conditions = window
+            .try_find("column-6")
+            .expect("Conditions header")
+            .bounds();
+        assert!(window.try_find_by_label("Conditions").is_some());
+        assert!(
+            conditions.left() >= table.left(),
+            "{conditions:?} {table:?}"
+        );
+        assert!(
+            conditions.right() <= table.right(),
+            "{conditions:?} {table:?}"
+        );
+        // No gap after the last column: only its cell padding is left.
+        assert!(
+            table.right() - conditions.right() < gpui_kit::px(20.),
+            "{conditions:?} {table:?}"
+        );
+    });
+
+    // Narrower: the columns shrink with the window.
+    let wide = ui.frame(|window, _| right(window, "column-0"));
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(1100.), gpui_kit::px(800.)));
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(right(window, "column-0") < wide);
+        assert!(right(window, "column-6") <= right(window, "list-table"));
+    });
+}

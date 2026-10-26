@@ -35,6 +35,65 @@ pub struct ResourceTable {
     pub rows: Vec<ResourceRow>,
 }
 
+/// The narrowest a list column gets, so short headers (`Age`, `Min Pods`)
+/// stay readable; below the sum of minimums the list scrolls sideways.
+pub const MIN_COLUMN_WIDTH: f32 = 80.;
+
+/// Column weights for a list that declares none: the first (Name) column
+/// weighs 2 and every other column 1.
+pub fn default_column_weights(count: usize) -> Vec<f32> {
+    (0..count).map(|ix| if ix == 0 { 2. } else { 1. }).collect()
+}
+
+/// Whole-pixel widths sharing `available` by `weights`, as Freelens's lists
+/// do. A column whose share falls under [`MIN_COLUMN_WIDTH`] takes the
+/// minimum and the rest share what is left; the last unclamped column takes
+/// the rounding remainder, so the widths fill `available` exactly.
+pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
+    let mut clamped = vec![false; weights.len()];
+    let (free, weight) = loop {
+        let clamped_count = clamped.iter().filter(|clamped| **clamped).count();
+        let free = available - MIN_COLUMN_WIDTH * clamped_count as f32;
+        let weight: f32 = weights
+            .iter()
+            .zip(&clamped)
+            .filter(|(_, clamped)| !**clamped)
+            .map(|(weight, _)| weight)
+            .sum();
+        let mut changed = false;
+        for (column, clamped) in weights.iter().zip(clamped.iter_mut()) {
+            if !*clamped && free * column / weight < MIN_COLUMN_WIDTH {
+                *clamped = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break (free, weight);
+        }
+    };
+    let mut widths: Vec<f32> = weights
+        .iter()
+        .zip(&clamped)
+        .map(|(column, clamped)| {
+            if *clamped {
+                MIN_COLUMN_WIDTH
+            } else {
+                (free * column / weight).floor()
+            }
+        })
+        .collect();
+    if let Some(last) = clamped.iter().rposition(|clamped| !clamped) {
+        let others: f32 = widths
+            .iter()
+            .enumerate()
+            .filter(|(ix, _)| *ix != last)
+            .map(|(_, width)| width)
+            .sum();
+        widths[last] = available - others;
+    }
+    widths
+}
+
 pub fn project_namespaces(namespaces: &[&Namespace]) -> Vec<ResourceRow> {
     namespaces
         .iter()

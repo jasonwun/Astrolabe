@@ -8,6 +8,7 @@ use std::rc::Rc;
 use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::k8s_openapi::api::core::v1::Event;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
@@ -17,7 +18,8 @@ use gpui_kit::*;
 
 use crate::builtin::BuiltinKind;
 use crate::projection::{
-    ResourceRow, ResourceTable, project_custom_resources, project_definitions, project_namespaces,
+    ResourceRow, ResourceTable, column_widths, default_column_weights, project_custom_resources,
+    project_definitions, project_namespaces,
 };
 use crate::resource_detail::DetailTarget;
 use crate::session::{CustomKindId, Session};
@@ -66,6 +68,9 @@ impl ResourceListPanel {
             TableState::new(
                 RowsTable {
                     table: ResourceTable::default(),
+                    weights: Vec::new(),
+                    width: 0.,
+                    widths: Vec::new(),
                     open_row: None,
                     open_all_cells: false,
                 },
@@ -218,6 +223,10 @@ impl ResourceListPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let now = Timestamp::now();
         let session = self.session.read(cx);
+        let weights = match &self.view {
+            ListView::Builtin(kind) => kind.registration().column_weights,
+            _ => None,
+        };
         let (table, state, stale) = match &self.view {
             ListView::Namespaces => (
                 ResourceTable {
@@ -304,8 +313,15 @@ impl ResourceListPanel {
         self.stale = stale;
         let open_all_cells = self.view == ListView::Builtin(BuiltinKind::Events);
         self.table.update(cx, |state, cx| {
-            state.delegate_mut().table = table;
-            state.delegate_mut().open_all_cells = open_all_cells;
+            let weights = weights.map_or_else(
+                || default_column_weights(table.columns.len()),
+                <[f32]>::to_vec,
+            );
+            let rows = state.delegate_mut();
+            rows.table = table;
+            rows.weights = weights;
+            rows.open_all_cells = open_all_cells;
+            rows.fit_columns();
             state.refresh(cx);
         });
         cx.notify();
@@ -441,9 +457,26 @@ impl Render for ResourceListPanel {
                 ),
                 None => this.child(
                     div()
+                        .id("list-table")
                         .flex_1()
                         .min_h_0()
-                        .child(DataTable::new(&self.table).stripe(true)),
+                        .child(DataTable::new(&self.table).stripe(true))
+                        // Refit the columns whenever the panel's width changes.
+                        .on_prepaint({
+                            let table = self.table.clone();
+                            move |bounds, _, cx| {
+                                table.update(cx, |state, cx| {
+                                    let width = f32::from(bounds.size.width);
+                                    if state.delegate().width != width {
+                                        state.delegate_mut().width = width;
+                                        state.delegate_mut().fit_columns();
+                                        state.refresh(cx);
+                                        cx.notify();
+                                    }
+                                })
+                            }
+                        })
+                        .test_support(),
                 ),
             })
     }
@@ -452,9 +485,15 @@ impl Render for ResourceListPanel {
 type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 
 /// Table delegate over a projected [`ResourceTable`]; the first cell opens
-/// details, or every cell for the global Events view.
+/// details, or every cell for the global Events view. The columns share the
+/// table's width by weight.
 pub(crate) struct RowsTable {
     table: ResourceTable,
+    weights: Vec<f32>,
+    /// The table's last measured width.
+    width: f32,
+    /// `weights` fitted to `width`.
+    widths: Vec<f32>,
     open_row: Option<OpenRow>,
     open_all_cells: bool,
 }
@@ -462,6 +501,10 @@ pub(crate) struct RowsTable {
 impl RowsTable {
     fn row(&self, row_ix: usize) -> &ResourceRow {
         &self.table.rows[row_ix]
+    }
+
+    fn fit_columns(&mut self) {
+        self.widths = column_widths(self.width, &self.weights);
     }
 }
 
@@ -476,8 +519,8 @@ impl TableDelegate for RowsTable {
 
     fn column(&self, col_ix: usize, _cx: &App) -> Column {
         let name = self.table.columns[col_ix].clone();
-        let width = if col_ix == 0 { 320. } else { 160. };
-        Column::new(SharedString::from(format!("col-{col_ix}")), name).width(px(width))
+        Column::new(SharedString::from(format!("col-{col_ix}")), name)
+            .width(px(self.widths[col_ix]))
     }
 
     fn render_th(
@@ -491,6 +534,8 @@ impl TableDelegate for RowsTable {
             .id(SharedString::from(format!("column-{col_ix}")))
             .aria_label(name.clone())
             .test_support()
+            .w_full()
+            .text_ellipsis()
             .child(name)
     }
 
@@ -516,6 +561,8 @@ impl TableDelegate for RowsTable {
                 .id(SharedString::from(id))
                 .aria_label(cell.clone())
                 .test_support()
+                .w_full()
+                .text_ellipsis()
                 .cursor_pointer()
                 .child(cell)
                 .on_click(move |_, _, cx| open_row(&key, cx))
@@ -525,6 +572,8 @@ impl TableDelegate for RowsTable {
             .id(SharedString::from(format!("cell-{row_ix}-{col_ix}")))
             .aria_label(cell.clone())
             .test_support()
+            .w_full()
+            .text_ellipsis()
             .child(cell)
             .into_any_element()
     }
