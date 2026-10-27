@@ -42,12 +42,13 @@ It keeps the `[spike t=…]` lines, then prints an `[auto] summary:` line
 (cycles, flushes, applied mutations, whole-run `draw_avg` / `draw_worst` /
 `gap_worst`, the count of gaps over the limit, `late_worst` for how far the
 schedule fell behind, RSS start→end) and `[auto] RESULT: PASS|FAIL`, then
-quits. FAIL (exit 1) when the whole-run `gap_worst` exceeds 250 ms. #76's
-1 s samples sat at 58–65 ms on 0.8.0 and 0.8.1 at the 50 ms flush cadence.
-The whole-run worst is noisier: four 300 s runs on 0.8.1 gave 85, 92 and
-151 ms, and on a loaded machine one 218 ms gap (`late_worst` 49 ms: the
-whole main thread stalled). 250 ms is five missed flushes. Keep other heavy work off the
-machine during an A/B.
+quits. A gap over 100 ms (two missed 50 ms flushes) is a jank frame; FAIL
+(exit 1) when a run has more than one per minute (5 in 300 s). On 0.8.1 three
+300 s runs on a quiet machine had none (`gap_worst` 87–98 ms); four earlier
+ones had `gap_worst` 85, 92, 151 and, on a loaded machine, 218 ms
+(`late_worst` 49 ms: the whole main thread stalled). So a stray spike passes,
+while a stall on every sort step (157 per run) fails. Keep other heavy work
+off the machine during an A/B.
 
 ## What it does
 

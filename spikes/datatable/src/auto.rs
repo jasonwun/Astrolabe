@@ -16,9 +16,13 @@ use crate::{PodsDelegate, SpikeView, rss_bytes};
 pub const STEP: Duration = Duration::from_millis(100);
 /// Rows a page-down / page-up moves the selection.
 const PAGE_ROWS: usize = 30;
-/// FAIL when any present-to-present gap exceeds this; README "Scripted mode"
-/// says how it was picked.
-pub const GAP_LIMIT: Duration = Duration::from_millis(250);
+/// A present-to-present gap over this is a jank frame: two missed 50 ms
+/// flushes. README "Scripted mode" says how both limits were picked.
+pub const JANK_GAP: Duration = Duration::from_millis(100);
+/// FAIL when a run has more than one jank frame per minute.
+fn jank_limit(secs: u64) -> u32 {
+    (secs / 60).max(1) as u32
+}
 const DEFAULT_SECS: u64 = 300;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +117,7 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
     }
 
     let cycles = cycle_count(run);
+    let jank_limit = jank_limit(secs);
     let Some(rss_start) = with_view(&view, cx, |this, _, _| {
         this.frames.reset_run();
         rss_bytes()
@@ -120,7 +125,7 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         return;
     };
     println!(
-        "[auto] driving {cycles} cycles of {CYCLE_STEPS} steps every {STEP:?} for {secs}s, gap limit {GAP_LIMIT:?}"
+        "[auto] driving {cycles} cycles of {CYCLE_STEPS} steps every {STEP:?} for {secs}s, FAIL over {jank_limit} gaps > {JANK_GAP:?}"
     );
 
     let start = Instant::now();
@@ -158,23 +163,23 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
     }) else {
         return;
     };
-    let (draws, draw_avg, draw_worst, gap_worst, gaps_over) = (
+    let (draws, draw_avg, draw_worst, gap_worst, jank_gaps) = (
         r.draws,
         r.draw_avg(),
         r.draw_worst,
         r.gap_worst,
-        r.gaps_over_limit,
+        r.jank_gaps,
     );
     println!(
-        "[auto] summary: cycles={} secs={:.0} flushes={flushes} applied={applied} draws={draws} draw_avg={draw_avg:.2?} draw_worst={draw_worst:.2?} gap_worst={gap_worst:.2?} gaps>{GAP_LIMIT:?}={gaps_over} late_worst={late_worst:.2?} rss={}→{}MB",
+        "[auto] summary: cycles={} secs={:.0} flushes={flushes} applied={applied} draws={draws} draw_avg={draw_avg:.2?} draw_worst={draw_worst:.2?} gap_worst={gap_worst:.2?} gaps>{JANK_GAP:?}={jank_gaps} late_worst={late_worst:.2?} rss={}→{}MB",
         steps_done / CYCLE_STEPS,
         start.elapsed().as_secs_f32(),
         rss_start / 1_048_576,
         rss_bytes() / 1_048_576,
     );
-    let pass = draws > 0 && gap_worst <= GAP_LIMIT;
+    let pass = draws > 0 && jank_gaps <= jank_limit;
     println!(
-        "[auto] RESULT: {} (gap_worst {gap_worst:.2?}, limit {GAP_LIMIT:?})",
+        "[auto] RESULT: {} ({jank_gaps} gaps > {JANK_GAP:?}, limit {jank_limit})",
         if pass { "PASS" } else { "FAIL" }
     );
     quit(cx, pass);
@@ -207,7 +212,9 @@ fn apply_step(
 
 #[cfg(test)]
 mod tests {
-    use super::{CYCLE_STEPS, ColumnSort, DriveStep, Duration, cycle_count, drive_step};
+    use super::{
+        CYCLE_STEPS, ColumnSort, DriveStep, Duration, cycle_count, drive_step, jank_limit,
+    };
 
     #[test]
     fn a_cycle_pages_down_sorts_pages_up_then_steps_rows() {
@@ -249,5 +256,12 @@ mod tests {
         // 19 steps × 100 ms = 1.9 s per cycle; 300 s / 1.9 s = 157.9.
         assert_eq!(cycle_count(Duration::from_secs(300)), 157);
         assert_eq!(cycle_count(Duration::from_secs(1)), 0);
+    }
+
+    #[test]
+    fn a_run_may_have_one_jank_frame_per_minute() {
+        assert_eq!(jank_limit(300), 5);
+        assert_eq!(jank_limit(90), 1);
+        assert_eq!(jank_limit(20), 1);
     }
 }

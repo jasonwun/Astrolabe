@@ -351,7 +351,8 @@ struct RunFrames {
     draw_sum: Duration,
     draw_worst: Duration,
     gap_worst: Duration,
-    gaps_over_limit: u32,
+    /// Gaps over `auto::JANK_GAP`.
+    jank_gaps: u32,
 }
 
 impl RunFrames {
@@ -392,8 +393,8 @@ impl FrameStats {
                         let gap = at.duration_since(prev);
                         self.gaps.push_back((at, gap));
                         self.run.gap_worst = self.run.gap_worst.max(gap);
-                        if gap > auto::GAP_LIMIT {
-                            self.run.gaps_over_limit += 1;
+                        if gap > auto::JANK_GAP {
+                            self.run.jank_gaps += 1;
                         }
                     }
                     self.presents.push_back(at);
