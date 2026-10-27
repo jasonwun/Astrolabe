@@ -28,7 +28,7 @@ Coverage, mutation testing, and cluster e2e commands: `docs/agents/testing.md`. 
 
 ### GPUI views and UI tests
 
-Before writing a DockArea panel or a `gpui_kit::test` UI test: `docs/agents/gpui-kit.md`.
+Before writing a DockArea panel, a `gpui_kit::test` UI test, or an acceptance criterion a UI test must meet: `docs/agents/gpui-kit.md`.
 
 ### Upstream (Freelens)
 

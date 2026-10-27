@@ -5,12 +5,13 @@ sees: invisible text (#52) and a tab with no close button (#51) both passed
 the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
-Run this check after review fixes. Done when every view the final change
-touches has been opened and screenshotted on `kind-astrolabe-dev` in
-every state the change adds (populated, empty, forbidden), each
-screenshot has been read back, each is embedded in the PR, and every
-out-of-scope problem the check finds is a `needs-triage` issue linked from
-the PR body. Repeat the affected views and replace their evidence after
+Run this check after review fixes, on a branch rebased onto
+`origin/main`: a check on a stale base is redone once main's UI changes
+land (#75). Done when every view the final change touches has been
+opened and screenshotted on `kind-astrolabe-dev` in every state the
+change adds (populated, empty, forbidden), each screenshot has been read
+back, each is embedded in the PR, and every out-of-scope problem the
+check finds is a `needs-triage` issue linked from the PR body. Repeat the affected views and replace their evidence after
 any later UI change, so the PR shows the final UI diff.
 
 ## 1. Seed the cluster
@@ -51,8 +52,14 @@ per window point.
   stand.
 
   Keep the `-orig.png` for the PR's evidence. When only one region
-  matters, crop to it as well (`sips --cropToHeightWidth`): a whole
-  window still reads at 120-170KB, a cropped table at about 16KB (#68).
+  matters, crop to it as well: a whole window still reads at
+  120-170KB, a cropped table at about 16KB (#68). `--cropToHeightWidth`
+  alone crops around the centre; give the offset, in Retina pixels
+  (twice the points read off the shrunk copy) (#75):
+
+  ```sh
+  sips -c <h> <w> --cropOffset <y> <x> <name>-orig.png --out <crop>.png
+  ```
 - Resize the window with System Events:
 
   ```sh
