@@ -12,7 +12,7 @@ publish = false
 # ("4.0", ws + rustls-tls). `Cargo.lock` is committed on top. Upgrades
 # are explicit actions — see README "Dependency upgrades".
 [workspace.dependencies]
-gpui-kit = "=0.8.1"
+gpui-kit = { version = "=0.8.1", features = ["gpui-fast"] }
 alacritty_terminal = "=0.26.0"
 k8s-openapi = { version = "=0.28", features = ["v1_36"] }
 kube = { version = "4.0", features = ["runtime", "ws", "rustls-tls"] }
