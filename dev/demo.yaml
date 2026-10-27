@@ -90,6 +90,8 @@ kind: ConfigMap
 metadata: {name: app, namespace: astrolabe-demo}
 data:
   mode: production
+  # Overlong for the Key column: shows the cell ellipsis (#75).
+  log-shipping.fluent-bit-sidecar.override.conf: enabled
   nginx.conf: |
     server {
       listen 80;
