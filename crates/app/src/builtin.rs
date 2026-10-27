@@ -9,6 +9,7 @@ use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{
     ConfigMap, Event, LimitRange, Pod, ResourceQuota, Secret, Service,
 };
+use astrolabe_kube::k8s_openapi::api::discovery::v1::EndpointSlice;
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::k8s_openapi::serde::de::DeserializeOwned;
@@ -20,6 +21,7 @@ use crate::projection::autoscaling::{HPA_COLUMN_WEIGHTS, hpa_detail, project_hpa
 use crate::projection::config::{
     config_map_detail, project_config_maps, project_secrets, secret_detail,
 };
+use crate::projection::endpoint_slices::{endpoint_slice_detail, project_endpoint_slices};
 use crate::projection::events::{event_detail, event_involves, project_events};
 use crate::projection::network::{
     ingress_detail, project_ingresses, project_services, service_detail_with_raw,
@@ -53,6 +55,9 @@ pub enum BuiltinKind {
     ResourceQuotas,
     LimitRanges,
     HorizontalPodAutoscalers,
+    /// Shown only as a Service's related section, so it has no
+    /// navigation entry.
+    EndpointSlices,
 }
 
 /// A detail-tab toolbar action.
@@ -99,6 +104,9 @@ pub struct Related {
     pub title: &'static str,
     pub kind: BuiltinKind,
     pub select: for<'a> fn(&DynamicObject, &[&'a DynamicObject]) -> Vec<&'a DynamicObject>,
+    /// Leave the section out, title included, when nothing is selected,
+    /// instead of saying "No …". A forbidden watch still says so.
+    pub hide_when_empty: bool,
 }
 
 impl BuiltinKind {
@@ -148,10 +156,11 @@ impl BuiltinKind {
             BuiltinKind::ResourceQuotas => &RESOURCE_QUOTAS,
             BuiltinKind::LimitRanges => &LIMIT_RANGES,
             BuiltinKind::HorizontalPodAutoscalers => &HORIZONTAL_POD_AUTOSCALERS,
+            BuiltinKind::EndpointSlices => &ENDPOINT_SLICES,
         }
     }
 
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Pods,
         Self::Deployments,
         Self::StatefulSets,
@@ -167,6 +176,7 @@ impl BuiltinKind {
         Self::ResourceQuotas,
         Self::LimitRanges,
         Self::HorizontalPodAutoscalers,
+        Self::EndpointSlices,
     ];
 
     /// The singular kind, as titles name it.
@@ -198,6 +208,7 @@ static PODS: Registration = Registration {
         title: "Events",
         kind: BuiltinKind::Events,
         select: pod_events,
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -218,6 +229,7 @@ static DEPLOYMENTS: Registration = Registration {
         title: "Pods",
         kind: BuiltinKind::Pods,
         select: deployment_pods,
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -238,6 +250,7 @@ static STATEFULSETS: Registration = Registration {
         title: "Pods",
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "StatefulSet"),
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -253,6 +266,7 @@ static REPLICASETS: Registration = Registration {
         title: "Pods",
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "ReplicaSet"),
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -268,6 +282,7 @@ static DAEMONSETS: Registration = Registration {
         title: "Pods",
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "DaemonSet"),
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -283,6 +298,7 @@ static JOBS: Registration = Registration {
         title: "Pods",
         kind: BuiltinKind::Pods,
         select: |object, pods| owned_by(object, pods, "Job"),
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -298,6 +314,7 @@ static CRONJOBS: Registration = Registration {
         title: "Jobs",
         kind: BuiltinKind::Jobs,
         select: |object, jobs| owned_by(object, jobs, "CronJob"),
+        hide_when_empty: false,
     }),
     column_weights: None,
 };
@@ -326,7 +343,12 @@ static SERVICES: Registration = Registration {
     },
     actions: &[Action::PortForward, Action::Edit, Action::Delete],
     cascade: service_cascade,
-    related: None,
+    related: Some(Related {
+        title: "Endpoint Slices",
+        kind: BuiltinKind::EndpointSlices,
+        select: |object, slices| owned_by(object, slices, "Service"),
+        hide_when_empty: true,
+    }),
     column_weights: None,
 };
 
@@ -396,6 +418,17 @@ static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
     column_weights: Some(HPA_COLUMN_WEIGHTS),
 };
 
+static ENDPOINT_SLICES: Registration = Registration {
+    label: "EndpointSlices",
+    resource: || ApiResource::erase::<EndpointSlice>(&()),
+    list: |objects, now| typed_list(objects, now, project_endpoint_slices),
+    detail: |object, now| Some(endpoint_slice_detail(&parse::<EndpointSlice>(object)?, now)),
+    actions: DEFAULT_ACTIONS,
+    cascade: endpoint_slice_cascade,
+    related: None,
+    column_weights: None,
+};
+
 /// The EndpointSlice controller owns the slices of a Service with a
 /// selector, so they go with it; a selector-less Service's slices are
 /// someone else's and stay.
@@ -406,6 +439,21 @@ fn service_cascade(service: &DynamicObject) -> &'static str {
         .is_some_and(|selector| !selector.is_empty());
     if selects {
         "Its EndpointSlices will be deleted too."
+    } else {
+        "Nothing else is deleted."
+    }
+}
+
+/// The EndpointSlice controller rebuilds a slice its Service owns; a
+/// slice nobody owns is simply gone.
+fn endpoint_slice_cascade(slice: &DynamicObject) -> &'static str {
+    if slice
+        .metadata
+        .owner_references
+        .as_ref()
+        .is_some_and(|owners| !owners.is_empty())
+    {
+        "A controller that owns this EndpointSlice will recreate it."
     } else {
         "Nothing else is deleted."
     }

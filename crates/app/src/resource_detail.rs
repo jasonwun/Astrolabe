@@ -196,17 +196,21 @@ impl ResourceDetailPanel {
                 let object = session
                     .object_watch(&watch)?
                     .get(Some(namespace), &key.name)?;
-                let related = registration.related.as_ref().map(|related| {
+                let related = registration.related.as_ref().and_then(|related| {
                     let watch =
                         session.object_watch(&session.builtin_watch_key(related.kind, namespace));
                     let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
                     let selected = (related.select)(object, &candidates);
-                    RelatedRows {
+                    let forbidden = watch.is_some_and(|watch| watch.forbidden());
+                    if related.hide_when_empty && selected.is_empty() && !forbidden {
+                        return None;
+                    }
+                    Some(RelatedRows {
                         title: related.title,
                         kind: related.kind,
                         table: (related.kind.registration().list)(&selected, now),
-                        forbidden: watch.is_some_and(|watch| watch.forbidden()),
-                    }
+                        forbidden,
+                    })
                 });
                 Some(Resolved {
                     model: (registration.detail)(object, now)?,
