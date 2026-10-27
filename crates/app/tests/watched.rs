@@ -21,11 +21,11 @@ fn names(watched: &Watched<Namespace>) -> Vec<String> {
         .collect()
 }
 
-fn watched() -> Watched<Namespace> {
+fn namespace_watch() -> Watched<Namespace> {
     Watched::new("kind-test", "namespace")
 }
 
-fn list(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {
+fn relist(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {
     watched.apply(Ok(Event::Init));
     for name in names {
         watched.apply(Ok(Event::InitApply(namespace(name))));
@@ -35,8 +35,8 @@ fn list(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {
 
 #[test]
 fn relist_keeps_the_old_snapshot_until_the_complete_replacement() {
-    let mut watched = watched();
-    list(&mut watched, &["default", "kube-system"]);
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default", "kube-system"]);
     assert_eq!(names(&watched), ["default", "kube-system"]);
 
     watched.apply(Ok(Event::Init));
@@ -49,8 +49,8 @@ fn relist_keeps_the_old_snapshot_until_the_complete_replacement() {
 
 #[test]
 fn apply_and_delete_patch_the_committed_snapshot() {
-    let mut watched = watched();
-    list(&mut watched, &["default"]);
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
 
     assert_eq!(
         watched.apply(Ok(Event::Apply(namespace("team-a")))),
@@ -69,7 +69,7 @@ fn apply_and_delete_patch_the_committed_snapshot() {
 
 #[test]
 fn first_init_done_is_the_first_snapshot_and_later_ones_are_changes() {
-    let mut watched = watched();
+    let mut watched = namespace_watch();
     assert_eq!(watched.apply(Ok(Event::Init)), SnapshotChange::Unchanged);
     assert_eq!(
         watched.apply(Ok(Event::InitApply(namespace("default")))),
@@ -82,12 +82,12 @@ fn first_init_done_is_the_first_snapshot_and_later_ones_are_changes() {
     );
     assert!(watched.has_snapshot());
 
-    assert_eq!(list(&mut watched, &["default"]), SnapshotChange::Changed);
+    assert_eq!(relist(&mut watched, &["default"]), SnapshotChange::Changed);
 }
 
 #[test]
 fn init_after_a_snapshot_marks_stale_until_init_done() {
-    let mut watched = watched();
+    let mut watched = namespace_watch();
     watched.apply(Ok(Event::Init));
     assert!(!watched.show_stale_warning());
     assert_eq!(watched.health(), ConnectionHealth::Connecting);
@@ -105,8 +105,8 @@ fn init_after_a_snapshot_marks_stale_until_init_done() {
 
 #[test]
 fn an_error_marks_stale_and_records_forbidden() {
-    let mut watched = watched();
-    list(&mut watched, &["default"]);
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
 
     assert_eq!(
         watched.apply(Err(WatchError::forbidden("403"))),
@@ -122,14 +122,14 @@ fn an_error_marks_stale_and_records_forbidden() {
     assert!(!watched.forbidden());
 
     watched.apply(Err(WatchError::forbidden("403")));
-    list(&mut watched, &["default"]);
+    relist(&mut watched, &["default"]);
     assert!(!watched.forbidden());
     assert!(!watched.show_stale_warning());
 }
 
 #[test]
 fn an_error_before_any_snapshot_is_not_stale_data() {
-    let mut watched = watched();
+    let mut watched = namespace_watch();
     watched.apply(Err(WatchError::forbidden("403")));
     assert!(!watched.show_stale_warning());
     assert!(watched.forbidden());

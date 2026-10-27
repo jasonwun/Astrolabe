@@ -1,6 +1,6 @@
 //! Generic detail tab (#11): metadata summary, status summary, read-only
 //! YAML; toolbar Edit YAML (separate editor tab, SSA) and Delete. It reads
-//! the object out of the list watch's store, so it refreshes with the watch
+//! the object out of the list watch's snapshot, so it refreshes with the watch
 //! and issues no GET/watch of its own. Built-in kinds reuse this template
 //! through their registration (#17).
 

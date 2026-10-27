@@ -173,6 +173,13 @@ impl<K: ResourceExt> Watched<K> {
         }
     }
 
+    fn mark_healthy(&mut self) {
+        self.has_snapshot = true;
+        self.forbidden = false;
+        self.set_health(ConnectionHealth::Healthy);
+        self.stale = false;
+    }
+
     fn mark_stale(&mut self) {
         self.set_health(ConnectionHealth::Stale);
         self.stale = self.has_snapshot;
@@ -181,48 +188,41 @@ impl<K: ResourceExt> Watched<K> {
     /// The single place a watch message is interpreted.
     pub fn apply(&mut self, message: WatchMessage<K>) -> SnapshotChange {
         match message {
-            Ok(event) => {
-                let change = match &event {
-                    Event::Apply(_) | Event::Delete(_) => SnapshotChange::Changed,
-                    Event::InitDone if self.has_snapshot => SnapshotChange::Changed,
-                    Event::InitDone => SnapshotChange::FirstSnapshot,
-                    Event::Init | Event::InitApply(_) => SnapshotChange::Unchanged,
+            Ok(Event::Init) => {
+                self.set_health(ConnectionHealth::Connecting);
+                self.stale = self.has_snapshot;
+                self.staging.clear();
+                SnapshotChange::Unchanged
+            }
+            Ok(Event::InitApply(object)) => {
+                self.staging.insert(ObjectKey::of(&object), object);
+                SnapshotChange::Unchanged
+            }
+            Ok(Event::InitDone) => {
+                let change = if self.has_snapshot {
+                    SnapshotChange::Changed
+                } else {
+                    SnapshotChange::FirstSnapshot
                 };
-                match &event {
-                    Event::Init => {
-                        self.set_health(ConnectionHealth::Connecting);
-                        self.stale = self.has_snapshot;
-                    }
-                    Event::InitApply(_) => {}
-                    Event::InitDone | Event::Apply(_) | Event::Delete(_) => {
-                        self.has_snapshot = true;
-                        self.forbidden = false;
-                        self.set_health(ConnectionHealth::Healthy);
-                        self.stale = false;
-                    }
-                }
-                match event {
-                    Event::Init => self.staging.clear(),
-                    Event::InitApply(object) => {
-                        self.staging.insert(ObjectKey::of(&object), object);
-                    }
-                    Event::InitDone => {
-                        self.committed = std::mem::take(&mut self.staging);
-                        tracing::info!(
-                            cluster = %self.cluster,
-                            objects = self.committed.len(),
-                            "{} snapshot replaced",
-                            self.label
-                        );
-                    }
-                    Event::Apply(object) => {
-                        self.committed.insert(ObjectKey::of(&object), object);
-                    }
-                    Event::Delete(object) => {
-                        self.committed.remove(&ObjectKey::of(&object));
-                    }
-                }
+                self.mark_healthy();
+                self.committed = std::mem::take(&mut self.staging);
+                tracing::info!(
+                    cluster = %self.cluster,
+                    objects = self.committed.len(),
+                    "{} snapshot replaced",
+                    self.label
+                );
                 change
+            }
+            Ok(Event::Apply(object)) => {
+                self.mark_healthy();
+                self.committed.insert(ObjectKey::of(&object), object);
+                SnapshotChange::Changed
+            }
+            Ok(Event::Delete(object)) => {
+                self.mark_healthy();
+                self.committed.remove(&ObjectKey::of(&object));
+                SnapshotChange::Changed
             }
             Err(error) => {
                 self.forbidden = error.forbidden;
