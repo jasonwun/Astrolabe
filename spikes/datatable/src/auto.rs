@@ -16,10 +16,8 @@ use crate::{PodsDelegate, SpikeView, rss_bytes};
 pub const STEP: Duration = Duration::from_millis(100);
 /// Rows a page-down / page-up moves the selection.
 const PAGE_ROWS: usize = 30;
-/// FAIL when any present-to-present gap exceeds this. The 50 ms flush
-/// cadence puts 1 s samples of `gap_worst` at 58–65 ms on 0.8.0 and 0.8.1
-/// (#76). The whole-run worst is noisier: on a loaded machine one 300 s run
-/// on 0.8.1 hit 218 ms while its timers ran 49 ms late. 250 ms is five flushes.
+/// FAIL when any present-to-present gap exceeds this; README "Scripted mode"
+/// says how it was picked.
 pub const GAP_LIMIT: Duration = Duration::from_millis(250);
 const DEFAULT_SECS: u64 = 300;
 
@@ -40,19 +38,23 @@ pub fn drive_step(i: usize, cols: usize) -> DriveStep {
         ColumnSort::Default,
     ];
     let (cycle, at) = (i / CYCLE_STEPS, i % CYCLE_STEPS);
-    match at {
-        0..8 => DriveStep::PageDown,
-        8 => {
-            let k = cycle % (cols * SORTS.len());
-            DriveStep::Sort(k / SORTS.len(), SORTS[k % SORTS.len()])
-        }
-        9..13 => DriveStep::PageUp,
-        _ => DriveStep::RowDown,
+    if at < PAGE_DOWNS {
+        DriveStep::PageDown
+    } else if at == PAGE_DOWNS {
+        let k = cycle % (cols * SORTS.len());
+        DriveStep::Sort(k / SORTS.len(), SORTS[k % SORTS.len()])
+    } else if at <= PAGE_DOWNS + PAGE_UPS {
+        DriveStep::PageUp
+    } else {
+        DriveStep::RowDown
     }
 }
 
-/// 8 page-downs, a sort step, 4 page-ups, 6 row-downs.
-pub const CYCLE_STEPS: usize = 19;
+const PAGE_DOWNS: usize = 8;
+const PAGE_UPS: usize = 4;
+const ROW_DOWNS: usize = 6;
+/// Page-downs, a sort step, page-ups, row-downs.
+pub const CYCLE_STEPS: usize = PAGE_DOWNS + 1 + PAGE_UPS + ROW_DOWNS;
 
 /// Whole drive cycles that fit in `run`.
 pub fn cycle_count(run: Duration) -> usize {
@@ -123,6 +125,7 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
 
     let start = Instant::now();
     let mut late_worst = Duration::ZERO;
+    let mut steps_done = 0;
     for i in 0..cycles * CYCLE_STEPS {
         let due = start + STEP * i as u32;
         let now = Instant::now();
@@ -140,6 +143,7 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         if step.is_none() {
             return;
         }
+        steps_done += 1;
     }
     let end = start + run;
     let now = Instant::now();
@@ -147,34 +151,23 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         sleep(cx, end - now).await;
     }
 
-    let Some((frames, stats)) = with_view(&view, cx, |this, _, _| {
+    let Some((r, flushes, applied)) = with_view(&view, cx, |this, _, _| {
         this.frames.drain();
-        let r = &this.frames.run;
-        let draw_avg = if r.draws > 0 {
-            r.draw_sum / r.draws
-        } else {
-            Duration::ZERO
-        };
-        (
-            (
-                r.draws,
-                draw_avg,
-                r.draw_worst,
-                r.gap_worst,
-                r.gaps_over_limit,
-            ),
-            (
-                this.stats.flushes,
-                this.stats.adds + this.stats.updates + this.stats.deletes,
-            ),
-        )
+        let s = &this.stats;
+        (this.frames.run, s.flushes, s.adds + s.updates + s.deletes)
     }) else {
         return;
     };
-    let (draws, draw_avg, draw_worst, gap_worst, gaps_over) = frames;
-    let (flushes, applied) = stats;
+    let (draws, draw_avg, draw_worst, gap_worst, gaps_over) = (
+        r.draws,
+        r.draw_avg(),
+        r.draw_worst,
+        r.gap_worst,
+        r.gaps_over_limit,
+    );
     println!(
-        "[auto] summary: cycles={cycles} secs={:.0} flushes={flushes} applied={applied} draws={draws} draw_avg={draw_avg:.2?} draw_worst={draw_worst:.2?} gap_worst={gap_worst:.2?} gaps>{GAP_LIMIT:?}={gaps_over} late_worst={late_worst:.2?} rss={}→{}MB",
+        "[auto] summary: cycles={} secs={:.0} flushes={flushes} applied={applied} draws={draws} draw_avg={draw_avg:.2?} draw_worst={draw_worst:.2?} gap_worst={gap_worst:.2?} gaps>{GAP_LIMIT:?}={gaps_over} late_worst={late_worst:.2?} rss={}→{}MB",
+        steps_done / CYCLE_STEPS,
         start.elapsed().as_secs_f32(),
         rss_start / 1_048_576,
         rss_bytes() / 1_048_576,
@@ -203,13 +196,9 @@ fn apply_step(
         DriveStep::PageUp => table.set_selected_row(row.saturating_sub(PAGE_ROWS), cx),
         DriveStep::RowDown if row == max_row => table.set_selected_row(0, cx),
         DriveStep::RowDown => table.set_selected_row(row + 1, cx),
+        // A header click's work, minus its indicator: `TableState::perform_sort`
+        // is private, so the header arrows stay unchanged.
         DriveStep::Sort(col, sort) => {
-            // `TableState::perform_sort` is private: set the header indicators
-            // and sort the delegate the way a header click does.
-            for (ix, column) in table.delegate_mut().columns.iter_mut().enumerate() {
-                column.sort = Some(if ix == col { sort } else { ColumnSort::Default });
-            }
-            table.refresh(cx);
             table.delegate_mut().perform_sort(col, sort, window, cx);
             cx.notify();
         }
@@ -218,11 +207,11 @@ fn apply_step(
 
 #[cfg(test)]
 mod tests {
-    use super::{ColumnSort, DriveStep, Duration, cycle_count, drive_step};
+    use super::{CYCLE_STEPS, ColumnSort, DriveStep, Duration, cycle_count, drive_step};
 
     #[test]
     fn a_cycle_pages_down_sorts_pages_up_then_steps_rows() {
-        let steps: Vec<_> = (0..19).map(|i| drive_step(i, 8)).collect();
+        let steps: Vec<_> = (0..CYCLE_STEPS).map(|i| drive_step(i, 8)).collect();
         let mut want = vec![DriveStep::PageDown; 8];
         want.push(DriveStep::Sort(0, ColumnSort::Ascending));
         want.extend([DriveStep::PageUp; 4]);
@@ -232,7 +221,7 @@ mod tests {
 
     #[test]
     fn the_sort_steps_through_every_column_asc_desc_off_then_wraps() {
-        let sorts: Vec<_> = (0..19 * 25)
+        let sorts: Vec<_> = (0..CYCLE_STEPS * 25)
             .map(|i| drive_step(i, 8))
             .filter_map(|s| match s {
                 DriveStep::Sort(col, sort) => Some((col, sort)),

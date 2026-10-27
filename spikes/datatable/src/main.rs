@@ -345,13 +345,23 @@ struct FrameStats {
     run: RunFrames,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct RunFrames {
     draws: u32,
     draw_sum: Duration,
     draw_worst: Duration,
     gap_worst: Duration,
     gaps_over_limit: u32,
+}
+
+impl RunFrames {
+    fn draw_avg(&self) -> Duration {
+        if self.draws > 0 {
+            self.draw_sum / self.draws
+        } else {
+            Duration::ZERO
+        }
+    }
 }
 
 impl FrameStats {

@@ -36,8 +36,8 @@ trees, so its numbers compare directly.
 
 ## 3. Read
 
-- Every spike prints PASS/FAIL; a FAIL is a regression.
-- datatable: FAIL means a present gap over 250 ms. Sampled over 1 s at the
+- terminal and datatable print PASS/FAIL; a FAIL is a regression.
+- datatable: FAIL means a present gap over the README's limit. Sampled over 1 s at the
   default 50 ms batch window, `gap_worst` sits near 60 ms (the flush
   cadence) and `draw_worst` stays well under 16 ms apart from rare outliers;
   RSS stays flat around 10k rows.

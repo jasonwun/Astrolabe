@@ -33,7 +33,8 @@ Runs the same watch storm at the 50 ms window and drives the table from
 inside the app, one step every 100 ms. A cycle is 8 page-downs (30 rows
 each), one sort step, 4 page-ups and 6 single-row downs; the selection wraps
 at the last row. The sort step walks every column through asc, desc and off,
-one state per cycle (24 cycles per sweep). Steps run at fixed offsets from the
+one state per cycle (24 cycles per sweep); it sorts the rows as a header
+click does, but the header arrows do not change. Steps run at fixed offsets from the
 start, so a run does `SPIKE_SECS / 1.9 s` cycles (157 for 300 s) on any
 machine. The window must be visible: an occluded window presents no frames.
 
@@ -43,9 +44,9 @@ It keeps the `[spike t=…]` lines, then prints an `[auto] summary:` line
 schedule fell behind, RSS start→end) and `[auto] RESULT: PASS|FAIL`, then
 quits. FAIL (exit 1) when the whole-run `gap_worst` exceeds 250 ms. #76's
 1 s samples sat at 58–65 ms on 0.8.0 and 0.8.1 at the 50 ms flush cadence.
-The whole-run worst is noisier: two 300 s runs on 0.8.1 gave 85 ms and, on a
-loaded machine, one 218 ms gap (`late_worst` 49 ms: the whole main thread
-stalled). 250 ms is five missed flushes. Keep other heavy work off the
+The whole-run worst is noisier: four 300 s runs on 0.8.1 gave 85, 92 and
+151 ms, and on a loaded machine one 218 ms gap (`late_worst` 49 ms: the
+whole main thread stalled). 250 ms is five missed flushes. Keep other heavy work off the
 machine during an A/B.
 
 ## What it does
