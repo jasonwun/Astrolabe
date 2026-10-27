@@ -9,8 +9,9 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
-    ActiveTheme as _, h_flex, v_flex,
+    ActiveTheme as _, h_flex,
     table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
+    v_flex,
 };
 use gpui_kit::profiler::{FrameEvent, FrameTimingCollector};
 use gpui_kit::*;
@@ -46,8 +47,18 @@ impl Rng {
 // ---------------------------------------------------------------- data model
 
 const PREFIXES: &[&str] = &[
-    "nginx", "redis", "api", "worker", "cache", "gateway", "scheduler", "auth", "billing",
-    "search", "metrics", "queue",
+    "nginx",
+    "redis",
+    "api",
+    "worker",
+    "cache",
+    "gateway",
+    "scheduler",
+    "auth",
+    "billing",
+    "search",
+    "metrics",
+    "queue",
 ];
 const NAMESPACES: &[&str] = &[
     "default",
@@ -128,7 +139,7 @@ fn fmt_age(secs: u64) -> String {
 
 enum Mutation {
     Add(Pod),
-    Delete(u64),   // by pod id — indices go stale inside a coalescing window
+    Delete(u64),      // by pod id — indices go stale inside a coalescing window
     Update(u64, Pod), // whole-row replacement
 }
 
@@ -205,15 +216,31 @@ impl PodsDelegate {
     fn new(rng: &mut Rng) -> Self {
         let columns = vec![
             Column::new("name", "Name").width(px(280.)).sortable(),
-            Column::new("namespace", "Namespace").width(px(130.)).sortable(),
+            Column::new("namespace", "Namespace")
+                .width(px(130.))
+                .sortable(),
             Column::new("status", "Status").width(px(160.)).sortable(),
-            Column::new("restarts", "Restarts").width(px(90.)).text_right().sortable(),
-            Column::new("cpu", "CPU").width(px(90.)).text_right().sortable(),
-            Column::new("memory", "Memory").width(px(100.)).text_right().sortable(),
-            Column::new("age", "Age").width(px(90.)).text_right().sortable(),
+            Column::new("restarts", "Restarts")
+                .width(px(90.))
+                .text_right()
+                .sortable(),
+            Column::new("cpu", "CPU")
+                .width(px(90.))
+                .text_right()
+                .sortable(),
+            Column::new("memory", "Memory")
+                .width(px(100.))
+                .text_right()
+                .sortable(),
+            Column::new("age", "Age")
+                .width(px(90.))
+                .text_right()
+                .sortable(),
             Column::new("node", "Node").width(px(220.)).sortable(),
         ];
-        let pods = (0..TARGET_ROWS).map(|i| random_pod(rng, i as u64)).collect();
+        let pods = (0..TARGET_ROWS)
+            .map(|i| random_pod(rng, i as u64))
+            .collect();
         Self { columns, pods }
     }
 }
@@ -339,13 +366,25 @@ impl FrameStats {
                 _ => {}
             }
         }
-        while self.draws.front().is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW) {
+        while self
+            .draws
+            .front()
+            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
+        {
             self.draws.pop_front();
         }
-        while self.presents.front().is_some_and(|t| t.elapsed() > FRAME_WINDOW) {
+        while self
+            .presents
+            .front()
+            .is_some_and(|t| t.elapsed() > FRAME_WINDOW)
+        {
             self.presents.pop_front();
         }
-        while self.gaps.front().is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW) {
+        while self
+            .gaps
+            .front()
+            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
+        {
             self.gaps.pop_front();
         }
     }
@@ -547,18 +586,20 @@ impl Render for SpikeView {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(format!("fps {fps:>3.0}"))
-            .child(format!("draw avg {avg_draw:.2?} worst {worst_draw:.2?} (1s)"))
+            .child(format!(
+                "draw avg {avg_draw:.2?} worst {worst_draw:.2?} (1s)"
+            ))
             .child(format!("gap worst {worst_gap:.2?}"))
-            .child(format!("rows {}", self.table.read(cx).delegate().pods.len()))
+            .child(format!(
+                "rows {}",
+                self.table.read(cx).delegate().pods.len()
+            ))
             .child(format!(
                 "applied {} (last flush {})",
                 self.stats.adds + self.stats.updates + self.stats.deletes,
                 self.stats.last_flush_applied
             ))
-            .child(format!(
-                "batch {}ms [keys 1-4]",
-                self.mode.ms()
-            ))
+            .child(format!("batch {}ms [keys 1-4]", self.mode.ms()))
             .child(format!("rss {} MB", self.rss / 1_048_576));
 
         v_flex()
@@ -580,6 +621,10 @@ impl Render for SpikeView {
 }
 
 fn main() {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a spike measures gpui-kit alone, without the app's icon assets"
+    )]
     gpui_kit::application().run(|cx| {
         // Turn on gpui's frame trace so the overlay's FrameTimingCollector
         // actually receives draw/present events (off by default).

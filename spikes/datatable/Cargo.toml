@@ -1,20 +1,17 @@
-# PROTOTYPE / THROWAWAY — performance spike, not production code.
-# Self-contained crate on purpose: the repo root stays workspace-free.
+# Performance spike, not production code: run by hand on every dependency
+# upgrade (docs/agents/spike-regression.md).
 [package]
 name = "datatable-spike"
 version = "0.0.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
-# Locked versions — do not bump. `profiler` turns on gpui's frame-timing trace
+# `profiler` turns on gpui's frame-timing trace
 # (gpui_kit::profiler::FrameTimingCollector) so the overlay can report real
 # draw/present timings instead of a timer-based approximation.
-gpui-kit = { version = "=0.8.0", features = ["profiler"] }
+gpui-kit = { workspace = true, features = ["profiler"] }
 # Used only for a mach task_info() RSS sample on macOS. Already in gpui's tree.
-libc = "0.2"
+libc.workspace = true
 # Timestamp type used by gpui's frame trace (FrameTiming::draw_start / present_end).
-web-time = "0.2"
-
-[profile.release]
-debug-assertions = false
+web-time.workspace = true

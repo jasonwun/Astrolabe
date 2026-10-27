@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::profiler::{FrameEvent, FrameTimingCollector};
 use gpui_kit::*;
 
-use crate::backend::{RenderSnapshot, Rgba, StyleFlags, TerminalBackend, DEFAULT_BG, DEFAULT_FG};
+use crate::backend::{DEFAULT_BG, DEFAULT_FG, RenderSnapshot, Rgba, StyleFlags, TerminalBackend};
 use crate::view::{Probe, TerminalView};
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(8);
@@ -612,11 +612,10 @@ async fn run_suite(
     quit(cx, &this).await;
 }
 
-async fn quit(cx: &mut AsyncApp, this: &WeakEntity<TerminalView>) {
+async fn quit(cx: &mut AsyncApp, _this: &WeakEntity<TerminalView>) {
     if std::env::var("SPIKE_STAY").ok().as_deref() == Some("1") {
         println!("[auto] SPIKE_STAY=1: window stays open");
-        let _ = this;
         return;
     }
-    let _ = cx.update(|cx| cx.quit());
+    cx.update(|cx| cx.quit());
 }

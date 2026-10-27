@@ -1,8 +1,8 @@
-# terminal-spike — PROTOTYPE / THROWAWAY
+# terminal-spike
 
-**This is a one-shot feasibility spike, not production code. Do not build on
-it, do not merge it into anything real.** Self-contained crate (own
-`Cargo.toml`/`Cargo.lock`, no workspace at the repo root).
+A feasibility spike, not production code: build nothing on it. A workspace member
+so it tracks the pinned dependencies; rerun it on every dependency
+upgrade (`docs/agents/spike-regression.md`).
 
 ## Question it answers
 

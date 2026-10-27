@@ -34,4 +34,4 @@ Only metadata is logged — cluster name, error summaries, object counts, health
 Third-party versions are declared once in the root `[workspace.dependencies]` (exact `=` pins for `gpui-kit` / `alacritty_terminal` / `k8s-openapi`; `kube` follows the kube-rs survey's `"4.0"` + `ws`/`rustls-tls`), members only write `workspace = true`, and `Cargo.lock` is committed. Upgrades are explicit actions:
 
 - one dependency per PR, in its own PR — no batch bumps
-- the PR must attach regression numbers for the three spike benchmarks (DataTable watch, giant-YAML editor, terminal log-flood); the spikes live on their `prototype/*` branches and are run manually, not in CI
+- the PR must attach regression numbers for the three spike benchmarks (DataTable watch, giant-YAML editor, terminal log-flood); the spikes live in `spikes/` and are run manually, not in CI (`docs/agents/spike-regression.md`)

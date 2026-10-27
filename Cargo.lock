@@ -1361,6 +1361,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
+name = "datatable-spike"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "libc",
+ "web-time 0.2.4",
+]
+
+[[package]]
 name = "defmt"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1558,6 +1567,17 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+
+[[package]]
+name = "editor-spike"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "libc",
+ "regex",
+ "tree-sitter",
+ "web-time 0.2.4",
+]
 
 [[package]]
 name = "educe"
@@ -2329,7 +2349,7 @@ dependencies = [
  "tracing",
  "unicode-linebreak",
  "unicode-segmentation",
- "web-time",
+ "web-time 1.1.0",
  "windows 0.58.0",
 ]
 
@@ -2424,6 +2444,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
+ "hdrhistogram",
  "heapless",
  "image",
  "inventory",
@@ -2460,7 +2481,7 @@ dependencies = [
  "usvg 0.46.0",
  "uuid",
  "waker-fn",
- "web-time",
+ "web-time 1.1.0",
  "windows 0.62.2",
  "zed-scap",
 ]
@@ -2647,7 +2668,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm_thread",
  "web-sys",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -2768,6 +2789,7 @@ dependencies = [
  "gpui-pre-shared-string",
  "gpui-pre-sum-tree",
  "gpui-pre-util",
+ "hdrhistogram",
  "heapless",
  "image",
  "inventory",
@@ -2804,7 +2826,7 @@ dependencies = [
  "usvg 0.46.0",
  "uuid",
  "waker-fn",
- "web-time",
+ "web-time 1.1.0",
  "windows 0.62.2",
  "zed-scap",
 ]
@@ -3101,7 +3123,7 @@ dependencies = [
  "parking_lot",
  "rand 0.9.5",
  "wasm_thread",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -3165,7 +3187,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm_thread",
  "web-sys",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -3357,6 +3379,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "hdrhistogram"
+version = "7.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f49d1053f4708f0af3cf9fc5bffc7e68a914a3c45becb231c80068c9c3f78bea"
+dependencies = [
+ "byteorder",
+ "num-traits",
 ]
 
 [[package]]
@@ -5856,7 +5888,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -5878,7 +5910,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tinyvec",
  "tracing",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -6491,7 +6523,7 @@ version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
- "web-time",
+ "web-time 1.1.0",
  "zeroize",
 ]
 
@@ -7413,6 +7445,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "terminal-spike"
+version = "0.0.0"
+dependencies = [
+ "alacritty_terminal",
+ "gpui-kit",
+ "libc",
 ]
 
 [[package]]
@@ -8397,6 +8438,16 @@ name = "web-sys"
 version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa30049b1c872b72c89866d458eae9f20380ab280ffd1b1e18df2d3e2d98cfe0"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

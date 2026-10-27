@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/app", "crates/kube", "crates/terminal"]
+members = ["crates/app", "crates/kube", "crates/terminal", "spikes/*"]
 
 [workspace.package]
 edition = "2024"
@@ -34,6 +34,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # Dev-only: mock `kube::Client` services for apply orchestration tests.
 http = "1"
 tower = { version = "0.5", features = ["util"] }
+# Spike-only (spikes/*): mach task_info() RSS samples, gpui frame-trace
+# timestamps, and the editor spike's incremental-parse measurement.
+libc = "0.2"
+web-time = "0.2"
+tree-sitter = "0.26"
 
 [workspace.dependencies.astrolabe-kube]
 path = "crates/kube"

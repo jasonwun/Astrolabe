@@ -1,22 +1,17 @@
-# PROTOTYPE / THROWAWAY — terminal feasibility spike, not production code.
-# Self-contained crate on purpose: the repo root stays workspace-free.
+# Feasibility and performance spike, not production code: run by hand on
+# every dependency upgrade (docs/agents/spike-regression.md).
 [package]
 name = "terminal-spike"
 version = "0.0.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 
 [dependencies]
-# Locked versions — do not bump. gpui-kit is the project's GPUI facade
-# (re-exports gpui-pre 0.3.9); `profiler` turns on gpui's frame-timing trace
-# for the measured-results section of the README.
-gpui-kit = { version = "=0.8.0", features = ["profiler"] }
-# The VT engine under test. Exactly 0.26.0 from crates.io (NOT the
-# zed-industries fork), per the research doc. Cargo.lock is committed.
-alacritty_terminal = "=0.26.0"
+# `profiler` turns on gpui's frame-timing trace for the measured-results
+# section of the README.
+gpui-kit = { workspace = true, features = ["profiler"] }
+# The VT engine under test (crates.io, not the zed-industries fork).
+alacritty_terminal.workspace = true
 # Used only for a mach task_info() RSS sample on macOS (log-flood mode).
 # Already in gpui's tree.
-libc = "0.2"
-
-[profile.release]
-debug-assertions = false
+libc.workspace = true

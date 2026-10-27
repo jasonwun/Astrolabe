@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 
-use backend::{display_only, spawn_shell, SessionConfig, TerminalBackend};
+use backend::{SessionConfig, TerminalBackend, display_only, spawn_shell};
 use view::TerminalView;
 
 /// Scrollback bound for the log-flood benchmark (lines). The point of the
@@ -35,6 +35,10 @@ fn main() {
     // Turn on gpui's frame-timing trace for the flood-phase draw stats.
     gpui_kit::profiler::set_trace_enabled(true);
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a spike measures gpui-kit alone, without the app's icon assets"
+    )]
     gpui_kit::application().run(move |cx| {
         let (backend, events): (Arc<dyn TerminalBackend>, _) = if log_flood {
             // Display-only terminal: no PTY, ANSI log stream fed via
@@ -79,6 +83,10 @@ fn main() {
         };
         let events = Arc::new(events);
 
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the spike's numbers were taken without the theme Root"
+        )]
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {

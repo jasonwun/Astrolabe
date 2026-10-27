@@ -67,11 +67,7 @@ impl PhaseStats {
             .count();
         format!(
             "frames={} draw_avg={:.2?} draw_worst={:.2?} gap_worst={:.2?} gaps>33ms={}",
-            self.presents,
-            avg,
-            worst,
-            worst_gap,
-            stutters
+            self.presents, avg, worst, worst_gap, stutters
         )
     }
 }
@@ -124,13 +120,25 @@ impl FrameStats {
                 _ => {}
             }
         }
-        while self.draws.front().is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW) {
+        while self
+            .draws
+            .front()
+            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
+        {
             self.draws.pop_front();
         }
-        while self.presents.front().is_some_and(|t| t.elapsed() > FRAME_WINDOW) {
+        while self
+            .presents
+            .front()
+            .is_some_and(|t| t.elapsed() > FRAME_WINDOW)
+        {
             self.presents.pop_front();
         }
-        while self.gaps.front().is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW) {
+        while self
+            .gaps
+            .front()
+            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
+        {
             self.gaps.pop_front();
         }
     }
@@ -257,7 +265,11 @@ fn bench_highlighter(content: &str) {
     let rope2 = Rope::from_str(&edited);
     let t = Instant::now();
     let ok = hl.update(Some(edit), &rope2, None);
-    println!("[highlight] incremental reparse after 1-char edit: {:.2?} completed={}", t.elapsed(), ok);
+    println!(
+        "[highlight] incremental reparse after 1-char edit: {:.2?} completed={}",
+        t.elapsed(),
+        ok
+    );
 
     // The editor only attempts a 2 ms synchronous parse for documents up to
     // 256KB (then falls back to a debounced background parse). Both gates fail
@@ -316,7 +328,11 @@ impl SpikeView {
                 .soft_wrap(false);
             // Interactive mode loads immediately; the auto suite's load
             // scenario sets the value itself so it can time it.
-            if auto { state } else { state.default_value(content.clone()) }
+            if auto {
+                state
+            } else {
+                state.default_value(content.clone())
+            }
         });
 
         let focus_handle = editor.focus_handle(cx).clone();
@@ -328,7 +344,11 @@ impl SpikeView {
             editor,
             frames: FrameStats::new(window),
             content,
-            status: if auto { "auto suite starting".into() } else { "interactive".into() },
+            status: if auto {
+                "auto suite starting".into()
+            } else {
+                "interactive".into()
+            },
             rss: rss_bytes(),
             last_rss: Instant::now(),
         };
@@ -377,7 +397,9 @@ impl Render for SpikeView {
             .border_b_1()
             .border_color(cx.theme().border)
             .child(format!("fps {fps:>3.0}"))
-            .child(format!("draw avg {avg_draw:.2?} worst {worst_draw:.2?} (1s)"))
+            .child(format!(
+                "draw avg {avg_draw:.2?} worst {worst_draw:.2?} (1s)"
+            ))
             .child(format!("gap worst {worst_gap:.2?}"))
             .child(format!("rss {} MB", self.rss / 1_048_576))
             .child(self.status.clone())
@@ -431,7 +453,9 @@ async fn run_all(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         }
     }
     if !visible {
-        println!("[spike] no presented frames after 15s — the window is occluded or offscreen; frame metrics need a visible window. Bring it on screen and retry.");
+        println!(
+            "[spike] no presented frames after 15s — the window is occluded or offscreen; frame metrics need a visible window. Bring it on screen and retry."
+        );
         let _ = cx.update(|_, app| app.quit());
         return;
     }
@@ -439,7 +463,10 @@ async fn run_all(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
     scenario_load(view.clone(), cx).await;
     // Give the debounced background parse time to finish before scrolling.
     sleep(cx, Duration::from_secs(2)).await;
-    println!("[load] rss after load + background parse: {} MB", rss_bytes() / 1_048_576);
+    println!(
+        "[load] rss after load + background parse: {} MB",
+        rss_bytes() / 1_048_576
+    );
 
     let content = with_view(&view, cx, |this, _, _| this.content.clone()).unwrap_or_default();
     bench_highlighter(&content);
@@ -452,7 +479,8 @@ async fn run_all(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
     // Restore the big file so a staying window is usable.
     with_view(&view, cx, |this, window, cx| {
         let content = this.content.clone();
-        this.editor.update(cx, |s, cx| s.set_value(content, window, cx));
+        this.editor
+            .update(cx, |s, cx| s.set_value(content, window, cx));
         this.set_status("suite done", cx);
     });
 
@@ -548,7 +576,12 @@ async fn scenario_scroll(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContex
     sleep(cx, Duration::from_millis(50)).await;
     let burst = with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
 
-    println!("[scroll] jumps=5+end {} | pagedown-burst=60 {} loop_iter_worst={:.2?}", jumps.report(), burst.report(), iter_worst);
+    println!(
+        "[scroll] jumps=5+end {} | pagedown-burst=60 {} loop_iter_worst={:.2?}",
+        jumps.report(),
+        burst.report(),
+        iter_worst
+    );
 }
 
 /// Edit: typing bursts (single chars) and line inserts at top/middle/end.
@@ -603,15 +636,11 @@ async fn scenario_edit(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
 
     // Delete burst: 60 backspaces at the end. Separate phase so its frame
     // stats aren't mixed with the insert bursts.
-    let insert_stats = with_view(&view, cx, |this, _, _| this.frames.take_phase())
-        .unwrap_or_default();
+    let insert_stats =
+        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
     with_view(&view, cx, |this, window, cx| {
         this.editor.update(cx, |s, cx| {
-            s.set_cursor_position(
-                Position::new(lines.saturating_sub(1) as u32, 0),
-                window,
-                cx,
-            )
+            s.set_cursor_position(Position::new(lines.saturating_sub(1) as u32, 0), window, cx)
         });
     });
     sleep(cx, Duration::from_millis(100)).await;
@@ -626,12 +655,15 @@ async fn scenario_edit(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
         del_iter_worst = del_iter_worst.max(t.elapsed());
     }
     sleep(cx, Duration::from_millis(50)).await;
-    let delete_stats = with_view(&view, cx, |this, _, _| this.frames.take_phase())
-        .unwrap_or_default();
+    let delete_stats =
+        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
 
     latencies.sort();
     let avg = latencies.iter().sum::<Duration>() / latencies.len().max(1) as u32;
-    let p50 = latencies.get(latencies.len() / 2).copied().unwrap_or_default();
+    let p50 = latencies
+        .get(latencies.len() / 2)
+        .copied()
+        .unwrap_or_default();
     let worst = latencies.last().copied().unwrap_or_default();
     println!(
         "[edit] inserts={} edit_avg={:.2?} edit_p50={:.2?} edit_worst={:.2?} | insert-burst {} | delete-burst=60 {}",
@@ -652,7 +684,7 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
     let baseline = with_view(&view, cx, |this, _, cx| {
         this.set_status("undo/redo", cx);
         let len = this.editor.read(cx).text().len();
-        let row = (this.content.matches('\n').count() + 1) / 2;
+        let row = this.content.matches('\n').count().div_ceil(2);
         (len, row)
     })
     .unwrap_or((0, 0));
@@ -673,10 +705,10 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
         });
         sleep(cx, Duration::from_millis(5)).await;
     }
-    let insert_stats = with_view(&view, cx, |this, _, _| this.frames.take_phase())
-        .unwrap_or_default();
-    let after_inserts = with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len())
-        .unwrap_or(0);
+    let insert_stats =
+        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+    let after_inserts =
+        with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len()).unwrap_or(0);
 
     // N undos.
     sleep(cx, Duration::from_millis(100)).await;
@@ -693,9 +725,10 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
     }
     let undo_wall = t_undo.elapsed();
     sleep(cx, Duration::from_millis(50)).await;
-    let undo_stats = with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
-    let after_undos = with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len())
-        .unwrap_or(0);
+    let undo_stats =
+        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+    let after_undos =
+        with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len()).unwrap_or(0);
 
     // N redos.
     with_view(&view, cx, |this, _, _| this.frames.begin_phase());
@@ -711,9 +744,10 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
     }
     let redo_wall = t_redo.elapsed();
     sleep(cx, Duration::from_millis(50)).await;
-    let redo_stats = with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
-    let after_redos = with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len())
-        .unwrap_or(0);
+    let redo_stats =
+        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+    let after_redos =
+        with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len()).unwrap_or(0);
 
     println!(
         "[undo/redo] n={} undo_wall={:.2?} ({:.2?}/op incl. 10ms pacing) redo_wall={:.2?} ({:.2?}/op) len baseline={} after_inserts={} after_undos={} after_redos={}",
@@ -727,7 +761,10 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
         after_undos,
         after_redos,
     );
-    println!("[undo/redo] undo_iter_worst={:.2?} redo_iter_worst={:.2?}", undo_iter_worst, redo_iter_worst);
+    println!(
+        "[undo/redo] undo_iter_worst={:.2?} redo_iter_worst={:.2?}",
+        undo_iter_worst, redo_iter_worst
+    );
     println!(
         "[undo/redo] insert-burst {} | undo-burst {} | redo-burst {}",
         insert_stats.report(),
@@ -747,7 +784,12 @@ async fn scenario_indent(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContex
         ("plain mapping entry", "key: value\nnext: 1\n", 0, 0),
         ("top-level key:", "spec:\n  replicas: 1\n", 0, 2),
         ("nested key:", "      containers:\n      other: 1\n", 0, 8),
-        ("list item line", "        - name: app\n        - name: db\n", 0, 8),
+        (
+            "list item line",
+            "        - name: app\n        - name: db\n",
+            0,
+            8,
+        ),
         ("list item at EOF", "        - name: app\n", 0, 8),
         ("list item ending with ':'", "        - name:\n", 0, 10),
     ];
@@ -793,6 +835,10 @@ async fn scenario_indent(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContex
 // ---------------------------------------------------------------- main
 
 fn main() {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a spike measures gpui-kit alone, without the app's icon assets"
+    )]
     gpui_kit::application().run(|cx| {
         // Turn on gpui's frame trace so the overlay's FrameTimingCollector
         // actually receives draw/present events (off by default).

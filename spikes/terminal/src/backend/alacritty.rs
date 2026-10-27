@@ -25,9 +25,9 @@ use alacritty_terminal::tty::{self, Options, Shell};
 use alacritty_terminal::vte::ansi::{self, Color, CursorShape as VteCursorShape, NamedColor};
 
 use super::{
-    BackendStats, ClipboardKind, CursorShape, ExitStatus, RenderSnapshot, Rgba, SessionConfig,
-    SnapshotCell, SnapshotCursor, StyleFlags, TerminalBackend, TerminalEvent, TerminalModes,
-    DEFAULT_BG, DEFAULT_FG,
+    BackendStats, ClipboardKind, CursorShape, DEFAULT_BG, DEFAULT_FG, ExitStatus, RenderSnapshot,
+    Rgba, SessionConfig, SnapshotCell, SnapshotCursor, StyleFlags, TerminalBackend, TerminalEvent,
+    TerminalModes,
 };
 
 /// Formatter carried by alacritty's OSC52-load event; never leaves this module.
@@ -573,7 +573,7 @@ fn indexed_color(i: u8) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::{display_only, TerminalBackend as _};
+    use crate::backend::display_only;
 
     #[test]
     fn plain_text_and_cursor_position() {

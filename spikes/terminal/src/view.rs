@@ -11,8 +11,8 @@ use gpui_kit::*;
 
 use crate::backend::alacritty::EventStream;
 use crate::backend::{
-    keys, CursorShape, ExitStatus, RenderSnapshot, Rgba, StyleFlags, TerminalBackend,
-    TerminalEvent, DEFAULT_BG, DEFAULT_FG,
+    CursorShape, DEFAULT_BG, DEFAULT_FG, ExitStatus, RenderSnapshot, Rgba, StyleFlags,
+    TerminalBackend, TerminalEvent, keys,
 };
 
 /// How long the drain keeps collecting after the first event of a batch.
@@ -115,42 +115,44 @@ impl TerminalView {
 
     /// Background-recv + bounded foreground drain; one notify per batch.
     fn spawn_event_drain(&self, cx: &mut Context<Self>, events: Arc<EventStream>) {
-        cx.spawn(async move |this, cx| loop {
-            let first = {
-                let events = events.clone();
-                cx.background_executor()
-                    .spawn(async move { events.recv() })
-                    .await
-            };
-            let Some(first) = first else { break };
-            let mut batch = vec![first];
+        cx.spawn(async move |this, cx| {
+            loop {
+                let first = {
+                    let events = events.clone();
+                    cx.background_executor()
+                        .spawn(async move { events.recv() })
+                        .await
+                };
+                let Some(first) = first else { break };
+                let mut batch = vec![first];
 
-            let mut rest = {
-                let events = events.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let deadline = Instant::now() + COALESCE_WINDOW;
-                        let mut v = Vec::new();
-                        while v.len() + 1 < COALESCE_MAX {
-                            match events.try_recv() {
-                                Some(e) => v.push(e),
-                                None if Instant::now() < deadline => {
-                                    std::thread::sleep(Duration::from_millis(1))
+                let mut rest = {
+                    let events = events.clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            let deadline = Instant::now() + COALESCE_WINDOW;
+                            let mut v = Vec::new();
+                            while v.len() + 1 < COALESCE_MAX {
+                                match events.try_recv() {
+                                    Some(e) => v.push(e),
+                                    None if Instant::now() < deadline => {
+                                        std::thread::sleep(Duration::from_millis(1))
+                                    }
+                                    None => break,
                                 }
-                                None => break,
                             }
-                        }
-                        v
-                    })
-                    .await
-            };
-            batch.append(&mut rest);
+                            v
+                        })
+                        .await
+                };
+                batch.append(&mut rest);
 
-            if this
-                .update(cx, |view, cx| view.handle_events(batch, cx))
-                .is_err()
-            {
-                break;
+                if this
+                    .update(cx, |view, cx| view.handle_events(batch, cx))
+                    .is_err()
+                {
+                    break;
+                }
             }
         })
         .detach();
@@ -228,12 +230,7 @@ impl TerminalView {
         }
     }
 
-    fn on_scroll(
-        &mut self,
-        event: &ScrollWheelEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_scroll(&mut self, event: &ScrollEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let lines: i32 = match event.delta {
             ScrollDelta::Lines(p) => p.y.round() as i32,
             ScrollDelta::Pixels(p) => {
@@ -470,11 +467,11 @@ impl Render for TerminalView {
                 }
                 // Latency probe: did this frame make the marker visible?
                 let mut probe = probe.lock().unwrap();
-                if let Some(p) = probe.as_ref() {
-                    if prepared.snapshot.contains(&p.marker) {
-                        println!("[probe] keystroke->paint: {:?}", p.start.elapsed());
-                        *probe = None;
-                    }
+                if let Some(p) = probe.as_ref()
+                    && prepared.snapshot.contains(&p.marker)
+                {
+                    println!("[probe] keystroke->paint: {:?}", p.start.elapsed());
+                    *probe = None;
                 }
             },
         )
@@ -485,7 +482,7 @@ impl Render for TerminalView {
             .size_full()
             .bg(to_hsla(DEFAULT_BG))
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_scroll(cx.listener(Self::on_scroll))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _event, window, cx| {
