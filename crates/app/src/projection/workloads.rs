@@ -13,8 +13,8 @@ use astrolabe_kube::k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::{
-    DetailField, DetailItem, DetailModel, DetailSection, ReplicaCounts, ResourceRow, ResourceTable,
-    SummaryTable, age_of, detail, format_age,
+    Containers, DetailField, DetailItem, DetailModel, DetailSection, Forward, ForwardTo,
+    ReplicaCounts, ResourceRow, ResourceTable, SummaryTable, age_of, detail, format_age,
 };
 use crate::store::ObjectKey;
 
@@ -251,6 +251,15 @@ pub fn pod_detail(pod: &Pod, now: Timestamp) -> DetailModel {
             .to_vec(),
         rows: containers,
     }];
+    model.containers = Some(Containers {
+        all: pod_containers(pod),
+        running: running_containers(pod),
+    });
+    model.forward = Some(Forward {
+        to: ForwardTo::Pod,
+        ports: pod_ports(pod),
+        empty: "No declared ports",
+    });
     model
 }
 
@@ -1070,6 +1079,7 @@ pub fn cronjob_detail(cronjob: &CronJob, now: Timestamp) -> DetailModel {
     ));
     let value = serde_json::to_value(cronjob).unwrap_or_default();
     let mut model = detail("CronJob", cronjob, &value, summary, now);
+    model.suspended = Some(spec.suspend.unwrap_or(false));
     if let Some(template) = &spec.job_template.spec {
         model.sections.push(DetailSection {
             title: "Template".to_string(),

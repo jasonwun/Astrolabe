@@ -340,3 +340,28 @@ fn empty_template_fields_stay_distinct_from_empty_items() {
     let detail = statefulset_detail(&statefulset, now());
     assert_eq!(detail.status, [("Images".to_string(), String::new())]);
 }
+
+#[test]
+fn a_cronjob_detail_says_whether_it_is_suspended() {
+    let suspended = |spec: serde_json::Value| {
+        let cronjob = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "nightly", "namespace": "default"},
+            "spec": spec
+        }))
+        .unwrap();
+        cronjob_detail(&cronjob, now()).suspended
+    };
+    let template = serde_json::json!({"spec": {
+        "template": {"spec": {"containers": [], "restartPolicy": "Never"}}
+    }});
+    assert_eq!(
+        suspended(
+            serde_json::json!({"schedule": "@daily", "suspend": true, "jobTemplate": template})
+        ),
+        Some(true)
+    );
+    assert_eq!(
+        suspended(serde_json::json!({"schedule": "@daily", "jobTemplate": template})),
+        Some(false)
+    );
+}

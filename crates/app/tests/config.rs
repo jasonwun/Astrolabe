@@ -3,7 +3,8 @@
 
 use astrolabe::projection::SummaryTable;
 use astrolabe::projection::config::{
-    SecretKey, config_map_detail, project_config_maps, project_secrets, secret_detail, secret_value,
+    Revealable, SecretKey, config_map_detail, project_config_maps, project_secrets, secret_detail,
+    secret_value,
 };
 use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -109,11 +110,13 @@ fn a_secret_detail_lists_keys_without_their_values() {
         [
             SecretKey {
                 key: "cert".to_string(),
-                bytes: 1
+                bytes: 1,
+                value: Revealable::new("<binary, 1 bytes>".to_string()),
             },
             SecretKey {
                 key: "password".to_string(),
-                bytes: 7
+                bytes: 7,
+                value: Revealable::new("hunter2".to_string()),
             },
         ]
     );
@@ -130,6 +133,15 @@ fn a_secret_yaml_preview_masks_its_values_but_edit_gets_them() {
     assert!(model.yaml.contains("name: db"), "{}", model.yaml);
     let edit = model.edit_yaml.expect("Edit YAML gets the real manifest");
     assert!(edit.contains("aHVudGVyMg=="), "{edit}");
+}
+
+#[test]
+fn a_revealable_value_never_shows_in_debug() {
+    let value = Revealable::new("hunter2".to_string());
+
+    assert_eq!(value.reveal(), "hunter2");
+    let debug = format!("{value:?}");
+    assert!(!debug.contains("hunter2"), "{debug}");
 }
 
 #[test]

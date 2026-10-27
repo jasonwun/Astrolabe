@@ -2,6 +2,7 @@
 //! with their list columns, full action set and optional related kind.
 
 use astrolabe::builtin::{Action, BuiltinKind};
+use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 
@@ -224,4 +225,60 @@ fn events_use_generic_three_section_details_without_special_status() {
     assert!(detail.replicas.is_none());
     assert!(!detail.metadata.is_empty());
     assert!(!detail.yaml.is_empty());
+}
+
+#[test]
+fn an_events_row_opens_its_involved_object_from_any_cell() {
+    let event: DynamicObject = serde_json::from_value(serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "Event",
+        "metadata": {"name": "web.started", "namespace": "default"},
+        "involvedObject": {"apiVersion": "v1", "kind": "Pod", "name": "web", "namespace": "default", "uid": "uid-web"},
+        "reason": "Started"
+    }))
+    .unwrap();
+    let registration = BuiltinKind::Events.registration();
+
+    let row_target = registration.row_target.expect("Events open another object");
+
+    assert_eq!(
+        row_target(&event),
+        Some(ObjectReference {
+            api_version: Some("v1".to_string()),
+            kind: Some("Pod".to_string()),
+            name: Some("web".to_string()),
+            namespace: Some("default".to_string()),
+            uid: Some("uid-web".to_string()),
+            ..ObjectReference::default()
+        })
+    );
+    assert!(registration.open_all_cells);
+}
+
+#[test]
+fn other_rows_open_themselves_from_their_first_cell() {
+    for kind in BuiltinKind::ALL {
+        if kind == BuiltinKind::Events {
+            continue;
+        }
+        let registration = kind.registration();
+        assert!(registration.row_target.is_none(), "{kind:?} row target");
+        assert!(!registration.open_all_cells, "{kind:?} open all cells");
+    }
+}
+
+#[test]
+fn navigation_lists_every_kind_but_endpoint_slices_once() {
+    let mut listed: Vec<BuiltinKind> = BuiltinKind::NAVIGATION
+        .iter()
+        .flat_map(|(_, kinds)| kinds.iter().copied())
+        .chain([BuiltinKind::EndpointSlices])
+        .collect();
+    let count = listed.len();
+    listed.sort();
+    listed.dedup();
+    assert_eq!(listed.len(), count, "a kind is listed twice");
+    let mut all = BuiltinKind::ALL.to_vec();
+    all.sort();
+    assert_eq!(listed, all);
 }

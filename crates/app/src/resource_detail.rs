@@ -7,12 +7,9 @@
 use astrolabe_kube::crd::KindResource;
 use std::collections::BTreeSet;
 
-use astrolabe_kube::k8s_openapi::api::batch::v1::CronJob;
-use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod, Secret, Service};
+use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, ObjectReference};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::k8s_openapi::serde::de::DeserializeOwned;
-use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::discovery::ApiResource;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
@@ -25,12 +22,10 @@ use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
 use crate::clock;
-use crate::projection::config::{HIDDEN, SecretKey, secret_value};
-use crate::projection::network::service_ports;
-use crate::projection::workloads::{pod_containers, pod_ports, running_containers};
+use crate::projection::config::{HIDDEN, SecretKey};
 use crate::projection::{
-    DetailField, DetailItem, DetailModel, ReplicaCounts, ResourceTable, SummaryTable,
-    custom_resource_detail, definition_detail, namespace_detail, track_ages,
+    DetailField, DetailItem, DetailModel, Forward, ForwardTo, ReplicaCounts, ResourceTable,
+    SummaryTable, custom_resource_detail, definition_detail, namespace_detail, track_ages,
 };
 use crate::resource_list::OpenDetail;
 use crate::session::{
@@ -49,6 +44,63 @@ pub enum DetailTarget {
     Definition { name: String },
     Builtin { kind: BuiltinKind, key: ObjectKey },
     Custom { id: CustomKindId, key: ObjectKey },
+}
+
+impl DetailTarget {
+    /// The object `reference` names (an Event's involved object): a
+    /// built-in kind, a Namespace, a CRD or a custom kind. A namespaced
+    /// object without a namespace of its own is in `namespace`.
+    pub fn by_reference(
+        reference: ObjectReference,
+        namespace: Option<String>,
+        session: &Session,
+    ) -> Result<Self, String> {
+        let kind = reference.kind.unwrap_or_default();
+        let name = reference.name.unwrap_or_default();
+        let target = format!("{kind}/{name}");
+        if name.is_empty() {
+            return Err(format!(
+                "Cannot open involved object {target}: name is missing"
+            ));
+        }
+        let namespaced_key =
+            || ObjectKey::new(reference.namespace.clone().or(namespace), name.clone());
+        let api_version = reference.api_version.clone();
+        if let Some(kind) = BuiltinKind::from_kind(&kind)
+            && api_version
+                .as_ref()
+                .is_none_or(|version| *version == (kind.registration().resource)().api_version)
+        {
+            return Ok(Self::Builtin {
+                kind,
+                key: namespaced_key(),
+            });
+        }
+        match (kind.as_str(), api_version.as_deref()) {
+            ("Namespace", None | Some("v1")) => Ok(Self::Namespace { name }),
+            ("CustomResourceDefinition", None | Some("apiextensions.k8s.io/v1")) => {
+                Ok(Self::Definition { name })
+            }
+            _ => {
+                let group = api_version
+                    .and_then(|version| version.split_once('/').map(|(group, _)| group.to_string()))
+                    .unwrap_or_default();
+                let id = CustomKindId { group, kind };
+                if let Some(custom) = session.custom_kind(&id) {
+                    let key = if custom.namespaced {
+                        namespaced_key()
+                    } else {
+                        ObjectKey::cluster_scoped(name)
+                    };
+                    Ok(Self::Custom { id, key })
+                } else {
+                    Err(format!(
+                        "Cannot open involved object {target}: kind is not registered"
+                    ))
+                }
+            }
+        }
+    }
 }
 
 /// Logs was pressed: open a Logs tab following this container.
@@ -388,57 +440,13 @@ impl ResourceDetailPanel {
         );
     }
 
-    /// The shown Pod's containers `action` can target: Logs reads every
-    /// container, init containers first; Exec needs one still running.
-    fn containers(&self, action: PodAction, cx: &App) -> Vec<String> {
-        let Some(pod) = self.pod(cx) else {
-            return Vec::new();
-        };
-        match action {
-            PodAction::Logs => pod_containers(&pod),
-            PodAction::Exec | PodAction::Forward => running_containers(&pod),
-        }
-    }
-
-    /// The shown Pod, as of the watch.
-    fn pod(&self, cx: &App) -> Option<Pod> {
-        self.typed(BuiltinKind::Pods, cx)
-    }
-
-    /// The shown object as `K`, when it is of built-in `kind`.
-    fn typed<K: Resource + DeserializeOwned>(&self, kind: BuiltinKind, cx: &App) -> Option<K> {
-        let DetailTarget::Builtin { kind: shown, key } = &self.target else {
-            return None;
-        };
-        if *shown != kind {
-            return None;
-        }
-        let namespace = key.namespace.as_deref()?;
-        let session = self.session.read(cx);
-        session
-            .object_watch(&session.builtin_watch_key(kind, namespace))
-            .and_then(|watch| watch.get(Some(namespace), &key.name))
-            .and_then(|object| object.clone().try_parse::<K>().ok())
-    }
-
-    /// What Port Forward reaches from this tab: the Pod or the Service.
-    fn forward_target(&self) -> Option<ForwardTarget> {
-        match &self.target {
-            DetailTarget::Builtin {
-                kind: BuiltinKind::Pods,
-                key,
-            } => Some(ForwardTarget::Pod(key.clone())),
-            DetailTarget::Builtin {
-                kind: BuiltinKind::Services,
-                key,
-            } => Some(ForwardTarget::Service(key.clone())),
-            _ => None,
-        }
-    }
-
     /// Run `action` in the only container, or ask which one.
     fn pick_container(&mut self, action: PodAction, cx: &mut Context<Self>) {
-        match self.containers(action, cx).as_slice() {
+        let containers = self
+            .resolve(cx)
+            .map(|resolved| containers(&resolved.model, action))
+            .unwrap_or_default();
+        match containers.as_slice() {
             [only] => self.run_in(action, only.clone(), cx),
             _ => self.ask(action, None, cx),
         }
@@ -473,7 +481,10 @@ impl ResourceDetailPanel {
     fn forward(&mut self, port: u16, cx: &mut Context<Self>) {
         self.picking = None;
         cx.notify();
-        let Some(target) = self.forward_target() else {
+        let Some(target) = self
+            .resolve(cx)
+            .and_then(|resolved| forward_target(&resolved.model, &resolved.object.key))
+        else {
             return;
         };
         let request = ForwardRequest { target, port };
@@ -497,7 +508,12 @@ impl ResourceDetailPanel {
         });
     }
 
-    fn render_picker(&self, picking: Picking, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_picker(
+        &self,
+        picking: Picking,
+        model: &DetailModel,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let border = cx.theme().border;
         let Picking { action, container } = picking;
         let prompt = match (action, &container) {
@@ -508,9 +524,8 @@ impl ResourceDetailPanel {
         };
         let choices: Vec<AnyElement> =
             match (action, container) {
-                (PodAction::Forward, _) => self.render_ports(cx),
-                (_, None) => self
-                    .containers(action, cx)
+                (PodAction::Forward, _) => self.render_ports(model.forward.as_ref(), cx),
+                (_, None) => containers(model, action)
                     .into_iter()
                     .map(|container| {
                         button(
@@ -568,21 +583,13 @@ impl ResourceDetailPanel {
 
     /// One button per declared port (a Service's TCP ports), or why there
     /// are none.
-    fn render_ports(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_ports(&self, forward: Option<&Forward>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let border = cx.theme().border;
-        let ports = match self.forward_target() {
-            Some(ForwardTarget::Pod(_)) => self.pod(cx).map(|pod| pod_ports(&pod)),
-            Some(ForwardTarget::Service(_)) => self
-                .typed::<Service>(BuiltinKind::Services, cx)
-                .map(|service| service_ports(&service)),
-            None => None,
-        }
-        .unwrap_or_default();
+        let ports = forward
+            .map(|forward| forward.ports.clone())
+            .unwrap_or_default();
         if ports.is_empty() {
-            let text = match self.forward_target() {
-                Some(ForwardTarget::Service(_)) => "No TCP ports",
-                _ => "No declared ports",
-            };
+            let text = forward.map_or("No declared ports", |forward| forward.empty);
             return vec![
                 div()
                     .id("picker-empty")
@@ -610,8 +617,12 @@ impl ResourceDetailPanel {
     }
 
     /// The session's forwards to the shown Pod or Service, each with Stop.
-    fn render_forwards(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let target = self.forward_target()?;
+    fn render_forwards(
+        &self,
+        target: Option<ForwardTarget>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let target = target?;
         let theme = cx.theme();
         let session = self.session.read(cx);
         let rows: Vec<AnyElement> = session
@@ -683,22 +694,20 @@ impl ResourceDetailPanel {
         )
     }
 
-    /// A Secret's keys, each value masked until revealed; a revealed value
-    /// is decoded from the watch at render time.
+    /// A Secret's keys, each value masked until revealed.
     fn render_secret_keys(&self, keys: &[SecretKey], cx: &mut Context<Self>) -> Option<AnyElement> {
         if keys.is_empty() {
             return None;
         }
         let border = cx.theme().border;
-        let secret = self.typed::<Secret>(BuiltinKind::Secrets, cx);
         let rows = keys.iter().map(|entry| {
             let key = entry.key.clone();
             let revealed = self.revealed.contains(&key);
-            let value = secret
-                .as_ref()
-                .filter(|_| revealed)
-                .and_then(|secret| secret_value(secret, &key))
-                .unwrap_or_else(|| format!("{HIDDEN} ({} bytes)", entry.bytes));
+            let value = if revealed {
+                entry.value.reveal().to_string()
+            } else {
+                format!("{HIDDEN} ({} bytes)", entry.bytes)
+            };
             let toggle = if revealed {
                 button(
                     SharedString::from(format!("secret-hide-{key}")),
@@ -775,14 +784,15 @@ impl ResourceDetailPanel {
         .detach();
     }
 
-    fn render_toolbar(&self, actions: &[Action], cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(
+        &self,
+        actions: &[Action],
+        suspended: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let border = theme.border;
         let button = |id: &'static str, label: &'static str| button(id, label, border);
-        let suspended = self
-            .typed::<CronJob>(BuiltinKind::CronJobs, cx)
-            .and_then(|cronjob| cronjob.spec.suspend)
-            .unwrap_or(false);
         h_flex()
             .gap_2()
             .p_2()
@@ -1026,6 +1036,26 @@ impl ResourceDetailPanel {
                     ))),
             )
     }
+}
+
+/// The containers `action` can target: Logs reads every container, init
+/// containers first; Exec needs one still running.
+fn containers(model: &DetailModel, action: PodAction) -> Vec<String> {
+    let Some(containers) = &model.containers else {
+        return Vec::new();
+    };
+    match action {
+        PodAction::Logs => containers.all.clone(),
+        PodAction::Exec | PodAction::Forward => containers.running.clone(),
+    }
+}
+
+/// What Port Forward reaches from the detail of the object at `key`.
+fn forward_target(model: &DetailModel, key: &ObjectKey) -> Option<ForwardTarget> {
+    Some(match model.forward.as_ref()?.to {
+        ForwardTo::Pod => ForwardTarget::Pod(key.clone()),
+        ForwardTo::Service => ForwardTarget::Service(key.clone()),
+    })
 }
 
 fn button(
@@ -1285,6 +1315,7 @@ impl Render for ResourceDetailPanel {
         };
         let model = resolved.model;
         let replicas = model.replicas;
+        let forwards = forward_target(&model, &resolved.object.key);
         let mut metadata: Vec<AnyElement> = model
             .metadata
             .iter()
@@ -1374,9 +1405,9 @@ impl Render for ResourceDetailPanel {
             .aria_label(self.display_name())
             .test_support()
             .size_full()
-            .child(self.render_toolbar(resolved.actions, cx))
+            .child(self.render_toolbar(resolved.actions, model.suspended.unwrap_or(false), cx))
             .when_some(self.picking.clone(), |this, picking| {
-                this.child(self.render_picker(picking, cx))
+                this.child(self.render_picker(picking, &model, cx))
             })
             .when_some(self.scale.clone(), |this, input| {
                 this.child(self.render_scale(&input, replicas, cx))
@@ -1384,7 +1415,7 @@ impl Render for ResourceDetailPanel {
             .when(self.confirm_delete, |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })
-            .children(self.render_forwards(cx))
+            .children(self.render_forwards(forwards, cx))
             .child(
                 v_flex()
                     .id("detail-body")
