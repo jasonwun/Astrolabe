@@ -5,9 +5,10 @@
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::session::{ForwardRequest, ForwardTarget};
+use astrolabe::session::{ForwardRequest, ForwardTarget, WatchError};
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
@@ -99,6 +100,12 @@ fn navigation_groups_the_built_in_kinds(cx: &mut TestAppContext) {
         ]
         .map(position);
         assert!(order.is_sorted(), "{labels:?}");
+        assert!(
+            !labels
+                .iter()
+                .any(|label| label == "EndpointSlices" || label == "Endpoint Slices"),
+            "{labels:?}"
+        );
     });
 }
 
@@ -272,6 +279,154 @@ fn deleting_a_selecting_service_takes_its_endpoint_slices(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn deleting_a_selectorless_service_takes_nothing_else(cx: &mut TestAppContext) {
     assert!(!delete_warning(None, cx));
+}
+
+/// An EndpointSlice owned by the Service `owner` with uid `owner_uid`.
+fn endpoint_slice(
+    name: &str,
+    (owner, owner_uid): (&str, &str),
+    addresses: &[&str],
+) -> DynamicObject {
+    object(serde_json::json!({
+        "apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice",
+        "metadata": {"name": name, "namespace": "default", "uid": format!("uid-{name}"),
+                     "ownerReferences": [{"apiVersion": "v1", "kind": "Service", "name": owner,
+                                          "uid": owner_uid, "controller": true}]},
+        "addressType": "IPv4",
+        "ports": [{"name": "http", "port": 8080, "protocol": "TCP"}],
+        "endpoints": [{"addresses": addresses}]
+    }))
+}
+
+/// `web_service`'s name and uid, as its slices' owner.
+const WEB: (&str, &str) = ("web", "uid-svc");
+const API: (&str, &str) = ("api", "uid-api");
+
+/// A `web` Service detail with the EndpointSlices watch scripted.
+fn open_service_with_slices(cx: &mut TestAppContext) -> (Ui<'_>, Sender<DynamicObject>) {
+    let (mut services, service_events) = mpsc::channel(32);
+    let (slices, slice_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![
+            (key(BuiltinKind::Services, "default"), service_events),
+            (key(BuiltinKind::EndpointSlices, "default"), slice_events),
+        ],
+    );
+    open_detail(
+        &mut ui,
+        "services",
+        &mut services,
+        vec![web_service(Some(serde_json::json!({"app": "web"})))],
+        "web",
+    );
+    (ui, slices)
+}
+
+#[gpui_kit::test]
+fn a_service_without_owned_slices_has_no_endpoint_slices_section(cx: &mut TestAppContext) {
+    let (mut ui, mut slices) = open_service_with_slices(cx);
+    snapshot(
+        &mut slices,
+        vec![endpoint_slice("api-xyz", API, &["10.0.0.9"])],
+    );
+    ui.settle();
+
+    ui.frame(|window, _| {
+        assert!(window.try_find("detail-metadata").is_some());
+        assert!(window.try_find("detail-related").is_none());
+        assert!(window.try_find_by_label("Endpoint Slices").is_none());
+        assert!(window.try_find_by_label("No endpoint slices").is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn a_service_lists_its_endpoint_slices_live_and_opens_one(cx: &mut TestAppContext) {
+    let (mut ui, mut slices) = open_service_with_slices(cx);
+    snapshot(
+        &mut slices,
+        vec![
+            endpoint_slice("web-abc", WEB, &["10.0.0.1"]),
+            endpoint_slice("api-xyz", API, &["10.0.0.9"]),
+        ],
+    );
+    ui.settle();
+
+    ui.frame(|window, _| {
+        let related = window.within("detail-related");
+        assert!(related.try_find_by_label("Endpoint Slices").is_some());
+        let columns: Vec<String> = (0..4)
+            .map(|index| {
+                related
+                    .try_find(format!("related-column-{index}"))
+                    .and_then(|column| column.label().map(|label| label.to_string()))
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(columns, ["Name", "Type", "Ports", "Endpoints"]);
+        assert!(related.try_find("related-row-default/web-abc").is_some());
+        assert!(related.try_find("related-row-default/api-xyz").is_none());
+        assert!(related.try_find_by_label("8080/TCP").is_some());
+        assert!(related.try_find_by_label("10.0.0.1").is_some());
+    });
+
+    slices
+        .try_send(Ok(Event::Apply(endpoint_slice(
+            "web-abc",
+            WEB,
+            &["10.0.0.1", "10.0.0.2"],
+        ))))
+        .unwrap();
+    ui.settle();
+    ui.frame(|window, cx| {
+        let related = window.within("detail-related");
+        assert!(related.try_find_by_label("10.0.0.1, 10.0.0.2").is_some());
+        window.click("related-row-default/web-abc", cx);
+    });
+    ui.settle();
+
+    ui.frame(|window, cx| {
+        assert!(
+            window
+                .try_find_by_label("EndpointSlice default/web-abc")
+                .is_some()
+        );
+        let status = window.within("detail-status");
+        assert!(status.try_find_by_label("Address Type: IPv4").is_some());
+        assert!(status.try_find_by_label("Ports: 8080/TCP").is_some());
+        assert!(
+            status
+                .try_find_by_label("Endpoints: 10.0.0.1, 10.0.0.2")
+                .is_some()
+        );
+        assert!(window.try_find("detail-edit").is_some());
+        window.click("detail-delete", cx);
+    });
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("A controller that owns this EndpointSlice will recreate it.")
+                .is_some()
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_forbidden_endpoint_slice_watch_still_says_so(cx: &mut TestAppContext) {
+    let (mut ui, mut slices) = open_service_with_slices(cx);
+    slices
+        .try_send(Err(WatchError::forbidden("endpointslices is forbidden")))
+        .unwrap();
+    ui.settle();
+
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .within("detail-related")
+                .try_find_by_label("No permission to list endpoint slices here")
+                .is_some()
+        );
+    });
 }
 
 #[gpui_kit::test]

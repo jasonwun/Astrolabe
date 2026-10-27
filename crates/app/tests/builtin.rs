@@ -126,7 +126,7 @@ fn every_builtin_registration_matches_its_contract() {
                 "Status",
             ],
             actions: &[Action::PortForward, Action::Edit, Action::Delete],
-            related: None,
+            related: Some(BuiltinKind::EndpointSlices),
         },
         Contract {
             kind: BuiltinKind::Ingresses,
@@ -169,6 +169,12 @@ fn every_builtin_registration_matches_its_contract() {
                 "Age",
                 "Conditions",
             ],
+            actions: EDIT_DELETE,
+            related: None,
+        },
+        Contract {
+            kind: BuiltinKind::EndpointSlices,
+            columns: &["Name", "Type", "Ports", "Endpoints"],
             actions: EDIT_DELETE,
             related: None,
         },

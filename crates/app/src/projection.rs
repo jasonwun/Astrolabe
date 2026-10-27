@@ -17,6 +17,7 @@ use crate::store::ObjectKey;
 
 pub mod autoscaling;
 pub mod config;
+pub mod endpoint_slices;
 pub mod events;
 pub mod network;
 pub mod quotas;
