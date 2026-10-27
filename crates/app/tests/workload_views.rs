@@ -362,6 +362,16 @@ fn a_pod_detail_lists_its_events(cx: &mut TestAppContext) {
     snapshot(&mut pods, vec![crashing_pod("default")]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    snapshot(&mut events, Vec::new());
+    ui.settle();
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .within("detail-related")
+                .try_find_by_label("No events")
+                .is_some()
+        );
+    });
     snapshot(
         &mut events,
         vec![

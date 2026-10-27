@@ -281,23 +281,26 @@ fn deleting_a_selectorless_service_takes_nothing_else(cx: &mut TestAppContext) {
     assert!(!delete_warning(None, cx));
 }
 
-/// An EndpointSlice the `owner` Service (uid `uid-svc` for `web`) owns.
-fn endpoint_slice(name: &str, owner: &str, addresses: &[&str]) -> DynamicObject {
-    let uid = if owner == "web" {
-        "uid-svc"
-    } else {
-        "uid-other"
-    };
+/// An EndpointSlice owned by the Service `owner` with uid `owner_uid`.
+fn endpoint_slice(
+    name: &str,
+    (owner, owner_uid): (&str, &str),
+    addresses: &[&str],
+) -> DynamicObject {
     object(serde_json::json!({
         "apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice",
         "metadata": {"name": name, "namespace": "default", "uid": format!("uid-{name}"),
                      "ownerReferences": [{"apiVersion": "v1", "kind": "Service", "name": owner,
-                                          "uid": uid, "controller": true}]},
+                                          "uid": owner_uid, "controller": true}]},
         "addressType": "IPv4",
         "ports": [{"name": "http", "port": 8080, "protocol": "TCP"}],
         "endpoints": [{"addresses": addresses}]
     }))
 }
+
+/// `web_service`'s name and uid, as its slices' owner.
+const WEB: (&str, &str) = ("web", "uid-svc");
+const API: (&str, &str) = ("api", "uid-api");
 
 /// A `web` Service detail with the EndpointSlices watch scripted.
 fn open_service_with_slices(cx: &mut TestAppContext) -> (Ui<'_>, Sender<DynamicObject>) {
@@ -325,7 +328,7 @@ fn a_service_without_owned_slices_has_no_endpoint_slices_section(cx: &mut TestAp
     let (mut ui, mut slices) = open_service_with_slices(cx);
     snapshot(
         &mut slices,
-        vec![endpoint_slice("api-xyz", "api", &["10.0.0.9"])],
+        vec![endpoint_slice("api-xyz", API, &["10.0.0.9"])],
     );
     ui.settle();
 
@@ -343,8 +346,8 @@ fn a_service_lists_its_endpoint_slices_live_and_opens_one(cx: &mut TestAppContex
     snapshot(
         &mut slices,
         vec![
-            endpoint_slice("web-abc", "web", &["10.0.0.1"]),
-            endpoint_slice("api-xyz", "api", &["10.0.0.9"]),
+            endpoint_slice("web-abc", WEB, &["10.0.0.1"]),
+            endpoint_slice("api-xyz", API, &["10.0.0.9"]),
         ],
     );
     ui.settle();
@@ -370,7 +373,7 @@ fn a_service_lists_its_endpoint_slices_live_and_opens_one(cx: &mut TestAppContex
     slices
         .try_send(Ok(Event::Apply(endpoint_slice(
             "web-abc",
-            "web",
+            WEB,
             &["10.0.0.1", "10.0.0.2"],
         ))))
         .unwrap();

@@ -176,9 +176,14 @@ fn deleting_an_owned_slice_warns_it_comes_back() {
         .unwrap()
         .remove("ownerReferences");
     let bare = dynamic(bare_value);
+    // A hand-made slice pointing at its Service: no controller rebuilds it.
+    let mut referencing_value = slice_json("manual", "web", serde_json::json!([]));
+    referencing_value["metadata"]["ownerReferences"][0]["controller"] = false.into();
+    let referencing = dynamic(referencing_value);
     assert_eq!(
         cascade(&owned),
         "A controller that owns this EndpointSlice will recreate it."
     );
     assert_eq!(cascade(&bare), "Nothing else is deleted.");
+    assert_eq!(cascade(&referencing), "Nothing else is deleted.");
 }

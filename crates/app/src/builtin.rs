@@ -444,15 +444,16 @@ fn service_cascade(service: &DynamicObject) -> &'static str {
     }
 }
 
-/// The EndpointSlice controller rebuilds a slice its Service owns; a
-/// slice nobody owns is simply gone.
+/// The EndpointSlice controller rebuilds a slice it manages, which names
+/// its Service as controller; any other slice is simply gone.
 fn endpoint_slice_cascade(slice: &DynamicObject) -> &'static str {
-    if slice
+    let controlled = slice
         .metadata
         .owner_references
-        .as_ref()
-        .is_some_and(|owners| !owners.is_empty())
-    {
+        .iter()
+        .flatten()
+        .any(|owner| owner.controller == Some(true));
+    if controlled {
         "A controller that owns this EndpointSlice will recreate it."
     } else {
         "Nothing else is deleted."
