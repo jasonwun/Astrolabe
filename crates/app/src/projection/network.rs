@@ -188,13 +188,8 @@ fn format_duration(seconds: i64) -> String {
 }
 
 /// Freelens's Service details: base fields, optional Load Balancer fields,
-/// then the Connection section.
-pub fn service_detail(service: &Service, now: Timestamp) -> DetailModel {
-    let raw = serde_json::to_value(service).unwrap_or_default();
-    service_detail_with_raw(service, &raw, now)
-}
-
-/// `raw` retains fields that the current Kubernetes types no longer model.
+/// then the Connection section. `raw` is the Service as the server sent it;
+/// it retains fields that the current Kubernetes types no longer model.
 pub fn service_detail_with_raw(
     service: &Service,
     raw: &serde_json::Value,
