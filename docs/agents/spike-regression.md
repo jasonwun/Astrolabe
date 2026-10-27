@@ -68,6 +68,13 @@ load; rerun a pair whose loads differ widely.
   RSS stays flat around 10k rows.
 - A slower metric that still costs no frames (`gaps>33ms` unchanged) is
   noted in the PR, not a blocker. #76 is the reference write-up.
+- terminal log-flood: parse MiB/s and snapshot under load follow the CPU
+  clock, not just the engine. The paced feed is light enough that the
+  clock tracks the whole process's load, so a candidate that does less
+  work elsewhere parses slower (gpui-fast: ~30 vs ~47 MiB/s). Before
+  calling a drop a regression, rerun both trees with a busy neighbour
+  (`yes > /dev/null &`, killed after the run): if the gap closes, it is
+  clock, not engine (#92).
 
 ## Adding a pass criterion
 
