@@ -94,6 +94,9 @@ Reference: `crates/app/src/resource_list.rs`.
   as `("col-header", 6usize)` (the index must be `usize`), and the returned
   `ElementSnapshot` has no `id()`; its API is in `gpui-base`'s
   `src/test_support.rs` in the cargo registry (#20).
+- Only `.test_support()` elements have snapshots: `find` on a plain
+  `.id(…)` container (a summary-table row) panics "missing ElementId",
+  though `within` still scopes to it (#89).
 - Snapshots carry element bounds, never laid-out text: a text element's
   bounds are its box, whatever the text's width or truncation. An
   ellipsis, a wrap, or text overflowing its box shows only in the manual
@@ -102,8 +105,9 @@ Reference: `crates/app/src/resource_list.rs`.
 - Detail ids (`crates/app/src/resource_detail.rs`): a summary table is
   `detail-table-<title>`, a status field `field-<label>`, and every
   condition row `field-Condition`, whatever its type. A summary table's
-  header and body cells share `table-<title>-cell-<index>`; scope with
-  `within("table-<title>-row-<n>")` or `within("table-<title>-head")`.
+  rows are `table-<title>-head` and `table-<title>-row-<n>`, its header
+  cells `table-<title>-head-<col>`, and its body cells
+  `table-<title>-cell-<row>-<col>`, unique within the table (#89).
   The related objects under a detail (a Pod's Events, a Deployment's
   Pods) are `detail-related`, drawn by `render_related`, not
   `summary_table`: cells `related-cell-<row>-<col>`, each row's first

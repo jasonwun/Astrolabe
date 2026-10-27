@@ -1,5 +1,6 @@
 //! Detail tables end an overlong cell in an ellipsis inside its column,
-//! clear of the gutter before the next one (#75). Synthetic objects
+//! clear of the gutter before the next one (#75), and every summary-table
+//! cell id is unique within its table (#89). Synthetic objects
 //! (plausible shapes, never captured from a real apiserver).
 
 mod support;
@@ -63,9 +64,56 @@ fn a_summary_table_cell_stops_short_of_the_next_column(cx: &mut TestAppContext) 
         assert_clear_of(
             window,
             "table-Data-row-0",
-            "table-Data-cell-0-text".into(),
-            "table-Data-cell-1".into(),
+            "table-Data-cell-0-0-text".into(),
+            "table-Data-cell-0-1".into(),
         );
+    });
+}
+
+#[gpui_kit::test]
+fn summary_table_cell_ids_are_unique_within_the_table(cx: &mut TestAppContext) {
+    let (mut configs, config_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::ConfigMaps, "default"), config_events)],
+    );
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("nav-configmaps", cx));
+    let config = object(serde_json::json!({
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm"},
+        "data": {"first": "one", "second": "two"}
+    }));
+    snapshot(&mut configs, vec![config]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/app", cx));
+    ui.settle();
+
+    ui.frame(|window, _| {
+        let table = window.within("detail-table-Data");
+        let mut ids = vec![
+            "table-Data-head-0".to_owned(),
+            "table-Data-head-1".to_owned(),
+        ];
+        for row in 0..2 {
+            for col in 0..2 {
+                ids.push(format!("table-Data-cell-{row}-{col}"));
+            }
+        }
+        for id in ids {
+            assert_eq!(table.find_all(id.clone()).len(), 1, "{id}");
+        }
+        // Found by its own id, with no scope. A row is a plain `h_flex` with
+        // no snapshot of its own, and a snapshot has no `id()`, so the cell
+        // is shown to sit in row 1 by its bounds matching the one found
+        // within `table-Data-row-1`.
+        let cell = window.find("table-Data-cell-1-0").bounds();
+        let in_row = window
+            .within("table-Data-row-1")
+            .find("table-Data-cell-1-0")
+            .bounds();
+        assert_eq!(cell, in_row);
     });
 }
 
