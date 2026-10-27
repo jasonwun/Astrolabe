@@ -1,0 +1,22 @@
+# Performance spike, not production code: run by hand on every dependency
+# upgrade (docs/agents/spike-regression.md).
+[package]
+name = "editor-spike"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `profiler` turns on gpui's frame-timing trace
+# (gpui_kit::profiler::FrameTimingCollector) so the overlay can report real
+# draw/present timings; `tree-sitter-yaml` links the YAML grammar.
+gpui-kit = { workspace = true, features = ["profiler", "tree-sitter-yaml"] }
+# IndentationRules for the YAML LanguageConfig registration.
+regex.workspace = true
+# InputEdit for the standalone incremental-parse measurement; the version
+# gpui-kit itself resolves.
+tree-sitter.workspace = true
+# Used only for a mach task_info() RSS sample on macOS. Already in gpui's tree.
+libc.workspace = true
+# Timestamp type used by gpui's frame trace (FrameTiming::draw_start / present_end).
+web-time.workspace = true

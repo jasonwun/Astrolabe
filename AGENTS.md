@@ -24,7 +24,7 @@ Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agen
 
 ### Testing
 
-Coverage, mutation testing, and cluster e2e commands: `docs/agents/testing.md`. Review-time judgement rules: `CODING_STANDARDS.md`.
+Coverage, mutation testing, and cluster e2e commands: `docs/agents/testing.md`. Before a dependency-upgrade PR: `docs/agents/spike-regression.md`. Review-time judgement rules: `CODING_STANDARDS.md`.
 
 ### GPUI views and UI tests
 

@@ -3,9 +3,6 @@
 **/*.rs.bk
 *.pdb
 
-# Spikes never land on the main branch; they live on their prototype/* branches
-/spikes/
-
 # Fetched references and other local-only working material
 /.scratch/
 
