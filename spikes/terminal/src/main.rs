@@ -14,6 +14,7 @@
 
 mod auto;
 mod backend;
+mod probe;
 mod view;
 
 use std::sync::Arc;

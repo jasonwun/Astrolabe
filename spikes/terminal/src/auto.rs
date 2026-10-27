@@ -99,6 +99,9 @@ async fn run_log_flood(
     std::thread::Builder::new()
         .name("log-feeder".into())
         .spawn(move || {
+            crate::probe::apply_feeder_qos();
+            println!("[probe] feeder qos={}", crate::probe::qos_name());
+            let unpaced = std::env::var("SPIKE_FEED_UNPACED").is_ok();
             let start = Instant::now();
             let mut seq = 0u64;
             let mut bytes = 0u64;
@@ -116,13 +119,14 @@ async fn run_log_flood(
                 let d = t0.elapsed();
                 advance_total += d;
                 advance_max = advance_max.max(d);
+                crate::probe::calibrate();
                 bytes += buf.len() as u64;
                 chunks += 1;
                 buf.clear();
                 // Pace to the target average rate.
                 let target = Duration::from_secs_f64(seq as f64 / TARGET_LINES_PER_SEC as f64);
                 let elapsed = start.elapsed();
-                if target > elapsed {
+                if !unpaced && target > elapsed {
                     std::thread::sleep(target - elapsed);
                 }
             }
@@ -224,6 +228,22 @@ async fn run_log_flood(
         crate::LOG_SCROLLBACK,
     );
 
+    {
+        use crate::probe::*;
+        let ms = |c: &std::sync::atomic::AtomicU64| get(c) as f64 / 1e6;
+        let n = get(&FEED_ON_E) + get(&FEED_ON_P);
+        let sn = get(&SNAP_N).max(1);
+        println!(
+            "[probe] calib_avg={:.2}us feed: n={n} wait={:.0}ms hold={:.0}ms hold_cpu={:.0}ms contended(>20us)={} on_E={:.1}% \
+             | snap(all incl. render): n={} wait_avg={:.1}us hold_avg={:.1}us on_E={:.1}% | main qos={}",
+            get(&CALIB_NS) as f64 / 1e3 / get(&CALIB_N).max(1) as f64,
+            ms(&FEED_WAIT_NS), ms(&FEED_HOLD_NS), ms(&FEED_HOLD_CPU_NS), get(&FEED_CONTENDED),
+            100.0 * get(&FEED_ON_E) as f64 / n.max(1) as f64,
+            get(&SNAP_N), get(&SNAP_WAIT_NS) as f64 / 1e3 / sn as f64,
+            get(&SNAP_HOLD_NS) as f64 / 1e3 / sn as f64,
+            100.0 * get(&SNAP_ON_E) as f64 / sn as f64, qos_name(),
+        );
+    }
     // Verdicts.
     let mut failures = 0;
     let mut check = |name: &str, ok: bool| {

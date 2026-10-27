@@ -289,8 +289,18 @@ impl TerminalBackend for AlacrittyBackend {
             return;
         };
         {
+            use crate::probe::*;
+            let t0 = std::time::Instant::now();
             let mut term = self.term.lock();
+            let wait = ns(t0);
+            if on_ecore() { add(&FEED_ON_E, 1) } else { add(&FEED_ON_P, 1) }
+            if wait > 20_000 { add(&FEED_CONTENDED, 1) }
+            let c0 = thread_cpu_ns();
+            let t1 = std::time::Instant::now();
             parser.advance(&mut *term, bytes);
+            add(&FEED_HOLD_NS, ns(t1));
+            add(&FEED_HOLD_CPU_NS, thread_cpu_ns() - c0);
+            add(&FEED_WAIT_NS, wait);
         }
         self.shared.emit(TerminalEvent::Wakeup);
     }
@@ -329,7 +339,12 @@ impl TerminalBackend for AlacrittyBackend {
     }
 
     fn snapshot(&self) -> RenderSnapshot {
+        let t0 = std::time::Instant::now();
         let mut term = self.term.lock();
+        crate::probe::add(&crate::probe::SNAP_WAIT_NS, crate::probe::ns(t0));
+        crate::probe::add(&crate::probe::SNAP_N, 1);
+        if crate::probe::on_ecore() { crate::probe::add(&crate::probe::SNAP_ON_E, 1) }
+        let _hold = SnapHold(std::time::Instant::now());
         let content = term.renderable_content();
         let cols = term.grid().columns();
         let rows = term.grid().screen_lines();
@@ -731,5 +746,12 @@ mod tests {
         assert_eq!(snap.cell(0, 0).c, 'e');
         assert_eq!(snap.cell(0, 0).combining.as_deref(), Some(&['\u{301}'][..]));
         assert_eq!(snap.cell(1, 0).c, 'x');
+    }
+}
+
+struct SnapHold(std::time::Instant);
+impl Drop for SnapHold {
+    fn drop(&mut self) {
+        crate::probe::add(&crate::probe::SNAP_HOLD_NS, crate::probe::ns(self.0));
     }
 }
