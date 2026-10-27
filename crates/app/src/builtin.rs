@@ -24,7 +24,7 @@ use crate::projection::config::{
 use crate::projection::endpoint_slices::{endpoint_slice_detail, project_endpoint_slices};
 use crate::projection::events::{event_detail, event_involves, project_events};
 use crate::projection::network::{
-    ingress_detail, project_ingresses, project_services, service_detail_with_raw,
+    ingress_detail, project_ingresses, project_services, service_detail,
 };
 use crate::projection::quotas::{
     limit_range_detail, project_limit_ranges, project_resource_quotas, resource_quota_detail,
@@ -341,7 +341,7 @@ static SERVICES: Registration = Registration {
     resource: || ApiResource::erase::<Service>(&()),
     list: |objects, now| typed_list(objects, now, project_services),
     detail: |object, now| {
-        Some(service_detail_with_raw(
+        Some(service_detail(
             &parse::<Service>(object)?,
             &object.data,
             now,

@@ -2,7 +2,7 @@
 //! Freelens 088d085's columns and detail fields.
 
 use astrolabe::projection::network::{
-    ingress_detail, project_ingresses, project_services, service_detail_with_raw, service_ports,
+    ingress_detail, project_ingresses, project_services, service_detail, service_ports,
 };
 use astrolabe::projection::workloads::ForwardPort;
 use astrolabe::projection::{
@@ -12,6 +12,7 @@ use astrolabe::projection::{
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::kube::core::DynamicObject;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -21,7 +22,7 @@ fn service(spec: serde_json::Value, status: serde_json::Value) -> Service {
     serde_json::from_value(service_object(spec, status)).unwrap()
 }
 
-/// A Service as the server sends it, which is what the Registration projects.
+/// A Service as the server sends it.
 fn service_object(spec: serde_json::Value, status: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-svc",
@@ -58,9 +59,12 @@ fn cells(service: &Service) -> Vec<String> {
     project_services(&[service], now()).rows[0].cells.clone()
 }
 
-/// Projects `raw` the way the Services Registration does.
+/// Projects `raw` the way the Services Registration does: the typed Service
+/// plus the `DynamicObject`'s untyped data.
 fn detail(raw: serde_json::Value) -> DetailModel {
-    service_detail_with_raw(&serde_json::from_value(raw.clone()).unwrap(), &raw, now())
+    let object: DynamicObject = serde_json::from_value(raw).unwrap();
+    let service = object.clone().try_parse::<Service>().unwrap();
+    service_detail(&service, &object.data, now())
 }
 
 fn section<'a>(sections: &'a [DetailSection], title: &str) -> Option<&'a DetailSection> {
