@@ -1192,17 +1192,20 @@ fn summary_table(table: &SummaryTable, cx: &App) -> AnyElement {
 fn summary_table_with_id(table: &SummaryTable, id: String, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let title = &table.title;
-    let row = |id: SharedString, cells: &[String]| {
+    // Cell ids are `<cell_prefix>-<col>`: the header's prefix and each body
+    // row's differ, so every cell id is unique within the table (#89).
+    let row = |id: SharedString, cell_prefix: &str, cells: &[String]| {
         h_flex()
             .id(id)
-            .children(cells.iter().enumerate().map(|(index, cell)| {
+            .children(cells.iter().enumerate().map(|(index, text)| {
                 table_cell(
-                    SharedString::from(format!("table-{title}-cell-{index}")),
-                    cell.clone(),
+                    SharedString::from(format!("{cell_prefix}-{index}")),
+                    text.clone(),
                     if index == 0 { 200. } else { 160. },
                 )
             }))
     };
+    let head = format!("table-{title}-head");
     v_flex()
         .id(SharedString::from(id))
         .test_support()
@@ -1215,15 +1218,13 @@ fn summary_table_with_id(table: &SummaryTable, id: String, cx: &App) -> AnyEleme
                 .child(title.clone()),
         )
         .child(
-            row(
-                SharedString::from(format!("table-{title}-head")),
-                &table.columns,
-            )
-            .text_color(theme.muted_foreground),
+            row(SharedString::from(head.clone()), &head, &table.columns)
+                .text_color(theme.muted_foreground),
         )
         .children(table.rows.iter().enumerate().map(|(index, cells)| {
             row(
                 SharedString::from(format!("table-{title}-row-{index}")),
+                &format!("table-{title}-cell-{index}"),
                 cells,
             )
         }))
