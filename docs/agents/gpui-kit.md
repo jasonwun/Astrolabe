@@ -92,11 +92,17 @@ Reference: `crates/app/src/resource_list.rs`.
 - Render order: compare `window.try_find(id).bounds().origin.y` across
   ids. `try_find` takes an `&'static str`, a `String`, or a tuple id such
   as `("col-header", 6usize)` (the index must be `usize`), and the returned
-  `ElementSnapshot` has no `id()`; its API is in `gpui-base`'s
-  `src/test_support.rs` in the cargo registry (#20).
+  `ElementSnapshot` has no `id()`. In the cargo registry, the snapshot API
+  is in `gpui-base`'s `src/test_support.rs`, and the window queries
+  (`find`, `find_all`, `within`) are in `gpui-kit`'s `src/test.rs` (#20,
+  #89).
 - Only `.test_support()` elements have snapshots: `find` on a plain
   `.id(…)` container (a summary-table row) panics "missing ElementId",
   though `within` still scopes to it (#89).
+- A "missing ElementId" panic names the id and scope in its first line,
+  then dumps every registered path (thousands of tokens). Read the first
+  line (`grep -A3 'stdout ----' | cut -c1-300`); to see what is
+  registered, grep the dump for the missing id's neighbours (#89).
 - Snapshots carry element bounds, never laid-out text: a text element's
   bounds are its box, whatever the text's width or truncation. An
   ellipsis, a wrap, or text overflowing its box shows only in the manual
