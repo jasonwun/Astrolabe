@@ -122,8 +122,8 @@ mod custom {
     use std::collections::BTreeSet;
 
     use astrolabe::projection::{
-        ResourceRow, custom_resource_detail, definition_detail, format_age,
-        project_custom_resources, project_definitions,
+        ResourceRow, age_cadence, custom_resource_detail, definition_detail, format_age,
+        next_age_change, project_custom_resources, project_definitions, track_ages,
     };
     use astrolabe::store::ObjectKey;
     use astrolabe_kube::crd::{CustomKind, catalog};
@@ -196,6 +196,61 @@ mod custom {
         assert_eq!(format_age(ago(30 * 3600), now()), "30h");
         assert_eq!(format_age(ago(3 * 86400 + 4 * 3600), now()), "3d4h");
         assert_eq!(format_age(ago(20 * 86400), now()), "20d");
+    }
+
+    #[test]
+    fn ages_tick_every_second_below_ten_minutes_then_every_minute() {
+        // Freelens 113abe5 `computeUpdateInterval`, compact: `minutes < 10`.
+        let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);
+        let second = std::time::Duration::from_secs(1);
+        let minute = std::time::Duration::from_secs(60);
+        assert_eq!(age_cadence(ago(0), now()), second);
+        assert_eq!(age_cadence(ago(3 * 60 + 42), now()), second);
+        assert_eq!(age_cadence(ago(10 * 60 - 1), now()), second);
+        assert_eq!(age_cadence(ago(10 * 60), now()), minute);
+        assert_eq!(age_cadence(ago(30 * 86400), now()), minute);
+        // An object stamped ahead of this clock (skew) still counts up.
+        assert_eq!(age_cadence(ago(-5), now()), second);
+    }
+
+    #[test]
+    fn the_next_tick_lands_when_the_youngest_age_next_changes() {
+        let ago = |millis: i64| now() - SignedDuration::from_millis(millis);
+        let millis = std::time::Duration::from_millis;
+        assert_eq!(next_age_change(ago(61_000), now()), millis(1_000));
+        assert_eq!(next_age_change(ago(61_300), now()), millis(700));
+        // 15m30s shows `15m` until 16m.
+        assert_eq!(next_age_change(ago(930_000), now()), millis(30_000));
+        assert_eq!(next_age_change(ago(-400), now()), millis(400));
+    }
+
+    #[test]
+    fn tracking_follows_the_youngest_age_formatted_against_now() {
+        let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);
+        let (cells, next) = track_ages(now(), || {
+            [
+                format_age(ago(30 * 86400), now()),
+                format_age(ago(15 * 60 + 30), now()),
+                // A finished Job's duration ends before now: not a live age.
+                format_age(ago(5), ago(1)),
+            ]
+        });
+        assert_eq!(cells, ["30d", "15m", "4s"]);
+        assert_eq!(next, std::time::Duration::from_secs(30));
+
+        let (_, next) = track_ages(now(), || format_age(ago(65), now()));
+        assert_eq!(next, std::time::Duration::from_secs(1));
+
+        // A nested projection's ages count for the outer one too.
+        let (_, next) = track_ages(now(), || {
+            format_age(ago(30 * 86400), now());
+            track_ages(now(), || format_age(ago(65), now()))
+        });
+        assert_eq!(next, std::time::Duration::from_secs(1));
+
+        // Nothing aged: a minute.
+        let (_, next) = track_ages(now(), || ());
+        assert_eq!(next, std::time::Duration::from_secs(60));
     }
 
     #[test]

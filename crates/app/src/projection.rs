@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use astrolabe_kube::crd::{CustomKind, preferred_version};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -478,8 +480,65 @@ pub(crate) fn age_of(meta: &ObjectMeta, now: Timestamp) -> String {
         .unwrap_or_default()
 }
 
+const EVERY_SECOND: Duration = Duration::from_secs(1);
+const EVERY_MINUTE: Duration = Duration::from_secs(60);
+
+thread_local! {
+    /// While [`track_ages`] runs: its `now`, and the latest `since` that
+    /// [`format_age`] formatted against it.
+    static TRACKED: Cell<Option<(Timestamp, Option<Timestamp>)>> = const { Cell::new(None) };
+}
+
+/// How often an age needs re-projecting to stay current (#70): every
+/// second while [`format_age`] shows seconds (under 10 minutes), every
+/// minute after. Freelens 113abe5 `computeUpdateInterval` with
+/// `compact = true`.
+pub fn age_cadence(since: Timestamp, now: Timestamp) -> Duration {
+    let minutes = now.duration_since(since).as_secs().div_euclid(60);
+    if minutes < 10 {
+        EVERY_SECOND
+    } else {
+        EVERY_MINUTE
+    }
+}
+
+/// How long until the age next crosses an [`age_cadence`] boundary. A
+/// tick timed by the youngest age lands as that age's text changes; older
+/// ages, on other phases, may show up to a cadence late, as in Freelens.
+pub fn next_age_change(since: Timestamp, now: Timestamp) -> Duration {
+    let cadence = age_cadence(since, now).as_nanos() as i128;
+    let age = now.duration_since(since).as_nanos();
+    Duration::from_nanos((cadence - age.rem_euclid(cadence)) as u64)
+}
+
+/// Runs `project` and returns its result with how long until the youngest
+/// age it formatted against `now` next changes ([`next_age_change`]); a
+/// minute when it formatted none. Ages formatted against another instant
+/// (a finished Job's duration) are not live and do not count.
+pub fn track_ages<T>(now: Timestamp, project: impl FnOnce() -> T) -> (T, Duration) {
+    let outer = TRACKED.replace(Some((now, None)));
+    let result = project();
+    let youngest = TRACKED.replace(outer).and_then(|(_, youngest)| youngest);
+    // A nested call against the same `now` reports to the outer one too.
+    if let (Some((at, outer_youngest)), Some(since)) = (outer, youngest)
+        && at == now
+    {
+        let merged = outer_youngest.map_or(since, |y| y.max(since));
+        TRACKED.set(Some((at, Some(merged))));
+    }
+    let next = youngest.map_or(EVERY_MINUTE, |since| next_age_change(since, now));
+    (result, next)
+}
+
 /// kubectl's `HumanDuration` (k8s.io/apimachinery/pkg/util/duration).
 pub fn format_age(since: Timestamp, now: Timestamp) -> String {
+    TRACKED.with(|tracked| {
+        if let Some((at, youngest)) = tracked.get()
+            && at == now
+        {
+            tracked.set(Some((at, Some(youngest.map_or(since, |y| y.max(since))))));
+        }
+    });
     let seconds = now.duration_since(since).as_secs();
     if seconds < -1 {
         return "<invalid>".to_string();

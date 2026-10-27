@@ -7,12 +7,14 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
+use astrolabe::clock::Clock;
 use astrolabe::session::{
     ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
     ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
+use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
@@ -138,6 +140,21 @@ pub fn open(
         execed,
         forwarded,
     }
+}
+
+/// Projects ages from `start` plus the test scheduler's elapsed time, so
+/// `advance_clock` ages every object (#70). Like the system time, no two
+/// reads return the same instant (each adds a nanosecond), so a panel that
+/// reads the clock twice for one projection fails here as it would live.
+pub fn follow_test_clock(cx: &mut TestAppContext, start: Timestamp) {
+    let origin = cx.executor().now();
+    let reads = std::cell::Cell::new(0);
+    cx.update(|cx| {
+        cx.set_global(Clock::new(move |cx| {
+            reads.set(reads.get() + 1);
+            start + (cx.background_executor().now() - origin) + Duration::from_nanos(reads.get())
+        }))
+    });
 }
 
 impl Ui<'_> {

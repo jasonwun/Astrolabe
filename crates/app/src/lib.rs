@@ -4,6 +4,7 @@
 //! (terminal engine + view) plug in here.
 
 pub mod builtin;
+pub mod clock;
 mod cluster_io;
 pub mod exec;
 pub mod jsonpath;
