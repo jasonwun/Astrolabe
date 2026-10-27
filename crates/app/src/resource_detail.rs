@@ -881,16 +881,7 @@ impl ResourceDetailPanel {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let cell = |id: SharedString, text: String, first: bool| {
-            div()
-                .id(id)
-                .aria_label(text.clone())
-                .test_support()
-                .w(px(if first { 240. } else { 140. }))
-                .flex_shrink_0()
-                .pr_2()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .child(text)
+            table_cell(id, text, if first { 240. } else { 140. })
         };
         let lowercase = related.title.to_lowercase();
         let empty = if related.forbidden {
@@ -1057,6 +1048,29 @@ fn button(
         .child(label)
 }
 
+/// A fixed-width table cell labeled with its full text. The text ends in
+/// an ellipsis inside the right gutter, so it never meets the next column
+/// (#75); `<id>-text` is the text element.
+fn table_cell(id: SharedString, text: String, width: f32) -> Observed<Stateful<Div>> {
+    div()
+        .id(id.clone())
+        .aria_label(text.clone())
+        .test_support()
+        .w(px(width))
+        .flex_shrink_0()
+        .pr_2()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-text")))
+                .test_support()
+                .w_full()
+                .text_ellipsis()
+                .child(text),
+        )
+}
+
 fn section(
     id: impl Into<ElementId>,
     title: impl Into<SharedString>,
@@ -1182,16 +1196,11 @@ fn summary_table_with_id(table: &SummaryTable, id: String, cx: &App) -> AnyEleme
         h_flex()
             .id(id)
             .children(cells.iter().enumerate().map(|(index, cell)| {
-                div()
-                    .id(SharedString::from(format!("table-{title}-cell-{index}")))
-                    .aria_label(cell.clone())
-                    .test_support()
-                    .w(px(if index == 0 { 200. } else { 160. }))
-                    .flex_shrink_0()
-                    .pr_2()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(cell.clone())
+                table_cell(
+                    SharedString::from(format!("table-{title}-cell-{index}")),
+                    cell.clone(),
+                    if index == 0 { 200. } else { 160. },
+                )
             }))
     };
     v_flex()
