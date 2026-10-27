@@ -179,7 +179,7 @@ fn every_builtin_registration_matches_its_contract() {
             related: None,
         },
     ];
-    let now = Timestamp::now();
+    let now = Timestamp::UNIX_EPOCH;
     assert_eq!(contracts.len(), BuiltinKind::ALL.len());
     for kind in BuiltinKind::ALL {
         assert!(
@@ -215,7 +215,8 @@ fn events_use_generic_three_section_details_without_special_status() {
     }))
     .unwrap();
 
-    let detail = (BuiltinKind::Events.registration().detail)(&event, Timestamp::now()).unwrap();
+    let detail =
+        (BuiltinKind::Events.registration().detail)(&event, Timestamp::UNIX_EPOCH).unwrap();
 
     assert!(detail.status.is_empty());
     assert!(detail.sections.is_empty());

@@ -340,6 +340,8 @@ impl ClusterIo {
                             )
                             .await
                         }
+                        // The restart stamp goes to the server: system time.
+                        #[allow(clippy::disallowed_methods)]
                         Operation::RolloutRestart { object } => {
                             astrolabe_kube::resource::rollout_restart(
                                 &client,

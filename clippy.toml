@@ -1,4 +1,5 @@
 disallowed-methods = [
   { path = "gpui::App::open_window", reason = "use gpui_kit::open_window, which adds the theme Root (#52)" },
   { path = "gpui_kit::application", reason = "use astrolabe::application, which registers the icon assets (#51)" },
+  { path = "jiff::Timestamp::now", reason = "use astrolabe::clock::now, which UI tests can drive (#70)" },
 ]

@@ -67,6 +67,11 @@ per window point.
   (`space`, `Return` for the specials) (#73).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
+- A view that changes with time (ages): `dev/demo.yaml` objects keep
+  their first creation time, so delete and re-apply the object for a
+  young age. Record its `resourceVersion`
+  (`kubectl get … -o jsonpath='{.metadata.resourceVersion}'`) before and
+  after the screenshots to show no watch event moved the view (#70).
 - The app has only the light theme: nothing calls
   `Theme::sync_system_appearance`. Where an issue asks for a dark-theme
   check, state that it was not checked and why.
