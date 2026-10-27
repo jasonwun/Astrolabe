@@ -144,7 +144,8 @@ pub fn open(
 
 /// Projects ages from `start` plus the test scheduler's elapsed time, so
 /// `advance_clock` ages every object (#70). Like the system time, no two
-/// reads return the same instant: each read adds a nanosecond.
+/// reads return the same instant (each adds a nanosecond), so a panel that
+/// reads the clock twice for one projection fails here as it would live.
 pub fn follow_test_clock(cx: &mut TestAppContext, start: Timestamp) {
     let origin = cx.executor().now();
     let reads = std::cell::Cell::new(0);

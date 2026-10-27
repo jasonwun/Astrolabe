@@ -241,6 +241,13 @@ mod custom {
         let (_, next) = track_ages(now(), || format_age(ago(65), now()));
         assert_eq!(next, std::time::Duration::from_secs(1));
 
+        // A nested projection's ages count for the outer one too.
+        let (_, next) = track_ages(now(), || {
+            format_age(ago(30 * 86400), now());
+            track_ages(now(), || format_age(ago(65), now()))
+        });
+        assert_eq!(next, std::time::Duration::from_secs(1));
+
         // Nothing aged: a minute.
         let (_, next) = track_ages(now(), || ());
         assert_eq!(next, std::time::Duration::from_secs(60));

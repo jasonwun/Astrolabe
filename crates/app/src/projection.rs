@@ -502,9 +502,9 @@ pub fn age_cadence(since: Timestamp, now: Timestamp) -> Duration {
     }
 }
 
-/// How long until the age next crosses an [`age_cadence`] boundary, so a
-/// tick lands as its displayed value changes rather than up to a cadence
-/// late.
+/// How long until the age next crosses an [`age_cadence`] boundary. A
+/// tick timed by the youngest age lands as that age's text changes; older
+/// ages, on other phases, may show up to a cadence late, as in Freelens.
 pub fn next_age_change(since: Timestamp, now: Timestamp) -> Duration {
     let cadence = age_cadence(since, now).as_nanos() as i128;
     let age = now.duration_since(since).as_nanos();
@@ -519,6 +519,13 @@ pub fn track_ages<T>(now: Timestamp, project: impl FnOnce() -> T) -> (T, Duratio
     let outer = TRACKED.replace(Some((now, None)));
     let result = project();
     let youngest = TRACKED.replace(outer).and_then(|(_, youngest)| youngest);
+    // A nested call against the same `now` reports to the outer one too.
+    if let (Some((at, outer_youngest)), Some(since)) = (outer, youngest)
+        && at == now
+    {
+        let merged = outer_youngest.map_or(since, |y| y.max(since));
+        TRACKED.set(Some((at, Some(merged))));
+    }
     let next = youngest.map_or(EVERY_MINUTE, |since| next_age_change(since, now));
     (result, next)
 }
