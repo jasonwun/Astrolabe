@@ -94,9 +94,21 @@ Reference: `crates/app/src/resource_list.rs`.
   as `("col-header", 6usize)` (the index must be `usize`), and the returned
   `ElementSnapshot` has no `id()`; its API is in `gpui-base`'s
   `src/test_support.rs` in the cargo registry (#20).
-- Detail ids: a summary table is `detail-table-<title>`, a status field
-  `field-<label>`, and every condition row `field-Condition`, whatever
-  its type (`crates/app/src/resource_detail.rs`).
+- Snapshots carry element bounds, never laid-out text: a text element's
+  bounds are its box, whatever the text's width or truncation. An
+  ellipsis, a wrap, or text overflowing its box shows only in the manual
+  check's screenshot; a UI test asserts the box the text is laid out in
+  (#75).
+- Detail ids (`crates/app/src/resource_detail.rs`): a summary table is
+  `detail-table-<title>`, a status field `field-<label>`, and every
+  condition row `field-Condition`, whatever its type. A summary table's
+  header and body cells share `table-<title>-cell-<index>`; scope with
+  `within("table-<title>-row-<n>")` or `within("table-<title>-head")`.
+  The related objects under a detail (a Pod's Events, a Deployment's
+  Pods) are `detail-related`, drawn by `render_related`, not
+  `summary_table`: cells `related-cell-<row>-<col>`, each row's first
+  cell `related-row-<key>`. Both tables build cells with `table_cell`,
+  whose text element is `<cell id>-text` (#75).
 
 - `use gpui_kit::*` exports gpui's `test` attribute macro. A `#[test]`
   in a module that glob-imports it (directly or through `use super::*`)
