@@ -1,4 +1,5 @@
-//! PROTOTYPE / THROWAWAY — Editor vs giant YAML spike. Not production code.
+//! Editor-vs-giant-YAML performance benchmark, rerun on every dependency
+//! upgrade (docs/agents/spike-regression.md).
 //!
 //! Question (issue #6): does gpui-kit v0.8.0's code `Editor` stay fluid on a
 //! ~2.9MB / ~38k-line Kubernetes CRD YAML — open, scroll, edit, tree-sitter
@@ -9,7 +10,6 @@
 //! Interactively: ctrl-1 load, ctrl-2 scroll, ctrl-3 edit, ctrl-4 undo/redo,
 //! ctrl-5 indent test, ctrl-0 run all.
 
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::highlighter::{HighlightTheme, SyntaxHighlighter};
@@ -19,8 +19,10 @@ use gpui_kit::component::input::{
     Position, Redo, Rope, RopeExt as _, TabSize, Undo, set_language_config,
 };
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
-use gpui_kit::profiler::{FrameEvent, FrameTimingCollector};
 use gpui_kit::*;
+use spike_support::{
+    FrameStats, FrameTotals, load_average, rss_bytes, sleep, wait_for_frames, with_view,
+};
 
 gpui_kit::actions!(
     spike,
@@ -32,181 +34,24 @@ const DATA_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/data/postgresclusters-crd.yaml"
 );
-const FRAME_WINDOW: Duration = Duration::from_secs(1);
 
-// ---------------------------------------------------------------- frame stats (gpui profiler trace)
+// ---------------------------------------------------------------- frame report
 
-/// Per-scenario frame totals, accumulated between `begin_phase` and `take_phase`.
-#[derive(Default, Clone)]
-struct PhaseStats {
-    presents: usize,
-    draws: Vec<Duration>,
-    gaps: Vec<Duration>,
-}
-
-impl PhaseStats {
-    fn report(&self) -> String {
-        if self.presents == 0 && self.draws.is_empty() {
-            return "NO FRAMES (window occluded? frame timings unavailable)".to_string();
-        }
-        let n = self.draws.len() as u32;
-        let (sum, worst) = self
-            .draws
-            .iter()
-            .fold((Duration::ZERO, Duration::ZERO), |(s, w), d| {
-                (s + *d, w.max(*d))
-            });
-        let avg = if n > 0 { sum / n } else { Duration::ZERO };
-        let worst_gap = self.gaps.iter().copied().max().unwrap_or_default();
-        // Present gaps above ~2 frames at 60Hz are stutters (or idle periods;
-        // scenarios reset the phase after every deliberate settle).
-        let stutters = self
-            .gaps
-            .iter()
-            .filter(|g| **g > Duration::from_millis(33))
-            .count();
-        format!(
-            "frames={} draw_avg={:.2?} draw_worst={:.2?} gap_worst={:.2?} gaps>33ms={}",
-            self.presents, avg, worst, worst_gap, stutters
-        )
+/// One scenario's frame totals as a log fragment.
+fn report(t: &FrameTotals) -> String {
+    if t.presents == 0 && t.draws == 0 {
+        return "NO FRAMES (window occluded? frame timings unavailable)".to_string();
     }
-}
-
-/// Drains gpui's frame trace for this window; keeps ~1s of draw times,
-/// present times, and present-to-present gaps (the jank metric) for the
-/// overlay, plus cumulative per-scenario totals.
-///
-/// The timestamps come from gpui's trace (`web_time::Instant`); pruning uses
-/// `elapsed()` so this type never has to name it.
-struct FrameStats {
-    collector: FrameTimingCollector,
-    window_id: WindowId,
-    draws: VecDeque<(web_time::Instant, Duration)>,
-    presents: VecDeque<web_time::Instant>,
-    gaps: VecDeque<(web_time::Instant, Duration)>,
-    phase: PhaseStats,
-}
-
-impl FrameStats {
-    fn new(window: &Window) -> Self {
-        Self {
-            collector: FrameTimingCollector::new(),
-            window_id: window.window_handle().window_id(),
-            draws: VecDeque::with_capacity(256),
-            presents: VecDeque::with_capacity(256),
-            gaps: VecDeque::with_capacity(256),
-            phase: PhaseStats::default(),
-        }
-    }
-
-    fn drain(&mut self) {
-        for event in self.collector.collect_unseen() {
-            match event {
-                FrameEvent::Draw(t) if t.window_id == self.window_id => {
-                    let d = t.draw_duration();
-                    self.draws.push_back((t.draw_start, d));
-                    self.phase.draws.push(d);
-                }
-                FrameEvent::Present(t) if t.window_id == self.window_id => {
-                    let at = t.present_end;
-                    if let Some(&prev) = self.presents.back() {
-                        let gap = at.duration_since(prev);
-                        self.gaps.push_back((at, gap));
-                        self.phase.gaps.push(gap);
-                    }
-                    self.presents.push_back(at);
-                    self.phase.presents += 1;
-                }
-                _ => {}
-            }
-        }
-        while self
-            .draws
-            .front()
-            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
-        {
-            self.draws.pop_front();
-        }
-        while self
-            .presents
-            .front()
-            .is_some_and(|t| t.elapsed() > FRAME_WINDOW)
-        {
-            self.presents.pop_front();
-        }
-        while self
-            .gaps
-            .front()
-            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
-        {
-            self.gaps.pop_front();
-        }
-    }
-
-    fn begin_phase(&mut self) {
-        self.drain();
-        self.phase = PhaseStats::default();
-    }
-
-    fn take_phase(&mut self) -> PhaseStats {
-        self.drain();
-        let mut phase = std::mem::take(&mut self.phase);
-        // The first present of a phase measures its gap from the last present
-        // of the previous (deliberately idle) settle — an artifact, not a
-        // stutter. Drop it.
-        if !phase.gaps.is_empty() {
-            phase.gaps.remove(0);
-        }
-        phase
-    }
-
-    /// (fps over last 1s, mean draw, worst draw, worst present gap)
-    fn stats(&mut self) -> (f32, Duration, Duration, Duration) {
-        let fps = self.presents.len() as f32 / FRAME_WINDOW.as_secs_f32();
-        let n = self.draws.len() as u32;
-        let (sum, worst) = self
-            .draws
-            .iter()
-            .fold((Duration::ZERO, Duration::ZERO), |(s, w), (_, d)| {
-                (s + *d, w.max(*d))
-            });
-        let avg = if n > 0 { sum / n } else { Duration::ZERO };
-        let worst_gap = self
-            .gaps
-            .iter()
-            .map(|(_, g)| *g)
-            .max()
-            .unwrap_or(Duration::ZERO);
-        (fps, avg, worst, worst_gap)
-    }
-}
-
-// ---------------------------------------------------------------- RSS (macOS mach)
-
-fn rss_bytes() -> u64 {
-    unsafe {
-        let mut info: libc::rusage_info_v2 = std::mem::zeroed();
-        let rc = libc::proc_pid_rusage(
-            libc::getpid(),
-            libc::RUSAGE_INFO_V2,
-            &mut info as *mut _ as *mut libc::rusage_info_t,
-        );
-        if rc == 0 { info.ri_resident_size } else { 0 }
-    }
-}
-
-// ---------------------------------------------------------------- async helpers
-
-async fn sleep(cx: &mut AsyncWindowContext, d: Duration) {
-    cx.background_executor().timer(d).await;
-}
-
-fn with_view<R>(
-    view: &WeakEntity<SpikeView>,
-    cx: &mut AsyncWindowContext,
-    f: impl FnOnce(&mut SpikeView, &mut Window, &mut Context<SpikeView>) -> R,
-) -> Option<R> {
-    view.update_in(cx, f).ok()
+    // Present gaps above ~2 frames at 60Hz are stutters (or idle periods;
+    // scenarios reset the totals after every deliberate settle).
+    format!(
+        "frames={} draw_avg={:.2?} draw_worst={:.2?} gap_worst={:.2?} {}",
+        t.presents,
+        t.draw_avg(),
+        t.draw_worst,
+        t.gap_worst(),
+        t.gap_counts(&[Duration::from_millis(33)])
+    )
 }
 
 // ---------------------------------------------------------------- standalone tree-sitter cost (question 1)
@@ -381,7 +226,6 @@ impl SpikeView {
 
 impl Render for SpikeView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.frames.drain();
         let (fps, avg_draw, worst_draw, worst_gap) = self.frames.stats();
 
         if self.last_rss.elapsed() >= Duration::from_secs(1) {
@@ -431,31 +275,12 @@ impl Render for SpikeView {
 async fn run_all(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
     // Warmup: let the window settle, fonts load, first frames present.
     sleep(cx, Duration::from_millis(800)).await;
+    let load_start = load_average();
 
-    // Visibility gate: an occluded window receives no draw callbacks from
-    // AppKit, so no frame timings exist. Wait until presents flow (keep
-    // invalidating to provoke them), or give up with a clear message.
-    let mut visible = false;
-    for _ in 0..150 {
-        with_view(&view, cx, |this, _, cx| {
-            this.set_status("waiting for a visible window", cx);
-            this.frames.drain();
-        });
-        sleep(cx, Duration::from_millis(100)).await;
-        let n = with_view(&view, cx, |this, _, _| {
-            this.frames.drain();
-            this.frames.stats().0
-        })
-        .unwrap_or(0.0);
-        if n > 0.0 {
-            visible = true;
-            break;
-        }
-    }
-    if !visible {
-        println!(
-            "[spike] no presented frames after 15s — the window is occluded or offscreen; frame metrics need a visible window. Bring it on screen and retry."
-        );
+    with_view(&view, cx, |this, _, cx| {
+        this.set_status("waiting for a visible window", cx)
+    });
+    if !wait_for_frames(&view, cx, |this| &mut this.frames).await {
         let _ = cx.update(|_, app| app.quit());
         return;
     }
@@ -484,7 +309,10 @@ async fn run_all(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         this.set_status("suite done", cx);
     });
 
-    println!("[spike] suite complete");
+    println!(
+        "[spike] suite complete, load={load_start}→{}",
+        load_average()
+    );
     if std::env::var("SPIKE_STAY").is_err() {
         let _ = cx.update(|_, app| app.quit());
     }
@@ -502,7 +330,7 @@ async fn scenario_load(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
         this.editor
             .update(cx, |s, cx| s.set_value(content.clone(), window, cx));
         let set = t_set.elapsed();
-        this.frames.begin_phase();
+        this.frames.reset_totals();
         (set, Instant::now())
     })
     .expect("view alive");
@@ -511,23 +339,20 @@ async fn scenario_load(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
     let mut first_present = None;
     for _ in 0..2000 {
         sleep(cx, Duration::from_millis(2)).await;
-        let presents = with_view(&view, cx, |this, _, _| {
-            this.frames.drain();
-            this.frames.phase.presents
-        })
-        .unwrap_or(0);
+        let presents =
+            with_view(&view, cx, |this, _, _| this.frames.totals().presents).unwrap_or(0);
         if presents > 0 {
             first_present = Some(t0.elapsed());
             break;
         }
     }
-    let stats = with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+    let stats = with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
     println!(
         "[load] read={:.2?} set_value={:.2?} first_present={:.2?} {}",
         read,
         set,
         first_present.unwrap_or_default(),
-        stats.report()
+        report(&stats)
     );
 }
 
@@ -542,7 +367,7 @@ async fn scenario_scroll(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContex
     // Jump cut to 0%, 25%, 50%, 75%, 100% — forces layout of distant regions.
     // Draw timings are meaningful here; present gaps are not (deliberate
     // 100 ms idles between jumps), so the phase is reset before the burst.
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
     for frac in [0.0, 0.25, 0.5, 0.75, 1.0] {
         let row = ((lines as f32 * frac) as usize).min(lines.saturating_sub(1));
         with_view(&view, cx, |this, window, cx| {
@@ -556,14 +381,14 @@ async fn scenario_scroll(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContex
         window.dispatch_action(Box::new(MoveToEnd), cx);
     });
     sleep(cx, Duration::from_millis(100)).await;
-    let jumps = with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+    let jumps = with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
 
     // Page-down burst through the document, one page per frame tick.
     with_view(&view, cx, |_, window, cx| {
         window.dispatch_action(Box::new(MoveToStart), cx);
     });
     sleep(cx, Duration::from_millis(100)).await;
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
     let mut iter_worst = Duration::ZERO;
     for _ in 0..60 {
         let t = Instant::now();
@@ -574,12 +399,12 @@ async fn scenario_scroll(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContex
         iter_worst = iter_worst.max(t.elapsed());
     }
     sleep(cx, Duration::from_millis(50)).await;
-    let burst = with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+    let burst = with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
 
     println!(
         "[scroll] jumps=5+end {} | pagedown-burst=60 {} loop_iter_worst={:.2?}",
-        jumps.report(),
-        burst.report(),
+        report(&jumps),
+        report(&burst),
         iter_worst
     );
 }
@@ -592,7 +417,7 @@ async fn scenario_edit(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
     })
     .unwrap_or(0);
 
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
 
     let mut latencies: Vec<Duration> = Vec::new();
     let positions = [0usize, lines / 2, lines.saturating_sub(1)];
@@ -637,14 +462,14 @@ async fn scenario_edit(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
     // Delete burst: 60 backspaces at the end. Separate phase so its frame
     // stats aren't mixed with the insert bursts.
     let insert_stats =
-        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+        with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
     with_view(&view, cx, |this, window, cx| {
         this.editor.update(cx, |s, cx| {
             s.set_cursor_position(Position::new(lines.saturating_sub(1) as u32, 0), window, cx)
         });
     });
     sleep(cx, Duration::from_millis(100)).await;
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
     let mut del_iter_worst = Duration::ZERO;
     for _ in 0..60 {
         let t = Instant::now();
@@ -656,7 +481,7 @@ async fn scenario_edit(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
     }
     sleep(cx, Duration::from_millis(50)).await;
     let delete_stats =
-        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+        with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
 
     latencies.sort();
     let avg = latencies.iter().sum::<Duration>() / latencies.len().max(1) as u32;
@@ -671,8 +496,8 @@ async fn scenario_edit(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext)
         avg,
         p50,
         worst,
-        insert_stats.report(),
-        delete_stats.report()
+        report(&insert_stats),
+        report(&delete_stats)
     );
     println!("[edit] delete_burst_iter_worst={:.2?}", del_iter_worst);
 }
@@ -695,7 +520,7 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
             s.set_cursor_position(Position::new(baseline.1 as u32, 0), window, cx)
         });
     });
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
     for i in 0..N {
         let text = format!("spike-undo-{i}: true\n");
         with_view(&view, cx, |this, window, cx| {
@@ -706,13 +531,13 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
         sleep(cx, Duration::from_millis(5)).await;
     }
     let insert_stats =
-        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+        with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
     let after_inserts =
         with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len()).unwrap_or(0);
 
     // N undos.
     sleep(cx, Duration::from_millis(100)).await;
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
     let t_undo = Instant::now();
     let mut undo_iter_worst = Duration::ZERO;
     for _ in 0..N {
@@ -726,12 +551,12 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
     let undo_wall = t_undo.elapsed();
     sleep(cx, Duration::from_millis(50)).await;
     let undo_stats =
-        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+        with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
     let after_undos =
         with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len()).unwrap_or(0);
 
     // N redos.
-    with_view(&view, cx, |this, _, _| this.frames.begin_phase());
+    with_view(&view, cx, |this, _, _| this.frames.reset_totals());
     let t_redo = Instant::now();
     let mut redo_iter_worst = Duration::ZERO;
     for _ in 0..N {
@@ -745,7 +570,7 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
     let redo_wall = t_redo.elapsed();
     sleep(cx, Duration::from_millis(50)).await;
     let redo_stats =
-        with_view(&view, cx, |this, _, _| this.frames.take_phase()).unwrap_or_default();
+        with_view(&view, cx, |this, _, _| this.frames.take_totals()).unwrap_or_default();
     let after_redos =
         with_view(&view, cx, |this, _, cx| this.editor.read(cx).text().len()).unwrap_or(0);
 
@@ -767,9 +592,9 @@ async fn scenario_undo_redo(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowCon
     );
     println!(
         "[undo/redo] insert-burst {} | undo-burst {} | redo-burst {}",
-        insert_stats.report(),
-        undo_stats.report(),
-        redo_stats.report()
+        report(&insert_stats),
+        report(&undo_stats),
+        report(&redo_stats)
     );
 }
 

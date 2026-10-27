@@ -98,4 +98,10 @@ Reference: `crates/app/src/resource_list.rs`.
   `field-<label>`, and every condition row `field-Condition`, whatever
   its type (`crates/app/src/resource_detail.rs`).
 
+- `use gpui_kit::*` exports gpui's `test` attribute macro. A `#[test]`
+  in a module that glob-imports it (directly or through `use super::*`)
+  fails with "recursion limit reached while expanding `#[test]`". In such
+  a module, import what the tests use by name (`spikes/datatable/src/auto.rs`)
+  (#78).
+
 Reference: `crates/app/tests/crd_views.rs`.

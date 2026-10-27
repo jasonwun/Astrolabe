@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::profiler::{FrameEvent, FrameTimingCollector};
 use gpui_kit::*;
+use spike_support::{load_average, rss_bytes};
 
 use crate::backend::{DEFAULT_BG, DEFAULT_FG, RenderSnapshot, Rgba, StyleFlags, TerminalBackend};
 use crate::view::{Probe, TerminalView};
@@ -77,27 +78,6 @@ fn log_line(seq: u64) -> Vec<u8> {
     .into_bytes()
 }
 
-/// RSS via mach (macOS), like the editor spike.
-fn rss_bytes() -> u64 {
-    #[cfg(target_os = "macos")]
-    unsafe {
-        let mut info: libc::rusage_info_v2 = std::mem::zeroed();
-        let rc = libc::proc_pid_rusage(
-            libc::getpid(),
-            libc::RUSAGE_INFO_V2,
-            &mut info as *mut _ as *mut libc::rusage_info_t,
-        );
-        if rc == 0 {
-            return info.ri_resident_size;
-        }
-        0
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        0
-    }
-}
-
 async fn run_log_flood(
     this: WeakEntity<TerminalView>,
     backend: Arc<dyn TerminalBackend>,
@@ -111,6 +91,7 @@ async fn run_log_flood(
     // Let the first render/resize settle before measuring.
     settle(cx, 500).await;
     let rss_before = rss_bytes();
+    let load_start = load_average();
 
     // ---- feeder thread (the "PTY reader" of the log use case) ----
     let (tx, rx) = std::sync::mpsc::channel::<FeedStats>();
@@ -273,6 +254,7 @@ async fn run_log_flood(
         "memory-bounded",
         snap.history_size <= crate::LOG_SCROLLBACK && rss_after < rss_before + 256 * 1_048_576,
     );
+    println!("[log-flood] load={load_start}→{}", load_average());
     println!(
         "[log-flood] RESULT: {} ({} failure{})",
         if failures == 0 { "PASS" } else { "FAIL" },
@@ -345,7 +327,7 @@ async fn run_suite(
     cx: &mut AsyncApp,
 ) {
     let mut t = Ctx { failures: 0 };
-    println!("[auto] scripted suite starting");
+    println!("[auto] scripted suite starting, load={}", load_average());
 
     // 1. Shell comes up with a prompt.
     let up = wait_for(cx, &backend, |s| s.contains("spike$")).await;
@@ -580,6 +562,7 @@ async fn run_suite(
         }
     }
 
+    println!("[auto] load at end={}", load_average());
     println!(
         "[auto] RESULT: {} ({} failure{})",
         if t.failures == 0 { "PASS" } else { "FAIL" },

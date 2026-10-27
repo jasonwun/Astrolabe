@@ -1,8 +1,9 @@
 # editor-spike
 
-A performance spike, not production code: build nothing on it. A workspace member
-so it tracks the pinned dependencies; rerun it on every dependency
-upgrade (`docs/agents/spike-regression.md`).
+A performance benchmark, rerun on every dependency upgrade
+(`docs/agents/spike-regression.md`). A workspace member, so it tracks the
+pinned dependencies; frame stats, RSS and load average come from
+`spikes/support`.
 
 ## Question it answers
 

@@ -7,7 +7,8 @@ cargo test --workspace        # hermetic default suite
 ```
 
 Run it last on the final commit, after review fixes; the PR's Evidence
-cites that run.
+cites that run: its output pasted verbatim, with any notes outside the
+code block.
 
 ## Cluster e2e
 

@@ -1,4 +1,5 @@
-//! PROTOTYPE / THROWAWAY — DataTable performance spike. Not production code.
+//! DataTable performance benchmark, rerun on every dependency upgrade
+//! (docs/agents/spike-regression.md).
 //!
 //! Question: does gpui-kit's DataTable (uniform_list-backed) stay smooth with
 //! ~10k Pod rows while a synthetic watch stream applies ~20 batches/sec of
@@ -9,7 +10,6 @@
 
 mod auto;
 
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::{
@@ -17,15 +17,14 @@ use gpui_kit::component::{
     table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
     v_flex,
 };
-use gpui_kit::profiler::{FrameEvent, FrameTimingCollector};
 use gpui_kit::*;
+use spike_support::{FrameStats, rss_bytes};
 
 gpui_kit::actions!(spike, [Batch50, Batch100, Batch250, Batch500]);
 
 const KEY_CONTEXT: &str = "spike";
 const TICK: Duration = Duration::from_millis(50); // 20 Hz synthetic watch stream
 const TARGET_ROWS: usize = 10_000;
-const FRAME_WINDOW: Duration = Duration::from_secs(1);
 const STATS_EVERY: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------- rng (splitmix64; no rand dep)
@@ -328,143 +327,6 @@ impl TableDelegate for PodsDelegate {
     }
 }
 
-// ---------------------------------------------------------------- frame stats (gpui profiler trace)
-
-/// Drains gpui's frame trace for this window; keeps ~1s of draw times,
-/// present times, and present-to-present gaps (the jank metric).
-///
-/// The timestamps come from gpui's trace (`web_time::Instant`); pruning uses
-/// `elapsed()` so this type never has to name it.
-struct FrameStats {
-    collector: FrameTimingCollector,
-    window_id: WindowId,
-    draws: VecDeque<(web_time::Instant, Duration)>,
-    presents: VecDeque<web_time::Instant>,
-    gaps: VecDeque<(web_time::Instant, Duration)>,
-    /// Whole-run totals since the last `reset_run`, for the scripted summary.
-    run: RunFrames,
-}
-
-#[derive(Clone, Copy, Default)]
-struct RunFrames {
-    draws: u32,
-    draw_sum: Duration,
-    draw_worst: Duration,
-    gap_worst: Duration,
-    /// Gaps over `auto::JANK_GAP`.
-    jank_gaps: u32,
-}
-
-impl RunFrames {
-    fn draw_avg(&self) -> Duration {
-        if self.draws > 0 {
-            self.draw_sum / self.draws
-        } else {
-            Duration::ZERO
-        }
-    }
-}
-
-impl FrameStats {
-    fn new(window: &Window) -> Self {
-        Self {
-            collector: FrameTimingCollector::new(),
-            window_id: window.window_handle().window_id(),
-            draws: VecDeque::with_capacity(256),
-            presents: VecDeque::with_capacity(256),
-            gaps: VecDeque::with_capacity(256),
-            run: RunFrames::default(),
-        }
-    }
-
-    fn drain(&mut self) {
-        for event in self.collector.collect_unseen() {
-            match event {
-                FrameEvent::Draw(t) if t.window_id == self.window_id => {
-                    let d = t.draw_duration();
-                    self.draws.push_back((t.draw_start, d));
-                    self.run.draws += 1;
-                    self.run.draw_sum += d;
-                    self.run.draw_worst = self.run.draw_worst.max(d);
-                }
-                FrameEvent::Present(t) if t.window_id == self.window_id => {
-                    let at = t.present_end;
-                    if let Some(&prev) = self.presents.back() {
-                        let gap = at.duration_since(prev);
-                        self.gaps.push_back((at, gap));
-                        self.run.gap_worst = self.run.gap_worst.max(gap);
-                        if gap > auto::JANK_GAP {
-                            self.run.jank_gaps += 1;
-                        }
-                    }
-                    self.presents.push_back(at);
-                }
-                _ => {}
-            }
-        }
-        while self
-            .draws
-            .front()
-            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
-        {
-            self.draws.pop_front();
-        }
-        while self
-            .presents
-            .front()
-            .is_some_and(|t| t.elapsed() > FRAME_WINDOW)
-        {
-            self.presents.pop_front();
-        }
-        while self
-            .gaps
-            .front()
-            .is_some_and(|(t, _)| t.elapsed() > FRAME_WINDOW)
-        {
-            self.gaps.pop_front();
-        }
-    }
-
-    fn reset_run(&mut self) {
-        self.drain();
-        self.run = RunFrames::default();
-    }
-
-    /// (fps over last 1s, mean draw, worst draw, worst present gap)
-    fn stats(&mut self) -> (f32, Duration, Duration, Duration) {
-        let fps = self.presents.len() as f32 / FRAME_WINDOW.as_secs_f32();
-        let n = self.draws.len() as u32;
-        let (sum, worst) = self
-            .draws
-            .iter()
-            .fold((Duration::ZERO, Duration::ZERO), |(s, w), (_, d)| {
-                (s + *d, w.max(*d))
-            });
-        let avg = if n > 0 { sum / n } else { Duration::ZERO };
-        let worst_gap = self
-            .gaps
-            .iter()
-            .map(|(_, g)| *g)
-            .max()
-            .unwrap_or(Duration::ZERO);
-        (fps, avg, worst, worst_gap)
-    }
-}
-
-// ---------------------------------------------------------------- RSS (macOS mach)
-
-fn rss_bytes() -> u64 {
-    unsafe {
-        let mut info: libc::rusage_info_v2 = std::mem::zeroed();
-        let rc = libc::proc_pid_rusage(
-            libc::getpid(),
-            libc::RUSAGE_INFO_V2,
-            &mut info as *mut _ as *mut libc::rusage_info_t,
-        );
-        if rc == 0 { info.ri_resident_size } else { 0 }
-    }
-}
-
 // ---------------------------------------------------------------- view
 
 #[derive(Clone, Copy, PartialEq)]
@@ -621,7 +483,6 @@ impl SpikeView {
 
 impl Render for SpikeView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.frames.drain();
         let (fps, avg_draw, worst_draw, worst_gap) = self.frames.stats();
 
         let overlay = h_flex()

@@ -1,8 +1,8 @@
 # terminal-spike
 
-A feasibility spike, not production code: build nothing on it. A workspace member
-so it tracks the pinned dependencies; rerun it on every dependency
-upgrade (`docs/agents/spike-regression.md`).
+A feasibility and performance benchmark, rerun on every dependency upgrade
+(`docs/agents/spike-regression.md`). A workspace member, so it tracks the
+pinned dependencies; RSS and load average come from `spikes/support`.
 
 ## Question it answers
 

@@ -1,5 +1,5 @@
-# Performance spike, not production code: run by hand on every dependency
-# upgrade (docs/agents/spike-regression.md).
+# Editor performance benchmark, rerun on every dependency upgrade
+# (docs/agents/spike-regression.md).
 [package]
 name = "editor-spike"
 version = "0.0.0"
@@ -16,7 +16,5 @@ regex.workspace = true
 # InputEdit for the standalone incremental-parse measurement; the version
 # gpui-kit itself resolves.
 tree-sitter.workspace = true
-# Used only for a mach task_info() RSS sample on macOS. Already in gpui's tree.
-libc.workspace = true
-# Timestamp type used by gpui's frame trace (FrameTiming::draw_start / present_end).
-web-time.workspace = true
+# Frame stats, RSS, load average, and the scripted suite's async helpers.
+spike-support.workspace = true
