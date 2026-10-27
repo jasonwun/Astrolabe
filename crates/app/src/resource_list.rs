@@ -6,8 +6,6 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
-use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
-use astrolabe_kube::kube::core::DynamicObject;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -16,7 +14,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::builtin::BuiltinKind;
+use crate::builtin::{BuiltinKind, Registration};
 use crate::clock;
 use crate::projection::{
     ResourceRow, ResourceTable, column_widths, default_column_weights, project_custom_resources,
@@ -33,6 +31,16 @@ pub enum ListView {
     Builtin(BuiltinKind),
     Definitions,
     Custom(CustomKindId),
+}
+
+impl ListView {
+    /// The registration behind a built-in kind's list.
+    fn registration(&self) -> Option<&'static Registration> {
+        match self {
+            ListView::Builtin(kind) => Some(kind.registration()),
+            _ => None,
+        }
+    }
 }
 
 /// A row was clicked: open its detail tab.
@@ -131,7 +139,7 @@ impl ResourceListPanel {
                 name: key.name.clone(),
             }),
             ListView::Builtin(kind) => match kind.registration().row_target {
-                Some(row_target) => self.referenced_target(*kind, key, row_target, cx),
+                Some(_) => self.referenced_target(*kind, key, cx),
                 None => Ok(DetailTarget::Builtin {
                     kind: *kind,
                     key: key.clone(),
@@ -163,15 +171,15 @@ impl ResourceListPanel {
         &self,
         kind: BuiltinKind,
         key: &ObjectKey,
-        row_target: fn(&DynamicObject) -> Option<ObjectReference>,
         cx: &App,
     ) -> Result<DetailTarget, String> {
+        let row_target = kind.registration().row_target;
         let session = self.session.read(cx);
         let namespace = key.namespace.as_deref().unwrap_or_default();
         let (object, reference) = session
             .object_watch(&session.builtin_watch_key(kind, namespace))
             .and_then(|watch| watch.get(Some(namespace), &key.name))
-            .and_then(|object| Some((object, row_target(object)?)))
+            .and_then(|object| Some((object, row_target?(object)?)))
             .ok_or_else(|| format!("Cannot open {} {key}: object is unavailable", kind.kind()))?;
         DetailTarget::by_reference(reference, object.metadata.namespace.clone(), session)
     }
@@ -186,10 +194,10 @@ impl ResourceListPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let now = clock::now(cx);
         let session = self.session.read(cx);
-        let weights = match &self.view {
-            ListView::Builtin(kind) => kind.registration().column_weights,
-            _ => None,
-        };
+        let weights = self
+            .view
+            .registration()
+            .and_then(|registration| registration.column_weights);
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
             ListView::Namespaces => (
                 ResourceTable {
@@ -278,10 +286,10 @@ impl ResourceListPanel {
             cx.background_executor().timer(next_tick).await;
             panel.update(cx, |panel, cx| panel.refresh(cx)).ok();
         });
-        let open_all_cells = match &self.view {
-            ListView::Builtin(kind) => kind.registration().open_all_cells,
-            _ => false,
-        };
+        let open_all_cells = self
+            .view
+            .registration()
+            .is_some_and(|registration| registration.open_all_cells);
         self.table.update(cx, |state, cx| {
             debug_assert!(
                 weights.is_none_or(|weights| weights.len() == table.columns.len()),

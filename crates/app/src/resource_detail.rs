@@ -524,7 +524,11 @@ impl ResourceDetailPanel {
         };
         let choices: Vec<AnyElement> =
             match (action, container) {
-                (PodAction::Forward, _) => self.render_ports(model.forward.as_ref(), cx),
+                (PodAction::Forward, _) => model
+                    .forward
+                    .as_ref()
+                    .map(|forward| self.render_ports(forward, cx))
+                    .unwrap_or_default(),
                 (_, None) => containers(model, action)
                     .into_iter()
                     .map(|container| {
@@ -583,13 +587,11 @@ impl ResourceDetailPanel {
 
     /// One button per declared port (a Service's TCP ports), or why there
     /// are none.
-    fn render_ports(&self, forward: Option<&Forward>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_ports(&self, forward: &Forward, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let border = cx.theme().border;
-        let ports = forward
-            .map(|forward| forward.ports.clone())
-            .unwrap_or_default();
+        let ports = forward.ports.clone();
         if ports.is_empty() {
-            let text = forward.map_or("No declared ports", |forward| forward.empty);
+            let text = forward.empty;
             return vec![
                 div()
                     .id("picker-empty")
