@@ -35,22 +35,20 @@ cargo run -p astrolabe     # run_in_background + disable_timeout; process name: 
 so navigate by coordinates read off a screenshot:
 
 ```sh
-orca computer get-app-state --app astrolabe --json   # .result.screenshot.{path,scale}
-orca computer click --app astrolabe --x 263 --y 302 --json
+dev/shot.sh "$SCRATCH/shots" start                              # get-app-state
+dev/shot.sh "$SCRATCH/shots" pods click --x 263 --y 204         # act, then capture
 ```
 
-- Read a screenshot only after shrinking it to window points. A Retina
-  original carries four times the pixels, and eight of them overflowed
-  #20's context window. At one pixel per point, coordinates read off the
-  image are click coordinates as they stand (`$P` and `$SCALE` from
-  `.result.screenshot`):
+`dev/shot.sh` runs the orca action, keeps the Retina original as
+`<name>-orig.png` and prints the path of `<name>.png`, shrunk to one pixel
+per window point.
 
-  ```sh
-  W=$(sips -g pixelWidth "$P" | awk '/pixelWidth/ {print $2}')
-  sips --resampleWidth $((W / SCALE)) "$P" --out "$SCRATCH/view.png"   # Read this
-  ```
+- Read only the shrunk copy. A Retina original carries four times the
+  pixels, and eight of them overflowed #20's context window. At one pixel
+  per point, coordinates read off the image are click coordinates as they
+  stand.
 
-  Keep the original for the PR's evidence. When only one region
+  Keep the `-orig.png` for the PR's evidence. When only one region
   matters, crop to it as well (`sips --cropToHeightWidth`): a whole
   window still reads at 120-170KB, a cropped table at about 16KB (#68).
 - Resize the window with System Events:
@@ -70,8 +68,8 @@ orca computer click --app astrolabe --x 263 --y 302 --json
 - The app has only the light theme: nothing calls
   `Theme::sync_system_appearance`. Where an issue asks for a dark-theme
   check, state that it was not checked and why.
-- Every action returns a fresh `.result.screenshot.path`; read it to see
-  the result rather than taking another snapshot.
+- Every action already captures: pass it to `dev/shot.sh` and read the
+  result rather than taking another snapshot.
 - Select `kind-astrolabe-dev` in the Clusters sidebar if it is not
   already active, then `astrolabe-demo` in the namespace selector.
 
