@@ -545,8 +545,15 @@ impl TableDelegate for RowsTable {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        // The table already labels the enclosing `col-header` with the
+        // column name, so the header text carries no label of its own.
         let name = self.table.columns[col_ix].clone();
-        text_cell(format!("column-{col_ix}"), name).test_support()
+        div()
+            .id(SharedString::from(format!("column-{col_ix}")))
+            .w_full()
+            .text_ellipsis()
+            .child(name)
+            .test_support()
     }
 
     fn render_td(
@@ -579,7 +586,7 @@ impl TableDelegate for RowsTable {
     }
 }
 
-/// A labeled header or body cell whose overlong text ends in an ellipsis.
+/// A labeled body cell whose overlong text ends in an ellipsis.
 fn text_cell(id: String, text: String) -> Stateful<Div> {
     div()
         .id(SharedString::from(id))
