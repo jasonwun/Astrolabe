@@ -562,7 +562,6 @@ async fn run_suite(
         }
     }
 
-    println!("[auto] load at end={}", load_average());
     println!(
         "[auto] RESULT: {} ({} failure{})",
         if t.failures == 0 { "PASS" } else { "FAIL" },

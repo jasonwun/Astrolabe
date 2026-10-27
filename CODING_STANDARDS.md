@@ -151,3 +151,15 @@ finding.
 Origin: #70's detail-age test passed while the detail's own tick was
 broken: `Ui::frame` re-rendered it, and the list's per-second tick
 redrew the window (#70 retro).
+
+## Docs that describe output
+
+A README or agent-doc line in the diff that names a printed field, a log
+line, or what a crate supplies matches what the diff's code prints or
+uses, per crate. A claim true of one benchmark but written for all of
+them is a finding.
+
+Origin: #85's first draft said every scripted mode prints `load=` at
+start and end and that the editor and terminal benchmarks took their
+frame stats and load from `spikes/support`; neither was true yet (#85
+retro).
