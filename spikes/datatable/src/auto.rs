@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::table::{ColumnSort, TableDelegate as _, TableState};
 use gpui_kit::*;
 
-use crate::{PodsDelegate, SpikeView, rss_bytes};
+use spike_support::{load_average, rss_bytes, sleep, wait_for_frames, with_view};
+
+use crate::{PodsDelegate, SpikeView};
 
 /// One drive step per `STEP`.
 pub const STEP: Duration = Duration::from_millis(100);
@@ -18,10 +20,18 @@ pub const STEP: Duration = Duration::from_millis(100);
 const PAGE_ROWS: usize = 30;
 /// A present-to-present gap over this is a jank frame: two missed 50 ms
 /// flushes. README "Scripted mode" says how both limits were picked.
-pub const JANK_GAP: Duration = Duration::from_millis(100);
+const JANK_GAP: Duration = Duration::from_millis(100);
+/// Gap limits the summary counts, so a new pass criterion can be read off
+/// past runs (docs/agents/spike-regression.md).
+const GAP_LIMITS: [Duration; 4] = [
+    Duration::from_millis(66),
+    JANK_GAP,
+    Duration::from_millis(150),
+    Duration::from_millis(250),
+];
 /// FAIL when a run has more than one jank frame per minute.
-fn jank_limit(secs: u64) -> u32 {
-    (secs / 60).max(1) as u32
+fn jank_limit(secs: u64) -> usize {
+    (secs / 60).max(1) as usize
 }
 const DEFAULT_SECS: u64 = 300;
 
@@ -65,18 +75,6 @@ pub fn cycle_count(run: Duration) -> usize {
     (run.as_millis() / (STEP * CYCLE_STEPS as u32).as_millis()) as usize
 }
 
-async fn sleep(cx: &mut AsyncWindowContext, d: Duration) {
-    cx.background_executor().timer(d).await;
-}
-
-fn with_view<R>(
-    view: &WeakEntity<SpikeView>,
-    cx: &mut AsyncWindowContext,
-    f: impl FnOnce(&mut SpikeView, &mut Window, &mut Context<SpikeView>) -> R,
-) -> Option<R> {
-    view.update_in(cx, f).ok()
-}
-
 fn quit(cx: &mut AsyncWindowContext, pass: bool) {
     if !pass {
         std::process::exit(1);
@@ -93,24 +91,7 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         .unwrap_or(DEFAULT_SECS);
     let run = Duration::from_secs(secs);
 
-    // An occluded window gets no draw callbacks, so no frame timings exist.
-    // The view re-renders every tick; wait until presents flow.
-    let mut visible = false;
-    for _ in 0..150 {
-        sleep(cx, Duration::from_millis(100)).await;
-        let fps = with_view(&view, cx, |this, _, _| {
-            this.frames.drain();
-            this.frames.stats().0
-        });
-        if fps.is_some_and(|fps| fps > 0.0) {
-            visible = true;
-            break;
-        }
-    }
-    if !visible {
-        println!(
-            "[auto] no presented frames after 15s: the window is occluded or offscreen. Bring it on screen and retry."
-        );
+    if !wait_for_frames(&view, cx, |this| &mut this.frames).await {
         println!("[auto] RESULT: FAIL (no frames)");
         quit(cx, false);
         return;
@@ -119,11 +100,12 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
     let cycles = cycle_count(run);
     let jank_limit = jank_limit(secs);
     let Some(rss_start) = with_view(&view, cx, |this, _, _| {
-        this.frames.reset_run();
+        this.frames.reset_totals();
         rss_bytes()
     }) else {
         return;
     };
+    let load_start = load_average();
     println!(
         "[auto] driving {cycles} cycles of {CYCLE_STEPS} steps every {STEP:?} for {secs}s, FAIL over {jank_limit} gaps > {JANK_GAP:?}"
     );
@@ -156,28 +138,31 @@ pub async fn run(view: WeakEntity<SpikeView>, cx: &mut AsyncWindowContext) {
         sleep(cx, end - now).await;
     }
 
-    let Some((r, flushes, applied)) = with_view(&view, cx, |this, _, _| {
-        this.frames.drain();
+    let Some((t, flushes, applied)) = with_view(&view, cx, |this, _, _| {
         let s = &this.stats;
-        (this.frames.run, s.flushes, s.adds + s.updates + s.deletes)
+        (
+            this.frames.totals().clone(),
+            s.flushes,
+            s.adds + s.updates + s.deletes,
+        )
     }) else {
         return;
     };
-    let (draws, draw_avg, draw_worst, gap_worst, jank_gaps) = (
-        r.draws,
-        r.draw_avg(),
-        r.draw_worst,
-        r.gap_worst,
-        r.jank_gaps,
-    );
+    let jank_gaps = t.gaps_over(JANK_GAP);
     println!(
-        "[auto] summary: cycles={} secs={:.0} flushes={flushes} applied={applied} draws={draws} draw_avg={draw_avg:.2?} draw_worst={draw_worst:.2?} gap_worst={gap_worst:.2?} gaps>{JANK_GAP:?}={jank_gaps} late_worst={late_worst:.2?} rss={}→{}MB",
+        "[auto] summary: cycles={} secs={:.0} flushes={flushes} applied={applied} draws={} draw_avg={:.2?} draw_worst={:.2?} gap_worst={:.2?} {} late_worst={late_worst:.2?} rss={}→{}MB load={load_start}→{}",
         steps_done / CYCLE_STEPS,
         start.elapsed().as_secs_f32(),
+        t.draws,
+        t.draw_avg(),
+        t.draw_worst,
+        t.gap_worst(),
+        t.gap_counts(&GAP_LIMITS),
         rss_start / 1_048_576,
         rss_bytes() / 1_048_576,
+        load_average(),
     );
-    let pass = draws > 0 && jank_gaps <= jank_limit;
+    let pass = t.draws > 0 && jank_gaps <= jank_limit;
     println!(
         "[auto] RESULT: {} ({jank_gaps} gaps > {JANK_GAP:?}, limit {jank_limit})",
         if pass { "PASS" } else { "FAIL" }

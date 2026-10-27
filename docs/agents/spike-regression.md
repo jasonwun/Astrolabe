@@ -28,11 +28,18 @@ From `spikes/<name>` in each tree:
 | editor | `SPIKE_AUTO=1 cargo run --release`, twice | `[load] set_value`, `[scroll] pagedown-burst draw_avg`, `[edit] edit_avg`, `gaps>33ms` per burst |
 | terminal suite | `SPIKE_AUTO=1 cargo run --release` | `RESULT: PASS (N failures)`, `[auto] flood draw_avg`, `snapshot-copy` |
 | terminal log-flood | `SPIKE_AUTO=log-flood cargo run --release` (60 s) | the five PASS criteria, parse MiB/s, snapshot under load, RSS delta |
-| datatable | `SPIKE_AUTO=1 cargo run --release` (300 s) | `RESULT`, and from `[auto] summary:` `cycles`, `draw_avg`, `draw_worst`, `gap_worst`, `gaps>100ms`, `rss` |
+| datatable | `SPIKE_AUTO=1 cargo run --release` (300 s) | `RESULT`, and from `[auto] summary:` `cycles`, `draw_avg`, `draw_worst`, `gap_worst`, `gaps>100ms`, `rss`, `load` |
 
 Keep every spike window on screen while it runs: an occluded window
 presents no frames. The datatable run does the same cycle count on both
 trees, so its numbers compare directly.
+
+Check machine load before each run (`uptime`) and in the run's own
+`load=` figures at start and end (datatable summary, editor
+`suite complete`, terminal suite and log-flood lines). Other agent sessions share the machine and skew frame timings: on
+this 16-core Mac quiet runs start near load 3, and a run at load 13 stalled
+the main thread for 218 ms. Run baseline and candidate at similar, quiet
+load; rerun a pair whose loads differ widely.
 
 ## 3. Read
 
@@ -43,3 +50,13 @@ trees, so its numbers compare directly.
   RSS stays flat around 10k rows.
 - A slower metric that still costs no frames (`gaps>33ms` unchanged) is
   noted in the PR, not a blocker. #76 is the reference write-up.
+
+## Adding a pass criterion
+
+A PASS/FAIL criterion over a whole run (a count of jank frames, a worst
+gap) needs a whole-run baseline: three runs on a quiet machine, recorded in
+the spike's README with the limit and why it was picked. 1 s overlay
+samples say nothing about a run's worst case. The datatable summary prints
+gap counts at several limits (`gaps>66ms` … `gaps>250ms`) so a new limit
+can be read off runs already made; datatable README "Scripted mode" is the
+reference (#78).

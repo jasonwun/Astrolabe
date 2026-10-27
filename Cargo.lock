@@ -1365,8 +1365,7 @@ name = "datatable-spike"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
- "libc",
- "web-time 0.2.4",
+ "spike-support",
 ]
 
 [[package]]
@@ -1573,10 +1572,9 @@ name = "editor-spike"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
- "libc",
  "regex",
+ "spike-support",
  "tree-sitter",
- "web-time 0.2.4",
 ]
 
 [[package]]
@@ -7133,6 +7131,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spike-support"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "libc",
+ "web-time 0.2.4",
+]
+
+[[package]]
 name = "spin"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7453,7 +7460,7 @@ version = "0.0.0"
 dependencies = [
  "alacritty_terminal",
  "gpui-kit",
- "libc",
+ "spike-support",
 ]
 
 [[package]]

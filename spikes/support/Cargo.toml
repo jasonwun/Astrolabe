@@ -1,0 +1,16 @@
+# Shared measurement code for the dependency-upgrade benchmarks in spikes/*
+# (docs/agents/spike-regression.md).
+[package]
+name = "spike-support"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `profiler` turns on gpui's frame-timing trace
+# (gpui_kit::profiler::FrameTimingCollector).
+gpui-kit = { workspace = true, features = ["profiler"] }
+# proc_pid_rusage (RSS) and getloadavg. Already in gpui's tree.
+libc.workspace = true
+# Timestamp type used by gpui's frame trace (FrameTiming::draw_start / present_end).
+web-time.workspace = true

@@ -1,8 +1,9 @@
 # datatable-spike
 
-A performance spike, not production code: build nothing on it. A workspace member
-so it tracks the pinned dependencies; rerun it on every dependency
-upgrade (`docs/agents/spike-regression.md`).
+A performance benchmark, rerun on every dependency upgrade
+(`docs/agents/spike-regression.md`). A workspace member, so it tracks the
+pinned dependencies; frame stats, RSS and load average come from
+`spikes/support`.
 
 ## Question it answers
 
@@ -40,15 +41,16 @@ machine. The window must be visible: an occluded window presents no frames.
 
 It keeps the `[spike t=…]` lines, then prints an `[auto] summary:` line
 (cycles, flushes, applied mutations, whole-run `draw_avg` / `draw_worst` /
-`gap_worst`, the count of gaps over the limit, `late_worst` for how far the
-schedule fell behind, RSS start→end) and `[auto] RESULT: PASS|FAIL`, then
+`gap_worst`, gap counts over 66, 100, 150 and 250 ms, `late_worst` for how
+far the schedule fell behind, RSS and load average start→end) and
+`[auto] RESULT: PASS|FAIL`, then
 quits. A gap over 100 ms (two missed 50 ms flushes) is a jank frame; FAIL
 (exit 1) when a run has more than one per minute (5 in 300 s). On 0.8.1 three
 300 s runs on a quiet machine had none (`gap_worst` 87–98 ms); four earlier
 ones had `gap_worst` 85, 92, 151 and, on a loaded machine, 218 ms
 (`late_worst` 49 ms: the whole main thread stalled). So a stray spike passes,
-while a stall on every sort step (157 per run) fails. Keep other heavy work
-off the machine during an A/B.
+while a stall on every sort step (157 per run) fails. Check the `load=`
+figures before trusting a run (`docs/agents/spike-regression.md` §2).
 
 ## What it does
 
@@ -93,7 +95,7 @@ columns are resizable/movable (TableState defaults).
 - `applied` — cumulative applied mutations (adds+updates+deletes), plus the
   size of the last flushed batch.
 - `batch Nms` — current batching mode.
-- `rss` — process resident memory, sampled ~1/s via mach `task_info()`.
+- `rss` — process resident memory, sampled ~1/s via `proc_pid_rusage`.
 
 Every 30 s a stats line is printed to stdout (rows, generated/applied counts,
 flush count, max batch size, frame stats over the last 1 s, RSS), so a

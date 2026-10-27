@@ -1,5 +1,5 @@
-# Feasibility and performance spike, not production code: run by hand on
-# every dependency upgrade (docs/agents/spike-regression.md).
+# Terminal feasibility and performance benchmark, rerun on every dependency
+# upgrade (docs/agents/spike-regression.md).
 [package]
 name = "terminal-spike"
 version = "0.0.0"
@@ -12,6 +12,5 @@ publish.workspace = true
 gpui-kit = { workspace = true, features = ["profiler"] }
 # The VT engine under test (crates.io, not the zed-industries fork).
 alacritty_terminal.workspace = true
-# Used only for a mach task_info() RSS sample on macOS (log-flood mode).
-# Already in gpui's tree.
-libc.workspace = true
+# RSS and load-average samples.
+spike-support.workspace = true

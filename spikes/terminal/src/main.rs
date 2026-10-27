@@ -1,5 +1,5 @@
-//! PROTOTYPE / THROWAWAY — alacritty_terminal grid + GPUI self-rendered
-//! terminal spike (issue #7). Not production code.
+//! alacritty_terminal grid + GPUI self-rendered terminal benchmark (issue
+//! #7), rerun on every dependency upgrade (docs/agents/spike-regression.md).
 //!
 //! `cargo run --release` opens an interactive terminal window running your
 //! `$SHELL`. `SPIKE_AUTO=1 cargo run --release` runs the scripted smoke

@@ -1,5 +1,5 @@
-# Performance spike, not production code: run by hand on every dependency
-# upgrade (docs/agents/spike-regression.md).
+# DataTable performance benchmark, rerun on every dependency upgrade
+# (docs/agents/spike-regression.md).
 [package]
 name = "datatable-spike"
 version = "0.0.0"
@@ -11,7 +11,5 @@ publish.workspace = true
 # (gpui_kit::profiler::FrameTimingCollector) so the overlay can report real
 # draw/present timings instead of a timer-based approximation.
 gpui-kit = { workspace = true, features = ["profiler"] }
-# Used only for a mach task_info() RSS sample on macOS. Already in gpui's tree.
-libc.workspace = true
-# Timestamp type used by gpui's frame trace (FrameTiming::draw_start / present_end).
-web-time.workspace = true
+# Frame stats, RSS, load average, and the scripted mode's async helpers.
+spike-support.workspace = true

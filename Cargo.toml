@@ -34,8 +34,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # Dev-only: mock `kube::Client` services for apply orchestration tests.
 http = "1"
 tower = { version = "0.5", features = ["util"] }
-# Spike-only (spikes/*): mach task_info() RSS samples, gpui frame-trace
-# timestamps, and the editor spike's incremental-parse measurement.
+# Benchmarks only (spikes/*): RSS and load-average samples, gpui frame-trace
+# timestamps, and the editor benchmark's incremental-parse measurement.
 libc = "0.2"
 web-time = "0.2"
 tree-sitter = "0.26"
@@ -45,3 +45,6 @@ path = "crates/kube"
 
 [workspace.dependencies.astrolabe-terminal]
 path = "crates/terminal"
+
+[workspace.dependencies.spike-support]
+path = "spikes/support"
