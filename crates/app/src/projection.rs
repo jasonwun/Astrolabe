@@ -313,6 +313,7 @@ pub struct DetailModel {
     pub secret_keys: Vec<config::SecretKey>,
     /// What Logs and Exec choose from.
     pub containers: Option<Containers>,
+    /// What Port Forward reaches and offers.
     pub forward: Option<Forward>,
     /// Whether a CronJob is suspended, for Suspend/Resume.
     pub suspended: Option<bool>,

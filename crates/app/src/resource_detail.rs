@@ -617,12 +617,7 @@ impl ResourceDetailPanel {
     }
 
     /// The session's forwards to the shown Pod or Service, each with Stop.
-    fn render_forwards(
-        &self,
-        target: Option<ForwardTarget>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let target = target?;
+    fn render_forwards(&self, target: ForwardTarget, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = cx.theme();
         let session = self.session.read(cx);
         let rows: Vec<AnyElement> = session
@@ -1415,7 +1410,7 @@ impl Render for ResourceDetailPanel {
             .when(self.confirm_delete, |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })
-            .children(self.render_forwards(forwards, cx))
+            .children(forwards.and_then(|target| self.render_forwards(target, cx)))
             .child(
                 v_flex()
                     .id("detail-body")

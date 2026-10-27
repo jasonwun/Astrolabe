@@ -4,7 +4,6 @@
 use astrolabe::projection::SummaryTable;
 use astrolabe::projection::config::{
     Revealable, SecretKey, config_map_detail, project_config_maps, project_secrets, secret_detail,
-    secret_value,
 };
 use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -100,7 +99,7 @@ fn secrets_list_follows_freelens_columns() {
 }
 
 #[test]
-fn a_secret_detail_lists_keys_without_their_values() {
+fn a_secret_detail_keeps_key_values_out_of_debug() {
     let model = secret_detail(&db_secret(), now());
 
     assert_eq!(model.title, "Secret default/db");
@@ -146,16 +145,16 @@ fn a_revealable_value_never_shows_in_debug() {
 
 #[test]
 fn a_revealed_value_is_decoded() {
-    let secret = db_secret();
+    let model = secret_detail(&db_secret(), now());
+    let revealed: Vec<(&str, &str)> = model
+        .secret_keys
+        .iter()
+        .map(|entry| (entry.key.as_str(), entry.value.reveal()))
+        .collect();
     assert_eq!(
-        secret_value(&secret, "password").as_deref(),
-        Some("hunter2")
+        revealed,
+        [("cert", "<binary, 1 bytes>"), ("password", "hunter2")]
     );
-    assert_eq!(
-        secret_value(&secret, "cert").as_deref(),
-        Some("<binary, 1 bytes>")
-    );
-    assert_eq!(secret_value(&secret, "missing"), None);
 }
 
 /// `kubectl apply` records the whole manifest, data included, in an

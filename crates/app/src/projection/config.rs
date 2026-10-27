@@ -183,10 +183,6 @@ fn masked_yaml(mut value: Value) -> String {
 }
 
 /// A revealed value: the decoded text, or its size when it is not UTF-8.
-pub fn secret_value(secret: &Secret, key: &str) -> Option<String> {
-    Some(decoded(secret.data.as_ref()?.get(key)?))
-}
-
 fn decoded(bytes: &ByteString) -> String {
     match std::str::from_utf8(&bytes.0) {
         Ok(text) => text.to_string(),

@@ -460,8 +460,8 @@ impl Render for ResourceListPanel {
 type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 
 /// Table delegate over a projected [`ResourceTable`]; the first cell opens
-/// details, or every cell when the kind's registration says so. The columns share the
-/// table's width by weight.
+/// details, or every cell when the kind's registration says so. The
+/// columns share the table's width by weight.
 pub(crate) struct RowsTable {
     table: ResourceTable,
     weights: Vec<f32>,
