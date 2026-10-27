@@ -138,3 +138,16 @@ overflow.
 Origin: #68's first test allowed 20px against the `list-table` wrapper,
 and missed columns 2px wider than `DataTable`'s bordered viewport (#68
 retro).
+
+## Self-driven redraw assertions
+
+A UI test claiming a view updates on its own (a timer, a subscription,
+a notify) reads the frame the app last drew, not one `Ui::frame`
+renders for the query, and keeps the window's other views quiet for the
+interval it asserts. A test that passes because the query re-rendered
+the view, or because a neighbour's notify redrew the window, is a
+finding.
+
+Origin: #70's detail-age test passed while the detail's own tick was
+broken: `Ui::frame` re-rendered it, and the list's per-second tick
+redrew the window (#70 retro).

@@ -20,6 +20,7 @@ impl Clock {
 }
 
 /// The installed [`Clock`]'s time, or the system time without one.
+#[allow(clippy::disallowed_methods)]
 pub fn now(cx: &App) -> Timestamp {
     cx.try_global::<Clock>()
         .map_or_else(Timestamp::now, |clock| (clock.0)(cx))

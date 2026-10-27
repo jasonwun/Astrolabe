@@ -77,6 +77,18 @@ Reference: `crates/app/src/resource_list.rs`.
   Assert on the element the selector does return (e.g. it lies inside
   `dock-tab-{n}`), or on its absence once a single candidate is left (#51).
 
+- `Ui::frame` (`crates/app/tests/support`) renders the whole window
+  before it queries, so every view shows fresh state whether or not it
+  notified. To prove a view redraws on its own (a timer, a
+  subscription), query the last drawn frame with
+  `ui.cx.update(|window, _| …)`. A notify from any view redraws the whole
+  window, so pick data under which the window's other views stay quiet
+  for the interval tested (#70).
+- Time: panels read `astrolabe::clock::now(cx)`; clippy rejects
+  `jiff::Timestamp::now`. `support::follow_test_clock` drives that clock
+  from the test scheduler, so `cx.executor().advance_clock` ages objects
+  (`crates/app/tests/age_ticks.rs`) (#70).
+
 - Render order: compare `window.try_find(id).bounds().origin.y` across
   ids. `try_find` takes an `&'static str`, a `String`, or a tuple id such
   as `("col-header", 6usize)` (the index must be `usize`), and the returned
