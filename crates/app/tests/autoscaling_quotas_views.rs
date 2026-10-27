@@ -317,7 +317,7 @@ fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut Tes
 
     let table = ui.frame(|window, _| window.try_find("list-table").unwrap().bounds());
     assert!(table.size.width < gpui_kit::px(7. * 80.), "{table:?}");
-    ui.cx.simulate_event(gpui_kit::ScrollWheelEvent {
+    ui.cx.simulate_event(gpui_kit::ScrollEvent {
         position: table.center(),
         delta: gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
             gpui_kit::px(-1000.),

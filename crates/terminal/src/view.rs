@@ -197,12 +197,7 @@ impl TerminalView {
         }
     }
 
-    fn on_scroll(
-        &mut self,
-        event: &ScrollWheelEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_scroll(&mut self, event: &ScrollEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let lines: i32 = match event.delta {
             ScrollDelta::Lines(p) => p.y.round() as i32,
             ScrollDelta::Pixels(p) => {
@@ -444,7 +439,7 @@ impl Render for TerminalView {
             .size_full()
             .bg(to_hsla(DEFAULT_BG))
             .on_key_down(cx.listener(Self::on_key_down))
-            .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_scroll(cx.listener(Self::on_scroll))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _event, window, cx| {

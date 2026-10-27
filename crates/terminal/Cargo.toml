@@ -6,3 +6,6 @@ publish.workspace = true
 [dependencies]
 gpui-kit.workspace = true
 alacritty_terminal.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }

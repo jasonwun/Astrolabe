@@ -1,8 +1,8 @@
 # gpui-kit 0.8 gotchas
 
-Behaviour of the pinned `gpui-kit =0.8.0` (gpui-component / gpui-base 0.8.0)
+Behaviour of the pinned `gpui-kit =0.8.1` (gpui-component / gpui-base 0.8.1)
 that only reading its source reveals. Verified against gpui-component 0.8.0
-and gpui-base 0.8.0.
+and gpui-base 0.8.0; the table header labels against 0.8.1.
 
 ## Windows
 
@@ -47,7 +47,10 @@ Reference: `crates/app/src/session_view.rs`.
 - `DataTable` is `bordered` by default (`border_1`): the columns' viewport
   is the element's width minus 2px.
 - Cells render as `w(column width).overflow_hidden().whitespace_nowrap()`.
-  A header cell's id is `("col-header", ix)`.
+  A header cell's id is `("col-header", ix)`, and since 0.8.1 it carries
+  the column name as its accessible label. A `render_th` that labels its
+  own content duplicates it, and `try_find_by_label(name)` panics as
+  ambiguous (#73).
 
 Reference: `crates/app/src/resource_list.rs`.
 

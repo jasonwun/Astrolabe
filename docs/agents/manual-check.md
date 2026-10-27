@@ -58,9 +58,13 @@ orca computer click --app astrolabe --x 263 --y 302 --json
   ```sh
   osascript -e 'tell application "System Events" to tell process "astrolabe" to set size of window 1 to {900, 800}'
   ```
-- `orca computer scroll` does not move a GPUI horizontal scroll. Prove
-  horizontal scrolling with a UI test that sends `ScrollWheelEvent`
-  (`crates/app/tests/autoscaling_quotas_views.rs`) (#68).
+- `orca computer scroll` does not move a GPUI horizontal scroll, nor
+  the terminal's scrollback. Prove scrolling with a UI test that sends
+  `ScrollEvent` (`crates/app/tests/autoscaling_quotas_views.rs`,
+  `crates/terminal/tests/view_scroll.rs`) (#68, #73).
+- In an Exec terminal, `orca computer type-text` arrives garbled
+  (`seq 1 200` types `aaa a aaa`). Send each key with `press-key`
+  (`space`, `Return` for the specials) (#73).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - The app has only the light theme: nothing calls
