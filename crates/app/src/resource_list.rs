@@ -7,7 +7,6 @@ use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::k8s_openapi::api::core::v1::Event;
-use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -17,9 +16,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::builtin::BuiltinKind;
+use crate::clock;
 use crate::projection::{
     ResourceRow, ResourceTable, column_widths, default_column_weights, project_custom_resources,
-    project_definitions, project_namespaces,
+    project_definitions, project_namespaces, track_ages,
 };
 use crate::resource_detail::DetailTarget;
 use crate::session::{CustomKindId, Session};
@@ -53,6 +53,9 @@ pub struct ResourceListPanel {
     stale: bool,
     group_filter: BTreeSet<String>,
     notice: Option<String>,
+    /// Re-projects when the youngest shown age next changes (#70);
+    /// replaced on every refresh, and dropped with the panel.
+    tick: Task<()>,
     focus_handle: FocusHandle,
 }
 
@@ -95,6 +98,7 @@ impl ResourceListPanel {
             stale: false,
             group_filter: BTreeSet::new(),
             notice: None,
+            tick: Task::ready(()),
             focus_handle: cx.focus_handle(),
         };
         panel.refresh(cx);
@@ -221,13 +225,13 @@ impl ResourceListPanel {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let now = Timestamp::now();
+        let now = clock::now(cx);
         let session = self.session.read(cx);
         let weights = match &self.view {
             ListView::Builtin(kind) => kind.registration().column_weights,
             _ => None,
         };
-        let (table, state, stale) = match &self.view {
+        let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
             ListView::Namespaces => (
                 ResourceTable {
                     columns: vec!["Name".to_string(), "Status".to_string()],
@@ -308,9 +312,13 @@ impl ResourceListPanel {
                     }
                 },
             },
-        };
+        });
         self.state = state;
         self.stale = stale;
+        self.tick = cx.spawn(async move |panel, cx| {
+            cx.background_executor().timer(next_tick).await;
+            panel.update(cx, |panel, cx| panel.refresh(cx)).ok();
+        });
         let open_all_cells = self.view == ListView::Builtin(BuiltinKind::Events);
         self.table.update(cx, |state, cx| {
             debug_assert!(

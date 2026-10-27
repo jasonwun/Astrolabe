@@ -24,12 +24,13 @@ use gpui_kit::*;
 use tokio::sync::oneshot;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use crate::clock;
 use crate::projection::config::{HIDDEN, SecretKey, secret_value};
 use crate::projection::network::service_ports;
 use crate::projection::workloads::{pod_containers, pod_ports, running_containers};
 use crate::projection::{
     DetailField, DetailItem, DetailModel, ReplicaCounts, ResourceTable, SummaryTable,
-    custom_resource_detail, definition_detail, namespace_detail,
+    custom_resource_detail, definition_detail, namespace_detail, track_ages,
 };
 use crate::resource_list::OpenDetail;
 use crate::session::{
@@ -81,6 +82,9 @@ pub struct ResourceDetailPanel {
     /// masked.
     revealed: BTreeSet<String>,
     notice: Option<String>,
+    /// Re-renders when the youngest shown age next changes (#70); replaced
+    /// on every render, and dropped with the panel.
+    tick: Task<()>,
     focus_handle: FocusHandle,
 }
 
@@ -152,13 +156,18 @@ impl ResourceDetailPanel {
             picking: None,
             revealed: BTreeSet::new(),
             notice: None,
+            tick: Task::ready(()),
             focus_handle: cx.focus_handle(),
         }
     }
 
     fn resolve(&self, cx: &App) -> Option<Resolved> {
+        self.resolve_at(clock::now(cx), cx)
+    }
+
+    /// [`Self::resolve`] with ages projected from `now`.
+    fn resolve_at(&self, now: Timestamp, cx: &App) -> Option<Resolved> {
         let session = self.session.read(cx);
-        let now = Timestamp::now();
         match &self.target {
             DetailTarget::Namespace { name } => {
                 let namespace = session.namespace_object(name)?;
@@ -1242,7 +1251,13 @@ impl Panel for ResourceDetailPanel {
 
 impl Render for ResourceDetailPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(resolved) = self.resolve(cx) else {
+        let now = clock::now(cx);
+        let (resolved, next_tick) = track_ages(now, || self.resolve_at(now, cx));
+        self.tick = cx.spawn(async move |panel, cx| {
+            cx.background_executor().timer(next_tick).await;
+            panel.update(cx, |_, cx| cx.notify()).ok();
+        });
+        let Some(resolved) = resolved else {
             let text = format!("{} no longer exists", self.display_name());
             return v_flex()
                 .track_focus(&self.focus_handle)
