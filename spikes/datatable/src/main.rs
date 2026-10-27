@@ -4,6 +4,10 @@
 //! ~10k Pod rows while a synthetic watch stream applies ~20 batches/sec of
 //! incremental add/update/delete mutations, under interactive scroll/sort/
 //! select? Keys 1-4 switch the mutation coalescing window.
+//! `SPIKE_AUTO=1 cargo run --release` drives it on a fixed schedule, prints a
+//! summary and `RESULT: PASS/FAIL`, and quits (see `auto.rs`).
+
+mod auto;
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -337,6 +341,28 @@ struct FrameStats {
     draws: VecDeque<(web_time::Instant, Duration)>,
     presents: VecDeque<web_time::Instant>,
     gaps: VecDeque<(web_time::Instant, Duration)>,
+    /// Whole-run totals since the last `reset_run`, for the scripted summary.
+    run: RunFrames,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RunFrames {
+    draws: u32,
+    draw_sum: Duration,
+    draw_worst: Duration,
+    gap_worst: Duration,
+    /// Gaps over `auto::JANK_GAP`.
+    jank_gaps: u32,
+}
+
+impl RunFrames {
+    fn draw_avg(&self) -> Duration {
+        if self.draws > 0 {
+            self.draw_sum / self.draws
+        } else {
+            Duration::ZERO
+        }
+    }
 }
 
 impl FrameStats {
@@ -347,6 +373,7 @@ impl FrameStats {
             draws: VecDeque::with_capacity(256),
             presents: VecDeque::with_capacity(256),
             gaps: VecDeque::with_capacity(256),
+            run: RunFrames::default(),
         }
     }
 
@@ -354,12 +381,21 @@ impl FrameStats {
         for event in self.collector.collect_unseen() {
             match event {
                 FrameEvent::Draw(t) if t.window_id == self.window_id => {
-                    self.draws.push_back((t.draw_start, t.draw_duration()));
+                    let d = t.draw_duration();
+                    self.draws.push_back((t.draw_start, d));
+                    self.run.draws += 1;
+                    self.run.draw_sum += d;
+                    self.run.draw_worst = self.run.draw_worst.max(d);
                 }
                 FrameEvent::Present(t) if t.window_id == self.window_id => {
                     let at = t.present_end;
                     if let Some(&prev) = self.presents.back() {
-                        self.gaps.push_back((at, at.duration_since(prev)));
+                        let gap = at.duration_since(prev);
+                        self.gaps.push_back((at, gap));
+                        self.run.gap_worst = self.run.gap_worst.max(gap);
+                        if gap > auto::JANK_GAP {
+                            self.run.jank_gaps += 1;
+                        }
                     }
                     self.presents.push_back(at);
                 }
@@ -387,6 +423,11 @@ impl FrameStats {
         {
             self.gaps.pop_front();
         }
+    }
+
+    fn reset_run(&mut self) {
+        self.drain();
+        self.run = RunFrames::default();
     }
 
     /// (fps over last 1s, mean draw, worst draw, worst present gap)
@@ -483,6 +524,11 @@ impl SpikeView {
         let table = cx.new(|cx| TableState::new(delegate, window, cx));
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
+
+        if std::env::var("SPIKE_AUTO").is_ok() {
+            cx.spawn_in(window, async move |view, cx| auto::run(view, cx).await)
+                .detach();
+        }
 
         let _task = cx.spawn(async move |this, cx| {
             loop {

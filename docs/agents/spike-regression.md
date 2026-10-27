@@ -28,17 +28,18 @@ From `spikes/<name>` in each tree:
 | editor | `SPIKE_AUTO=1 cargo run --release`, twice | `[load] set_value`, `[scroll] pagedown-burst draw_avg`, `[edit] edit_avg`, `gaps>33ms` per burst |
 | terminal suite | `SPIKE_AUTO=1 cargo run --release` | `RESULT: PASS (N failures)`, `[auto] flood draw_avg`, `snapshot-copy` |
 | terminal log-flood | `SPIKE_AUTO=log-flood cargo run --release` (60 s) | the five PASS criteria, parse MiB/s, snapshot under load, RSS delta |
-| datatable | `cargo run --release`, then `./drive.sh 300` | the `[spike t=…]` lines: fps, `draw_avg`, `draw_worst`, `gap_worst`, `rss` |
+| datatable | `SPIKE_AUTO=1 cargo run --release` (300 s) | `RESULT`, and from `[auto] summary:` `cycles`, `draw_avg`, `draw_worst`, `gap_worst`, `gaps>100ms`, `rss` |
 
-The datatable spike has no scripted mode: `drive.sh` pages and sorts it
-through `orca computer` (`docs/agents/manual-check.md`). Its cycle count
-varies run to run, so compare ranges, not single samples.
+Keep every spike window on screen while it runs: an occluded window
+presents no frames. The datatable run does the same cycle count on both
+trees, so its numbers compare directly.
 
 ## 3. Read
 
-- editor and terminal print PASS/FAIL; a FAIL is a regression.
-- datatable: at the default 50 ms batch window `gap_worst` sits near 60 ms
-  (the flush cadence) and `draw_worst` stays well under 16 ms apart from
-  rare outliers; RSS stays flat around 10k rows.
+- terminal and datatable print PASS/FAIL; a FAIL is a regression.
+- datatable: FAIL means more jank frames (gaps over 100 ms) than the
+  README's limit. Sampled over 1 s at the default 50 ms batch window,
+  `gap_worst` sits near 60 ms (the flush cadence) and `draw_worst` stays well under 16 ms apart from rare outliers;
+  RSS stays flat around 10k rows.
 - A slower metric that still costs no frames (`gaps>33ms` unchanged) is
   noted in the PR, not a blocker. #76 is the reference write-up.
