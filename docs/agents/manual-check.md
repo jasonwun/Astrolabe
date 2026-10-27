@@ -6,7 +6,8 @@ the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
 Run this check after review fixes. Done when every view the final change
-touches has been opened and screenshotted on `kind-astrolabe-dev`, each
+touches has been opened and screenshotted on `kind-astrolabe-dev` in
+every state the change adds (populated, empty, forbidden), each
 screenshot has been read back, each is embedded in the PR, and every
 out-of-scope problem the check finds is a `needs-triage` issue linked from
 the PR body. Repeat the affected views and replace their evidence after
@@ -15,12 +16,13 @@ any later UI change, so the PR shows the final UI diff.
 ## 1. Seed the cluster
 
 ```sh
-kubectl --context kind-astrolabe-dev apply -f dev/demo.yaml
+dev/demo.sh apply     # prints this worktree's namespace, astrolabe-demo-<worktree>
 ```
 
-`dev/demo.yaml` holds synthetic objects for every built-in kind in the
-`astrolabe-demo` namespace. Extend it when a change adds a kind or needs a
-shape it lacks (keep it labelled synthetic).
+`dev/demo.yaml` holds synthetic objects for every built-in kind;
+`dev/demo.sh` seeds them into a namespace of this worktree's own, so other
+worktrees' demos stay untouched. Extend `dev/demo.yaml` first whenever it
+lacks a kind or a state the change adds (keep it labelled synthetic).
 
 ## 2. Launch
 
@@ -71,7 +73,7 @@ per window point.
 - Every action already captures: pass it to `dev/shot.sh` and read the
   result rather than taking another snapshot.
 - Select `kind-astrolabe-dev` in the Clusters sidebar if it is not
-  already active, then `astrolabe-demo` in the namespace selector.
+  already active, then this worktree's namespace in the namespace selector.
 
 ## 4. Attach to the PR
 
@@ -87,5 +89,5 @@ gh pr create --body-file body.md --attach ./shot.png   # also gh pr edit / gh pr
 
 ```sh
 pkill -x astrolabe                  # the background task then exits 143
-kubectl --context kind-astrolabe-dev delete namespace astrolabe-demo
+dev/demo.sh delete                 # this worktree's namespace only
 ```

@@ -6,6 +6,9 @@
 cargo test --workspace        # hermetic default suite
 ```
 
+Run it last on the final commit, after review fixes; the PR's Evidence
+cites that run.
+
 ## Cluster e2e
 
 `crates/kube/tests/e2e_cluster.rs` is `#[ignore]`d by default; it needs a
