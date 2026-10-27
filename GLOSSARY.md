@@ -34,7 +34,7 @@ _Avoid_: outdated, offline
 ## Views
 
 **Registration**:
-What a built-in kind plugs into the generic list and detail: its list columns, its status summary, its actions and, optionally, a related section. Built-in kinds have no hand-written views.
+What a built-in kind plugs into the generic list and detail: its list columns, what opening a row shows, its status summary, its actions and what they act on (containers, ports, a Secret's values, whether it is suspended) and, optionally, a related section. Built-in kinds have no hand-written views; the list and detail never ask which kind they show.
 _Avoid_: custom view, plugin
 
 **Related section**:
