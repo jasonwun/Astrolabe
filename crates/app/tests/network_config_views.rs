@@ -12,11 +12,7 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Sender, Ui, key, open, snapshot};
-
-fn object(value: serde_json::Value) -> DynamicObject {
-    serde_json::from_value(value).unwrap()
-}
+use support::{Sender, Ui, key, object, open, open_detail, snapshot};
 
 fn web_service(selector: Option<serde_json::Value>) -> DynamicObject {
     let mut spec = serde_json::json!({
@@ -44,24 +40,6 @@ fn db_secret() -> DynamicObject {
         "type": "Opaque",
         "data": {"password": "aHVudGVyMg=="}
     }))
-}
-
-/// Open `kind`'s list from the navigation with `objects` in it, then the
-/// detail of `name`.
-fn open_detail(
-    ui: &mut Ui<'_>,
-    kind: &str,
-    watch: &mut Sender<DynamicObject>,
-    objects: Vec<DynamicObject>,
-    name: &str,
-) {
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(format!("nav-{kind}"), cx));
-    snapshot(watch, objects);
-    ui.settle();
-    ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));
-    ui.settle();
 }
 
 #[gpui_kit::test]
@@ -137,7 +115,13 @@ fn a_service_detail_renders_freelens_sections_tables_and_external_links(cx: &mut
             }]
         }}
     }));
-    open_detail(&mut ui, "services", &mut services, vec![service], "web-lb");
+    open_detail(
+        &mut ui,
+        BuiltinKind::Services,
+        &mut services,
+        vec![service],
+        "web-lb",
+    );
 
     ui.frame(|window, _| {
         assert!(
@@ -183,7 +167,7 @@ fn a_service_forwards_one_of_its_tcp_ports(cx: &mut TestAppContext) {
     );
     open_detail(
         &mut ui,
-        "services",
+        BuiltinKind::Services,
         &mut services,
         vec![web_service(Some(serde_json::json!({"app": "web"})))],
         "web",
@@ -236,7 +220,13 @@ fn a_service_with_only_udp_ports_has_none_to_forward(cx: &mut TestAppContext) {
     );
     let mut dns = web_service(Some(serde_json::json!({"app": "web"})));
     dns.data["spec"]["ports"] = serde_json::json!([{"name": "dns", "port": 53, "protocol": "UDP"}]);
-    open_detail(&mut ui, "services", &mut services, vec![dns], "web");
+    open_detail(
+        &mut ui,
+        BuiltinKind::Services,
+        &mut services,
+        vec![dns],
+        "web",
+    );
 
     ui.frame(|window, cx| window.click("detail-forward", cx));
     ui.frame(|window, _| {
@@ -253,7 +243,7 @@ fn delete_warning(selector: Option<serde_json::Value>, cx: &mut TestAppContext) 
     );
     open_detail(
         &mut ui,
-        "services",
+        BuiltinKind::Services,
         &mut services,
         vec![web_service(selector)],
         "web",
@@ -315,7 +305,7 @@ fn open_service_with_slices(cx: &mut TestAppContext) -> (Ui<'_>, Sender<DynamicO
     );
     open_detail(
         &mut ui,
-        "services",
+        BuiltinKind::Services,
         &mut services,
         vec![web_service(Some(serde_json::json!({"app": "web"})))],
         "web",
@@ -444,7 +434,13 @@ fn an_ingress_detail_maps_rules_to_backends(cx: &mut TestAppContext) {
              "backend": {"service": {"name": "web", "port": {"number": 80}}}}
         ]}}]}
     }));
-    open_detail(&mut ui, "ingresses", &mut ingresses, vec![ingress], "shop");
+    open_detail(
+        &mut ui,
+        BuiltinKind::Ingresses,
+        &mut ingresses,
+        vec![ingress],
+        "shop",
+    );
 
     ui.frame(|window, _| {
         let rules = window.within("detail-table-Rules");
@@ -468,7 +464,13 @@ fn a_config_map_detail_previews_its_data(cx: &mut TestAppContext) {
         "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm"},
         "data": {"mode": "production"}
     }));
-    open_detail(&mut ui, "configmaps", &mut configs, vec![config], "app");
+    open_detail(
+        &mut ui,
+        BuiltinKind::ConfigMaps,
+        &mut configs,
+        vec![config],
+        "app",
+    );
 
     ui.frame(|window, _| {
         let data = window.within("detail-table-Data");
@@ -539,7 +541,13 @@ fn editing_a_secret_opens_its_real_manifest(cx: &mut TestAppContext) {
         cx,
         vec![(key(BuiltinKind::Secrets, "default"), secret_events)],
     );
-    open_detail(&mut ui, "secrets", &mut secrets, vec![db_secret()], "db");
+    open_detail(
+        &mut ui,
+        BuiltinKind::Secrets,
+        &mut secrets,
+        vec![db_secret()],
+        "db",
+    );
 
     ui.frame(|window, cx| window.click("detail-edit", cx));
     ui.settle();

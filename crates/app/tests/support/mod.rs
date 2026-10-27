@@ -15,6 +15,7 @@ use astrolabe::session::{
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
@@ -36,6 +37,10 @@ pub fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
         sender.try_send(Ok(Event::InitApply(object))).unwrap();
     }
     sender.try_send(Ok(Event::InitDone)).unwrap();
+}
+
+pub fn object(value: serde_json::Value) -> DynamicObject {
+    serde_json::from_value(value).unwrap()
 }
 
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
@@ -140,6 +145,25 @@ pub fn open(
         execed,
         forwarded,
     }
+}
+
+/// Open `kind`'s list from the navigation with `objects` in it, then the
+/// detail of `name` in the `default` namespace.
+pub fn open_detail(
+    ui: &mut Ui<'_>,
+    kind: BuiltinKind,
+    watch: &mut Sender<DynamicObject>,
+    objects: Vec<DynamicObject>,
+    name: &str,
+) {
+    ui.namespaces(&["default"]);
+    ui.settle();
+    let nav = format!("nav-{}", kind.registration().label.to_lowercase());
+    ui.frame(|window, cx| window.click(nav, cx));
+    snapshot(watch, objects);
+    ui.settle();
+    ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));
+    ui.settle();
 }
 
 /// Projects ages from `start` plus the test scheduler's elapsed time, so

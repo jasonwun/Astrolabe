@@ -13,7 +13,7 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Sender, Ui, key, open, snapshot};
+use support::{Ui, key, open, open_detail, snapshot};
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
@@ -470,21 +470,17 @@ fn sidecar_pod() -> DynamicObject {
     .unwrap()
 }
 
-fn open_pod_detail(ui: &mut Ui<'_>, pods: &mut Sender<DynamicObject>, pod: DynamicObject) {
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("nav-pods", cx));
-    snapshot(pods, vec![pod]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web-1", cx));
-    ui.settle();
-}
-
 #[gpui_kit::test]
 fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_pod_detail(&mut ui, &mut pods, sidecar_pod());
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![sidecar_pod()],
+        "web-1",
+    );
 
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.frame(|window, cx| {
@@ -526,7 +522,13 @@ fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
 fn a_single_container_pod_opens_its_logs_directly(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_pod_detail(&mut ui, &mut pods, crashing_pod("default"));
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+        "web-1",
+    );
 
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
@@ -545,7 +547,13 @@ fn a_single_container_pod_opens_its_logs_directly(cx: &mut TestAppContext) {
 fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_pod_detail(&mut ui, &mut pods, sidecar_pod());
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![sidecar_pod()],
+        "web-1",
+    );
 
     ui.frame(|window, cx| window.click("detail-exec", cx));
     ui.frame(|window, cx| {
@@ -598,7 +606,13 @@ fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContex
 fn a_single_container_pod_asks_only_for_the_shell(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_pod_detail(&mut ui, &mut pods, crashing_pod("default"));
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+        "web-1",
+    );
 
     ui.frame(|window, cx| window.click("detail-exec", cx));
     ui.frame(|window, cx| {
@@ -644,7 +658,13 @@ fn forward(ui: &mut Ui<'_>, port: u16) {
 fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_pod_detail(&mut ui, &mut pods, serving_pod());
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![serving_pod()],
+        "web-1",
+    );
 
     ui.frame(|window, cx| window.click("detail-forward", cx));
     ui.frame(|window, _| {
@@ -712,7 +732,13 @@ fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
 fn a_pod_without_declared_ports_has_nothing_to_forward(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_pod_detail(&mut ui, &mut pods, crashing_pod("default"));
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+        "web-1",
+    );
 
     ui.frame(|window, cx| window.click("detail-forward", cx));
     ui.frame(|window, _| {

@@ -8,7 +8,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{key, open, snapshot};
+use support::{key, open, open_detail, snapshot};
 
 /// Synthetic objects (plausible shapes, not captured from a server).
 fn pod() -> DynamicObject {
@@ -198,23 +198,6 @@ fn owned(kind: &str, name: &str, owner_kind: &str, owner: &str, uid: &str) -> Dy
     object
 }
 
-fn open_detail(
-    ui: &mut support::Ui<'_>,
-    kind: BuiltinKind,
-    sender: &mut support::Sender<DynamicObject>,
-    object: DynamicObject,
-) {
-    let name = object.metadata.name.clone().unwrap();
-    ui.namespaces(&["default"]);
-    ui.settle();
-    let nav = format!("nav-{}", kind.registration().label.to_lowercase());
-    ui.frame(|window, cx| window.click(nav, cx));
-    snapshot(sender, vec![object]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));
-    ui.settle();
-}
-
 #[gpui_kit::test]
 fn statefulsets_scale_restart_and_list_owned_pods(cx: &mut TestAppContext) {
     let (mut statefulsets, events) = mpsc::channel(32);
@@ -230,7 +213,8 @@ fn statefulsets_scale_restart_and_list_owned_pods(cx: &mut TestAppContext) {
         &mut ui,
         BuiltinKind::StatefulSets,
         &mut statefulsets,
-        workload("StatefulSet", "db"),
+        vec![workload("StatefulSet", "db")],
+        "db",
     );
     snapshot(
         &mut pods,
@@ -278,7 +262,8 @@ fn replicasets_scale_without_a_restart_action(cx: &mut TestAppContext) {
         &mut ui,
         BuiltinKind::ReplicaSets,
         &mut replicasets,
-        workload("ReplicaSet", "web-abc"),
+        vec![workload("ReplicaSet", "web-abc")],
+        "web-abc",
     );
     snapshot(
         &mut pods,
@@ -320,7 +305,8 @@ fn daemonsets_restart_without_a_scale_action(cx: &mut TestAppContext) {
         &mut ui,
         BuiltinKind::DaemonSets,
         &mut daemonsets,
-        workload("DaemonSet", "agent"),
+        vec![workload("DaemonSet", "agent")],
+        "agent",
     );
     snapshot(
         &mut pods,
@@ -358,7 +344,8 @@ fn jobs_list_owned_pods_and_warn_about_cascade(cx: &mut TestAppContext) {
         &mut ui,
         BuiltinKind::Jobs,
         &mut jobs,
-        workload("Job", "migrate"),
+        vec![workload("Job", "migrate")],
+        "migrate",
     );
     snapshot(
         &mut pods,
@@ -400,7 +387,8 @@ fn cronjobs_suspend_trigger_and_list_owned_jobs(cx: &mut TestAppContext) {
         &mut ui,
         BuiltinKind::CronJobs,
         &mut cronjobs,
-        workload("CronJob", "nightly"),
+        vec![workload("CronJob", "nightly")],
+        "nightly",
     );
     snapshot(
         &mut jobs,
