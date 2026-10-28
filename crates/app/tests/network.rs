@@ -2,34 +2,43 @@
 //! Freelens 088d085's columns and detail fields.
 
 use astrolabe::projection::network::{
-    ingress_detail, project_ingresses, project_services, service_detail, service_detail_with_raw,
-    service_ports,
+    ingress_detail, project_ingresses, project_services, service_detail, service_ports,
 };
 use astrolabe::projection::workloads::ForwardPort;
 use astrolabe::projection::{
-    DetailField, DetailItem, DetailSection, DetailValue, Forward, ForwardTo, SummaryTable,
+    DetailField, DetailItem, DetailModel, DetailSection, DetailValue, Forward, ForwardTo,
+    SummaryTable,
 };
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::kube::core::DynamicObject;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
 }
 
 fn service(spec: serde_json::Value, status: serde_json::Value) -> Service {
-    serde_json::from_value(serde_json::json!({
+    serde_json::from_value(service_object(spec, status)).unwrap()
+}
+
+/// A Service as the server sends it.
+fn service_object(spec: serde_json::Value, status: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-svc",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": spec,
         "status": status
-    }))
-    .unwrap()
+    })
+}
+
+fn node_port_service() -> Service {
+    serde_json::from_value(node_port_object()).unwrap()
 }
 
 /// Synthetic NodePort Service (plausible shape, not captured from a server).
-fn node_port_service() -> Service {
-    service(
+fn node_port_object() -> serde_json::Value {
+    service_object(
         serde_json::json!({
             "type": "NodePort",
             "clusterIP": "10.96.0.10", "clusterIPs": ["10.96.0.10"],
@@ -48,6 +57,14 @@ fn node_port_service() -> Service {
 
 fn cells(service: &Service) -> Vec<String> {
     project_services(&[service], now()).rows[0].cells.clone()
+}
+
+/// Projects `raw` the way the Services Registration does: the typed Service
+/// plus the `DynamicObject`'s untyped data.
+fn detail(raw: serde_json::Value) -> DetailModel {
+    let object: DynamicObject = serde_json::from_value(raw).unwrap();
+    let service = object.clone().try_parse::<Service>().unwrap();
+    service_detail(&service, &object.data, now())
 }
 
 fn section<'a>(sections: &'a [DetailSection], title: &str) -> Option<&'a DetailSection> {
@@ -190,7 +207,7 @@ fn external_ips_prefer_the_load_balancer() {
 
 #[test]
 fn a_service_detail_separates_base_fields_from_connection() {
-    let model = service_detail(&node_port_service(), now());
+    let model = detail(node_port_object());
 
     assert_eq!(model.title, "Service default/web");
     assert_eq!(
@@ -222,13 +239,10 @@ fn a_service_detail_separates_base_fields_from_connection() {
 
 #[test]
 fn connection_array_fields_follow_array_length() {
-    let model = service_detail(
-        &service(
-            serde_json::json!({"clusterIPs": [""], "ipFamilies": [""]}),
-            serde_json::json!({}),
-        ),
-        now(),
-    );
+    let model = detail(service_object(
+        serde_json::json!({"clusterIPs": [""], "ipFamilies": [""]}),
+        serde_json::json!({}),
+    ));
     let connection = section(&model.sections, "Connection").unwrap();
     assert_eq!(value(field(connection, "Cluster IPs")), Some(""));
     assert_eq!(value(field(connection, "IP families")), Some(""));
@@ -236,19 +250,16 @@ fn connection_array_fields_follow_array_length() {
 
 #[test]
 fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
-    let full = service_detail(
-        &service(
-            serde_json::json!({
-                "type": "ClusterIP", "sessionAffinity": "ClientIP",
-                "internalTrafficPolicy": "Local",
-                "trafficDistribution": "PreferClose",
-                "publishNotReadyAddresses": false,
-                "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": 150}}
-            }),
-            serde_json::json!({}),
-        ),
-        now(),
-    );
+    let full = detail(service_object(
+        serde_json::json!({
+            "type": "ClusterIP", "sessionAffinity": "ClientIP",
+            "internalTrafficPolicy": "Local",
+            "trafficDistribution": "PreferClose",
+            "publishNotReadyAddresses": false,
+            "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": 150}}
+        }),
+        serde_json::json!({}),
+    ));
     assert_eq!(
         full.status,
         [
@@ -263,13 +274,10 @@ fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
     let affinity = section(&full.sections, "Session Affinity Config").unwrap();
     assert_eq!(value(field(affinity, "Client IP Timeout")), Some("2m 30s"));
 
-    let bare = service_detail(
-        &service(
-            serde_json::json!({"type": "ClusterIP", "clusterIP": "", "ipFamilyPolicy": ""}),
-            serde_json::json!({}),
-        ),
-        now(),
-    );
+    let bare = detail(service_object(
+        serde_json::json!({"type": "ClusterIP", "clusterIP": "", "ipFamilyPolicy": ""}),
+        serde_json::json!({}),
+    ));
     assert_eq!(
         bare.status,
         [
@@ -285,13 +293,10 @@ fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
             .is_empty()
     );
 
-    let no_client_ip = service_detail(
-        &service(
-            serde_json::json!({"sessionAffinityConfig": {}}),
-            serde_json::json!({}),
-        ),
-        now(),
-    );
+    let no_client_ip = detail(service_object(
+        serde_json::json!({"sessionAffinityConfig": {}}),
+        serde_json::json!({}),
+    ));
     assert!(
         section(&no_client_ip.sections, "Session Affinity Config")
             .unwrap()
@@ -302,29 +307,26 @@ fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
 
 #[test]
 fn a_load_balancer_detail_shows_optional_fields_and_ingress_port_tables() {
-    let model = service_detail(
-        &service(
-            serde_json::json!({
-                "type": "LoadBalancer",
-                "allocateLoadBalancerNodePorts": false,
-                "loadBalancerIP": "9.9.9.9",
-                "loadBalancerClass": "example.com/internal",
-                "externalTrafficPolicy": "Local",
-                "healthCheckNodePort": 30000
-            }),
-            serde_json::json!({"loadBalancer": {"ingress": [
-                {
-                    "hostname": "lb.example", "ip": "9.9.9.9", "ipMode": "VIP",
-                    "ports": [
-                        {"port": 80},
-                        {"port": 53, "protocol": "UDP", "error": "PortUnavailable"}
-                    ]
-                },
-                {"hostname": "second.example"}
-            ]}}),
-        ),
-        now(),
-    );
+    let model = detail(service_object(
+        serde_json::json!({
+            "type": "LoadBalancer",
+            "allocateLoadBalancerNodePorts": false,
+            "loadBalancerIP": "9.9.9.9",
+            "loadBalancerClass": "example.com/internal",
+            "externalTrafficPolicy": "Local",
+            "healthCheckNodePort": 30000
+        }),
+        serde_json::json!({"loadBalancer": {"ingress": [
+            {
+                "hostname": "lb.example", "ip": "9.9.9.9", "ipMode": "VIP",
+                "ports": [
+                    {"port": 80},
+                    {"port": 53, "protocol": "UDP", "error": "PortUnavailable"}
+                ]
+            },
+            {"hostname": "second.example"}
+        ]}}),
+    ));
     let balancer = section(&model.sections, "Load Balancer").unwrap();
     let mut expected = [
         ("Allocate Load Balancer Node Ports", "false"),
@@ -365,20 +367,17 @@ fn a_load_balancer_detail_shows_optional_fields_and_ingress_port_tables() {
     );
     assert!(field(connection, "Cluster IPs").is_none());
 
-    let cluster_ip = service_detail(
-        &service(
-            serde_json::json!({"type": "ClusterIP", "loadBalancerIP": "9.9.9.9"}),
-            serde_json::json!({"loadBalancer": {"ingress": [{"ip": "9.9.9.9"}]}}),
-        ),
-        now(),
-    );
+    let cluster_ip = detail(service_object(
+        serde_json::json!({"type": "ClusterIP", "loadBalancerIP": "9.9.9.9"}),
+        serde_json::json!({"loadBalancer": {"ingress": [{"ip": "9.9.9.9"}]}}),
+    ));
     assert!(section(&cluster_ip.sections, "Load Balancer").is_none());
 }
 
 #[test]
 fn external_ips_use_service_port_protocols_and_external_name_fallback() {
     let external = |spec: serde_json::Value| {
-        let model = service_detail(&service(spec, serde_json::json!({})), now());
+        let model = detail(service_object(spec, serde_json::json!({})));
         let connection = section(&model.sections, "Connection").unwrap();
         field(connection, "External IPs").cloned()
     };
@@ -437,7 +436,7 @@ fn load_balancer_conditions_follow_their_presence() {
             "message": "load balancer is ready"
         }]}}
     });
-    let model = service_detail_with_raw(&serde_json::from_value(raw.clone()).unwrap(), &raw, now());
+    let model = detail(raw);
     let conditions = section(&model.sections, "Conditions").unwrap();
     assert_eq!(
         fields(conditions),
@@ -451,13 +450,10 @@ fn load_balancer_conditions_follow_their_presence() {
         .map(DetailField::from)
     );
 
-    let without = service_detail(
-        &service(
-            serde_json::json!({"type": "LoadBalancer"}),
-            serde_json::json!({"loadBalancer": {}}),
-        ),
-        now(),
-    );
+    let without = detail(service_object(
+        serde_json::json!({"type": "LoadBalancer"}),
+        serde_json::json!({"loadBalancer": {}}),
+    ));
     assert!(section(&without.sections, "Conditions").is_none());
     assert!(
         section(&without.sections, "Load Balancer")
@@ -476,7 +472,7 @@ fn topology_keys_are_retained_from_the_original_service() {
             "topologyKeys": ["kubernetes.io/hostname", "topology.kubernetes.io/zone"]
         }
     });
-    let model = service_detail_with_raw(&serde_json::from_value(raw.clone()).unwrap(), &raw, now());
+    let model = detail(raw);
     assert_eq!(
         model.status,
         [
@@ -489,13 +485,10 @@ fn topology_keys_are_retained_from_the_original_service() {
         ]
     );
 
-    let without = service_detail(
-        &service(
-            serde_json::json!({"type": "ClusterIP"}),
-            serde_json::json!({}),
-        ),
-        now(),
-    );
+    let without = detail(service_object(
+        serde_json::json!({"type": "ClusterIP"}),
+        serde_json::json!({}),
+    ));
     assert!(
         !without
             .status
@@ -534,7 +527,7 @@ fn service_ports_offer_tcp_ports_with_their_target() {
 
 #[test]
 fn a_service_detail_forwards_to_its_tcp_ports() {
-    let model = service_detail(&node_port_service(), now());
+    let model = detail(node_port_object());
 
     assert_eq!(
         model.forward,
