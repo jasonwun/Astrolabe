@@ -59,7 +59,8 @@ impl SessionView {
         })
         .detach();
         let (dock, skin) = DockSkin::dock_area("session", None, window, cx);
-        // Off by default in the skin; the panels' `closable` still gates each tab.
+        // Off by default in the skin; the panels' `closable` still gates each
+        // tab.
         skin.set_close_button_visible(true, cx);
         dock.update(cx, |dock, cx| {
             dock.add_panel_view(
@@ -220,7 +221,8 @@ impl SessionView {
                 this.child(deferred(
                     v_flex()
                         .id("namespace-menu")
-                        // The menu overlaps the dock's tab bar; keep clicks off it.
+                        // The menu overlaps the dock's tab bar; keep clicks
+                        // off it.
                         .occlude()
                         .absolute()
                         .top(px(32.))

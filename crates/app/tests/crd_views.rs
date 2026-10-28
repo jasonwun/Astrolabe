@@ -634,7 +634,8 @@ fn namespace_rows_open_a_live_detail_tab_with_delete(cx: &mut TestAppContext) {
         );
     });
 
-    // Edit YAML opens the manifest in its own tab; the row reselects the detail.
+    // Edit YAML opens the manifest in its own tab; the row reselects the
+    // detail.
     ui.frame(|window, cx| window.click("detail-edit", cx));
     ui.settle();
     ui.frame(|window, cx| {

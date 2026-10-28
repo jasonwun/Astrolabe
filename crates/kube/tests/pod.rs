@@ -1,5 +1,5 @@
-//! Pod streams, exec exit codes and port-forward listeners against a mock apiserver (synthetic responses, never
-//! captured from a real apiserver).
+//! Pod streams, exec exit codes and port-forward listeners against a mock
+//! apiserver (synthetic responses, never captured from a real apiserver).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

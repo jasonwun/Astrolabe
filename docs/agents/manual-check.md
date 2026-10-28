@@ -23,7 +23,9 @@ dev/demo.sh apply     # prints this worktree's namespace, astrolabe-demo-<worktr
 `dev/demo.yaml` holds synthetic objects for every built-in kind;
 `dev/demo.sh` seeds them into a namespace of this worktree's own, so other
 worktrees' demos stay untouched. Extend `dev/demo.yaml` first whenever it
-lacks a kind or a state the change adds (keep it labelled synthetic).
+lacks a kind or a state the check needs, including states a refactor only
+has to keep working (keep it labelled synthetic). Ad-hoc `kubectl` objects
+leave evidence nobody can reproduce.
 
 ## 2. Launch
 
@@ -86,6 +88,9 @@ per window point.
   result rather than taking another snapshot.
 - Select `kind-astrolabe-dev` in the Clusters sidebar if it is not
   already active, then this worktree's namespace in the namespace selector.
+  Capture the open selector before picking: it lists namespaces
+  alphabetically, so `astrolabe-demo-*` usually sits first, and a click at
+  a remembered position lands on another namespace once the list changes.
 
 ## 4. Attach to the PR
 
