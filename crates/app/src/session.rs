@@ -20,7 +20,7 @@ pub use crate::cluster_io::{
     ExecOutput, ExecSession, ForwardEvent, LogChunk, LogStream, PortForward, ScriptedCluster,
     SharedClient,
 };
-use crate::store::{ObjectKey, Store};
+use crate::store::ObjectKey;
 pub use astrolabe_kube::pod::ExecInput;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
@@ -119,9 +119,9 @@ pub enum ConnectionHealth {
     Stale,
 }
 
-/// What one watch message did to its store's object set.
+/// What one watch message did to the watcher's object set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SnapshotChange {
+pub enum SnapshotChange {
     Unchanged,
     /// The first complete list arrived.
     FirstSnapshot,
@@ -130,12 +130,15 @@ enum SnapshotChange {
     Changed,
 }
 
-/// One watcher's store plus its connection state: old data stays visible
+/// One watcher's snapshot plus its connection state: old data stays visible
 /// (stale) through a relist until the complete replacement arrives.
 pub struct Watched<K> {
     cluster: String,
     label: String,
-    store: Store<K>,
+    /// The snapshot readers see.
+    committed: BTreeMap<ObjectKey, K>,
+    /// A relist in progress, swapped in whole on `InitDone`.
+    staging: BTreeMap<ObjectKey, K>,
     health: ConnectionHealth,
     has_snapshot: bool,
     stale: bool,
@@ -143,11 +146,13 @@ pub struct Watched<K> {
 }
 
 impl<K: ResourceExt> Watched<K> {
-    fn new(cluster: impl Into<String>, label: impl Into<String>) -> Self {
+    /// `label` names the watched resource in logs.
+    pub fn new(cluster: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             cluster: cluster.into(),
             label: label.into(),
-            store: Store::new(),
+            committed: BTreeMap::new(),
+            staging: BTreeMap::new(),
             health: ConnectionHealth::Connecting,
             has_snapshot: false,
             stale: false,
@@ -168,44 +173,56 @@ impl<K: ResourceExt> Watched<K> {
         }
     }
 
+    fn mark_healthy(&mut self) {
+        self.has_snapshot = true;
+        self.forbidden = false;
+        self.set_health(ConnectionHealth::Healthy);
+        self.stale = false;
+    }
+
     fn mark_stale(&mut self) {
         self.set_health(ConnectionHealth::Stale);
         self.stale = self.has_snapshot;
     }
 
-    fn apply(&mut self, message: WatchMessage<K>) -> SnapshotChange {
+    /// The single place a watch message is interpreted.
+    pub fn apply(&mut self, message: WatchMessage<K>) -> SnapshotChange {
         match message {
-            Ok(event) => {
-                let relist_completed = matches!(&event, Event::InitDone);
-                let change = match &event {
-                    Event::Apply(_) | Event::Delete(_) => SnapshotChange::Changed,
-                    Event::InitDone if self.has_snapshot => SnapshotChange::Changed,
-                    Event::InitDone => SnapshotChange::FirstSnapshot,
-                    Event::Init | Event::InitApply(_) => SnapshotChange::Unchanged,
+            Ok(Event::Init) => {
+                self.set_health(ConnectionHealth::Connecting);
+                self.stale = self.has_snapshot;
+                self.staging.clear();
+                SnapshotChange::Unchanged
+            }
+            Ok(Event::InitApply(object)) => {
+                self.staging.insert(ObjectKey::of(&object), object);
+                SnapshotChange::Unchanged
+            }
+            Ok(Event::InitDone) => {
+                let change = if self.has_snapshot {
+                    SnapshotChange::Changed
+                } else {
+                    SnapshotChange::FirstSnapshot
                 };
-                match &event {
-                    Event::Init => {
-                        self.set_health(ConnectionHealth::Connecting);
-                        self.stale = self.has_snapshot;
-                    }
-                    Event::InitApply(_) => {}
-                    Event::InitDone | Event::Apply(_) | Event::Delete(_) => {
-                        self.has_snapshot = true;
-                        self.forbidden = false;
-                        self.set_health(ConnectionHealth::Healthy);
-                        self.stale = false;
-                    }
-                }
-                self.store.apply(event);
-                if relist_completed {
-                    tracing::info!(
-                        cluster = %self.cluster,
-                        objects = self.store.snapshot().len(),
-                        "{} snapshot replaced",
-                        self.label
-                    );
-                }
+                self.mark_healthy();
+                self.committed = std::mem::take(&mut self.staging);
+                tracing::info!(
+                    cluster = %self.cluster,
+                    objects = self.committed.len(),
+                    "{} snapshot replaced",
+                    self.label
+                );
                 change
+            }
+            Ok(Event::Apply(object)) => {
+                self.mark_healthy();
+                self.committed.insert(ObjectKey::of(&object), object);
+                SnapshotChange::Changed
+            }
+            Ok(Event::Delete(object)) => {
+                self.mark_healthy();
+                self.committed.remove(&ObjectKey::of(&object));
+                SnapshotChange::Changed
             }
             Err(error) => {
                 self.forbidden = error.forbidden;
@@ -216,11 +233,12 @@ impl<K: ResourceExt> Watched<K> {
     }
 
     pub fn objects(&self) -> Vec<&K> {
-        self.store.snapshot()
+        self.committed.values().collect()
     }
 
     pub fn get(&self, namespace: Option<&str>, name: &str) -> Option<&K> {
-        self.store.get(namespace, name)
+        self.committed
+            .get(&ObjectKey::new(namespace.map(str::to_string), name))
     }
 
     pub fn health(&self) -> ConnectionHealth {

@@ -9,7 +9,7 @@ One kubeconfig context the user can open.
 _Avoid_: context (in UI and issue text), connection
 
 **Session**:
-An opened cluster in the app, owning that cluster's watches and their stores for as long as it is open; several sessions coexist.
+An opened cluster in the app, owning that cluster's watches and their snapshots for as long as it is open; several sessions coexist.
 _Avoid_: connection, tab
 
 **Watch**:
