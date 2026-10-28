@@ -77,6 +77,9 @@ Reference: `crates/app/src/resource_list.rs`.
   Assert on the element the selector does return (e.g. it lies inside
   `dock-tab-{n}`), or on its absence once a single candidate is left (#51).
 
+- Opening a built-in kind's list then a row's detail:
+  `support::open_detail(ui, BuiltinKind, watch, objects, name)`; a
+  `DynamicObject` from JSON: `support::object` (#101).
 - `Ui::frame` (`crates/app/tests/support`) renders the whole window
   before it queries, so every view shows fresh state whether or not it
   notified. To prove a view redraws on its own (a timer, a
