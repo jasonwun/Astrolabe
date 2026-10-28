@@ -67,15 +67,21 @@ cargo llvm-cov --workspace --summary-only
 
 To compare against a baseline (e.g. a refactor that must not regress),
 build the baseline in a throwaway worktree, not via `git stash` (the stash
-stack is shared across worktrees), and filter the summary rows by file
-basename:
+stack is shared across worktrees), and filter the summary rows by path
+from the line start (a bare basename also matches cargo's `Running
+tests/crd_session.rs` lines). Name the worktree after the issue: other
+worktrees may run the same recipe at once.
 
 ```sh
-git worktree add ../cov-base origin/main
-(cd ../cov-base && cargo llvm-cov --workspace --summary-only) | grep -E 'session\.rs|store\.rs'
-cargo llvm-cov --workspace --summary-only | grep -E 'session\.rs|store\.rs'
-git worktree remove ../cov-base
+git worktree add ../cov-base-<issue> origin/main
+(cd ../cov-base-<issue> && cargo llvm-cov --workspace --summary-only) | grep -E '^crates/app/src/(session|store)\.rs '
+cargo llvm-cov --workspace --summary-only | grep -E '^crates/app/src/(session|store)\.rs '
+git worktree remove ../cov-base-<issue>
 ```
+
+A bar over several files (e.g. "the merged module vs `session.rs` +
+`store.rs` on `main`") compares summed counts: add the files' regions and
+missed regions, then take the percentage.
 
 ## Mutation testing
 
