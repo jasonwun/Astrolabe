@@ -163,3 +163,17 @@ Origin: #85's first draft said every scripted mode prints `load=` at
 start and end and that the editor and terminal benchmarks took their
 frame stats and load from `spikes/support`; neither was true yet (#85
 retro).
+
+## Tests that claim the Registration's path
+
+A test that claims to exercise what the app does for a built-in kind
+calls the Registration (`BuiltinKind::X.registration().detail` or
+`.list`) with a `DynamicObject`. A test helper that rebuilds the
+Registration's glue (parsing, choosing which JSON to pass) is a finding:
+the copy drifts from the Registration and passes when the app's path
+differs.
+
+Origin: #100's test helper rebuilt the Services Registration's
+`try_parse` and `.data` call; its first version passed `metadata` the
+app never sees, and neither reviewer suggested calling the Registration
+(#100 retro).
