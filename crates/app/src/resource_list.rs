@@ -396,7 +396,8 @@ impl Render for ResourceListPanel {
             ListState::Error(text) => Some(("list-error", text.clone(), theme.danger)),
         };
         v_flex()
-            // The dock focuses the displayed panel; `cmd-w` dispatches from here.
+            // The dock focuses the displayed panel; `cmd-w` dispatches from
+            // here.
             .track_focus(&self.focus_handle)
             .size_full()
             .when(self.stale, |this| {

@@ -169,7 +169,8 @@ impl TerminalView {
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &event.keystroke;
 
-        // Platform shortcuts: cmd-v paste. (cmd-c needs selection — not implemented yet.)
+        // Platform shortcuts: cmd-v paste. (cmd-c needs selection — not
+        // implemented yet.)
         if ks.modifiers.platform {
             if ks.key == "v" {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {

@@ -7,7 +7,8 @@
 //! suite stays hermetic; run them with:
 //!
 //! ```sh
-//! cargo test -p astrolabe-kube --test e2e_cluster -- --ignored --test-threads=1
+//! cargo test -p astrolabe-kube --test e2e_cluster -- \
+//!     --ignored --test-threads=1
 //! ```
 
 use std::time::Duration;

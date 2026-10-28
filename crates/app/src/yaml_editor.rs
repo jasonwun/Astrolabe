@@ -1,6 +1,6 @@
-//! The YAML editor loop (#21): edit → (debounced dry-run precheck) → Apply →
-//! jump-to-line on failure → fix → re-Apply. Reused by the Edit-tab and
-//! multi-document Create flows built in #16/#17.
+//! The YAML editor loop (#21): edit → (debounced dry-run precheck) →
+//! Apply → jump-to-line on failure → fix → re-Apply. Reused by the Edit-tab
+//! and multi-document Create flows built in #16/#17.
 //!
 //! Marker presentation: gpui-component 0.8.0's Editor has no custom gutter
 //! API, so the spec's gutter marks land as line decorations instead —
