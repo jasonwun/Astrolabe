@@ -61,10 +61,10 @@ contract, the deviation question below.
 Check the pinned `k8s-openapi` type against every upstream field before
 projecting from it: deserialization discards fields the typed model does
 not know. For example, `Service` loses `topologyKeys` and load-balancer
-conditions. Preserve such fields from `DynamicObject` or the registration's
-original JSON rather than a typed round-trip. Test them through the real
-registration/UI path with a fixture that fails if the field passes only
-through the typed model.
+conditions. Preserve such fields from `DynamicObject.data` rather than a
+typed round-trip; `data` holds the body minus `metadata` and
+`apiVersion`/`kind`. Test them through the real registration/UI path with
+a fixture that fails if the field passes only through the typed model.
 
 ## What follows upstream, what doesn't
 
