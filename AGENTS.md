@@ -12,7 +12,7 @@ Commit messages created by an agent must end with a `Co-Authored-By:` trailer na
 
 ### Issue tracker
 
-Issues and specs are tracked as GitHub issues on jasonwun/Astrolabe, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Before any `gh issue` or `gh pr` call: `docs/agents/issue-tracker.md`. Issues and specs are GitHub issues on jasonwun/Astrolabe.
 
 ### Triage labels
 

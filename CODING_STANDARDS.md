@@ -177,3 +177,15 @@ Origin: #100's test helper rebuilt the Services Registration's
 `try_parse` and `.data` call; its first version passed `metadata` the
 app never sees, and neither reviewer suggested calling the Registration
 (#100 retro).
+
+## View-test steps the support module already has
+
+A view test opens a built-in kind's detail with `support::open_detail`
+and builds a `DynamicObject` with `support::object`. A local helper or
+an inline run that repeats `open_detail`'s steps (select the namespace,
+click the nav item, send the snapshot, click the row) is a finding,
+whatever its name.
+
+Origin: #101 shared these helpers after four files had copied them; a
+fifth copy, `workload_views`' `open_pod_detail`, was missed because it
+had another name, and only the review found it (#101 retro).
