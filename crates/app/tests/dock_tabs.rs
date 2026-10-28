@@ -18,7 +18,7 @@ const DETAIL_TAB: &str = "dock-tab-1";
 const CHILD_TAB: &str = "dock-tab-2";
 
 /// Open the Namespaces list holding `old`, then `old`'s detail tab.
-fn open_detail(ui: &mut Ui<'_>) {
+fn open_namespace_detail(ui: &mut Ui<'_>) {
     ui.namespaces(&["old"]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-old", cx));
@@ -42,7 +42,7 @@ fn bounds(ui: &mut Ui<'_>, selector: &'static str) -> Option<Bounds<Pixels>> {
 #[gpui_kit::test]
 fn the_close_button_removes_a_detail_tab(cx: &mut TestAppContext) {
     let mut ui = open(cx, Vec::new());
-    open_detail(&mut ui);
+    open_namespace_detail(&mut ui);
     assert!(detail_tab_shown(&mut ui));
 
     let button = bounds(&mut ui, CLOSE_BUTTON).expect("the detail tab draws a close button");
@@ -78,7 +78,7 @@ fn the_close_button_removes_a_detail_tab(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn cmd_w_closes_the_active_detail_tab_but_not_the_list(cx: &mut TestAppContext) {
     let mut ui = open(cx, Vec::new());
-    open_detail(&mut ui);
+    open_namespace_detail(&mut ui);
     assert!(detail_tab_shown(&mut ui));
 
     ui.frame(|window, cx| window.press("cmd-w", cx));
@@ -101,7 +101,7 @@ fn cmd_w_closes_the_active_detail_tab_but_not_the_list(cx: &mut TestAppContext) 
 #[gpui_kit::test]
 fn a_closed_detail_reopens_as_a_fresh_selected_tab(cx: &mut TestAppContext) {
     let mut ui = open(cx, Vec::new());
-    open_detail(&mut ui);
+    open_namespace_detail(&mut ui);
     ui.frame(|window, cx| window.press("cmd-w", cx));
     ui.settle();
     assert!(!detail_tab_shown(&mut ui));

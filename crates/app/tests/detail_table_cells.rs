@@ -6,21 +6,16 @@
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, Window, px};
-use support::{key, open, snapshot};
+use support::{key, object, open, snapshot};
 
 /// A cell's right padding (`pr_2`): the gap its text keeps from the next.
 const GUTTER: f32 = 8.;
 
 const LONG: &str = "Container image \"busybox:1.36.1-musl-with-a-much-longer-tag\" \
                     already present on machine and more besides";
-
-fn object(value: serde_json::Value) -> DynamicObject {
-    serde_json::from_value(value).unwrap()
-}
 
 /// Within `scope`, the text element `text_id` ends one gutter (to 1px)
 /// before cell `next_id` starts. Its bounds are the box the ellipsis is

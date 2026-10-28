@@ -5,33 +5,10 @@
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Sender, Ui, key, open, snapshot};
-
-fn object(value: serde_json::Value) -> DynamicObject {
-    serde_json::from_value(value).unwrap()
-}
-
-/// Open `kind`'s list from the navigation with `objects` in it, then the
-/// detail of `name`.
-fn open_detail(
-    ui: &mut Ui<'_>,
-    kind: &str,
-    watch: &mut Sender<DynamicObject>,
-    objects: Vec<DynamicObject>,
-    name: &str,
-) {
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(format!("nav-{kind}"), cx));
-    snapshot(watch, objects);
-    ui.settle();
-    ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));
-    ui.settle();
-}
+use support::{key, object, open, open_detail, snapshot};
 
 /// How far down the detail each id renders, panicking on one that does
 /// not.
@@ -77,7 +54,7 @@ fn an_hpa_detail_shows_replicas_conditions_then_metrics(cx: &mut TestAppContext)
     }));
     open_detail(
         &mut ui,
-        "horizontalpodautoscalers",
+        BuiltinKind::HorizontalPodAutoscalers,
         &mut hpas,
         vec![hpa],
         "web",
@@ -134,7 +111,7 @@ fn a_resource_quota_detail_shows_quotas_then_its_scope_selector(cx: &mut TestApp
     }));
     open_detail(
         &mut ui,
-        "resourcequotas",
+        BuiltinKind::ResourceQuotas,
         &mut quotas,
         vec![quota],
         "compute",
@@ -177,7 +154,7 @@ fn a_limit_range_detail_shows_a_section_per_limit_type(cx: &mut TestAppContext) 
     }));
     open_detail(
         &mut ui,
-        "limitranges",
+        BuiltinKind::LimitRanges,
         &mut limits,
         vec![limit_range],
         "defaults",
