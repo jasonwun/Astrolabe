@@ -6,7 +6,6 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
-use astrolabe_kube::k8s_openapi::api::core::v1::Event;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -15,7 +14,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::builtin::BuiltinKind;
+use crate::builtin::{BuiltinKind, Registration};
 use crate::clock;
 use crate::projection::{
     ResourceRow, ResourceTable, column_widths, default_column_weights, project_custom_resources,
@@ -32,6 +31,16 @@ pub enum ListView {
     Builtin(BuiltinKind),
     Definitions,
     Custom(CustomKindId),
+}
+
+impl ListView {
+    /// The registration behind a built-in kind's list.
+    fn registration(&self) -> Option<&'static Registration> {
+        match self {
+            ListView::Builtin(kind) => Some(kind.registration()),
+            _ => None,
+        }
+    }
 }
 
 /// A row was clicked: open its detail tab.
@@ -129,11 +138,13 @@ impl ResourceListPanel {
             ListView::Namespaces => Ok(DetailTarget::Namespace {
                 name: key.name.clone(),
             }),
-            ListView::Builtin(BuiltinKind::Events) => self.event_target(key, cx),
-            ListView::Builtin(kind) => Ok(DetailTarget::Builtin {
-                kind: *kind,
-                key: key.clone(),
-            }),
+            ListView::Builtin(kind) => match kind.registration().row_target {
+                Some(_) => self.referenced_target(*kind, key, cx),
+                None => Ok(DetailTarget::Builtin {
+                    kind: *kind,
+                    key: key.clone(),
+                }),
+            },
             ListView::Definitions => Ok(DetailTarget::Definition {
                 name: key.name.clone(),
             }),
@@ -154,67 +165,23 @@ impl ResourceListPanel {
         }
     }
 
-    fn event_target(&self, key: &ObjectKey, cx: &App) -> Result<DetailTarget, String> {
+    /// The object a row of `kind` names through its registration's
+    /// `row_target`, as a detail target.
+    fn referenced_target(
+        &self,
+        kind: BuiltinKind,
+        key: &ObjectKey,
+        cx: &App,
+    ) -> Result<DetailTarget, String> {
+        let row_target = kind.registration().row_target;
         let session = self.session.read(cx);
         let namespace = key.namespace.as_deref().unwrap_or_default();
-        let event = session
-            .object_watch(&session.builtin_watch_key(BuiltinKind::Events, namespace))
+        let (object, reference) = session
+            .object_watch(&session.builtin_watch_key(kind, namespace))
             .and_then(|watch| watch.get(Some(namespace), &key.name))
-            .and_then(|object| object.clone().try_parse::<Event>().ok())
-            .ok_or_else(|| format!("Cannot open Event {key}: object is unavailable"))?;
-        let involved = event.involved_object;
-        let kind = involved.kind.unwrap_or_default();
-        let name = involved.name.unwrap_or_default();
-        let target = format!("{kind}/{name}");
-        if name.is_empty() {
-            return Err(format!(
-                "Cannot open involved object {target}: name is missing"
-            ));
-        }
-        let namespaced_key = || {
-            ObjectKey::new(
-                involved
-                    .namespace
-                    .clone()
-                    .or_else(|| event.metadata.namespace.clone()),
-                name.clone(),
-            )
-        };
-        let api_version = involved.api_version.clone();
-        if let Some(kind) = BuiltinKind::from_kind(&kind)
-            && api_version
-                .as_ref()
-                .is_none_or(|version| *version == (kind.registration().resource)().api_version)
-        {
-            return Ok(DetailTarget::Builtin {
-                kind,
-                key: namespaced_key(),
-            });
-        }
-        match (kind.as_str(), api_version.as_deref()) {
-            ("Namespace", None | Some("v1")) => Ok(DetailTarget::Namespace { name }),
-            ("CustomResourceDefinition", None | Some("apiextensions.k8s.io/v1")) => {
-                Ok(DetailTarget::Definition { name })
-            }
-            _ => {
-                let group = api_version
-                    .and_then(|version| version.split_once('/').map(|(group, _)| group.to_string()))
-                    .unwrap_or_default();
-                let id = CustomKindId { group, kind };
-                if let Some(custom) = session.custom_kind(&id) {
-                    let key = if custom.namespaced {
-                        namespaced_key()
-                    } else {
-                        ObjectKey::cluster_scoped(name)
-                    };
-                    Ok(DetailTarget::Custom { id, key })
-                } else {
-                    Err(format!(
-                        "Cannot open involved object {target}: kind is not registered"
-                    ))
-                }
-            }
-        }
+            .and_then(|object| Some((object, row_target?(object)?)))
+            .ok_or_else(|| format!("Cannot open {} {key}: object is unavailable", kind.kind()))?;
+        DetailTarget::by_reference(reference, object.metadata.namespace.clone(), session)
     }
 
     fn toggle_group(&mut self, group: String, cx: &mut Context<Self>) {
@@ -227,10 +194,10 @@ impl ResourceListPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let now = clock::now(cx);
         let session = self.session.read(cx);
-        let weights = match &self.view {
-            ListView::Builtin(kind) => kind.registration().column_weights,
-            _ => None,
-        };
+        let weights = self
+            .view
+            .registration()
+            .and_then(|registration| registration.column_weights);
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
             ListView::Namespaces => (
                 ResourceTable {
@@ -319,7 +286,10 @@ impl ResourceListPanel {
             cx.background_executor().timer(next_tick).await;
             panel.update(cx, |panel, cx| panel.refresh(cx)).ok();
         });
-        let open_all_cells = self.view == ListView::Builtin(BuiltinKind::Events);
+        let open_all_cells = self
+            .view
+            .registration()
+            .is_some_and(|registration| registration.open_all_cells);
         self.table.update(cx, |state, cx| {
             debug_assert!(
                 weights.is_none_or(|weights| weights.len() == table.columns.len()),
@@ -498,8 +468,8 @@ impl Render for ResourceListPanel {
 type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 
 /// Table delegate over a projected [`ResourceTable`]; the first cell opens
-/// details, or every cell for the global Events view. The columns share the
-/// table's width by weight.
+/// details, or every cell when the kind's registration says so. The
+/// columns share the table's width by weight.
 pub(crate) struct RowsTable {
     table: ResourceTable,
     weights: Vec<f32>,

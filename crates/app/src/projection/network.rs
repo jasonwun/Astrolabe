@@ -11,8 +11,8 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::workloads::{ForwardPort, int_or_string};
 use super::{
-    DetailField, DetailModel, DetailSection, DetailValue, ResourceRow, ResourceTable, SummaryTable,
-    age_of, detail,
+    DetailField, DetailModel, DetailSection, DetailValue, Forward, ForwardTo, ResourceRow,
+    ResourceTable, SummaryTable, age_of, detail,
 };
 use crate::store::ObjectKey;
 
@@ -405,6 +405,11 @@ pub fn service_detail_with_raw(
 
     let mut model = detail("Service", service, raw, summary, now);
     model.sections = sections;
+    model.forward = Some(Forward {
+        to: ForwardTo::Service,
+        ports: service_ports(service),
+        empty: "No TCP ports",
+    });
     model
 }
 

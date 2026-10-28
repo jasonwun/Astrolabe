@@ -269,6 +269,31 @@ pub struct ReplicaCounts {
     pub unavailable: i32,
 }
 
+/// The containers a Pod's actions run in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Containers {
+    /// Every container, init containers first: what Logs reads.
+    pub all: Vec<String>,
+    /// The containers still running: what Exec reaches.
+    pub running: Vec<String>,
+}
+
+/// What Port Forward reaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForwardTo {
+    Pod,
+    Service,
+}
+
+/// What Port Forward offers from a detail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Forward {
+    pub to: ForwardTo,
+    pub ports: Vec<workloads::ForwardPort>,
+    /// What the picker says when there are no `ports`.
+    pub empty: &'static str,
+}
+
 /// The generic detail page (#11): metadata summary, status summary, YAML.
 /// Built-in kinds reuse the same structure; their registration may add
 /// summary tables and a replica bar to the status summary (#17).
@@ -286,6 +311,12 @@ pub struct DetailModel {
     pub conditions: Vec<ConditionRow>,
     /// A Secret's keys, whose values the panel reveals only on request.
     pub secret_keys: Vec<config::SecretKey>,
+    /// What Logs and Exec choose from.
+    pub containers: Option<Containers>,
+    /// What Port Forward reaches and offers.
+    pub forward: Option<Forward>,
+    /// Whether a CronJob is suspended, for Suspend/Resume.
+    pub suspended: Option<bool>,
     /// The YAML preview, values masked for a Secret.
     pub yaml: String,
     /// What Edit opens when it differs from the preview: a Secret's real
@@ -430,6 +461,9 @@ pub(crate) fn detail<K: Resource + Clone + Serialize>(
         tables: Vec::new(),
         conditions: conditions(value),
         secret_keys: Vec::new(),
+        containers: None,
+        forward: None,
+        suspended: None,
         yaml: object_yaml(object),
         edit_yaml: None,
     }

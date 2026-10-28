@@ -7,7 +7,7 @@ use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaS
 use astrolabe_kube::k8s_openapi::api::autoscaling::v2::HorizontalPodAutoscaler;
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{
-    ConfigMap, Event, LimitRange, Pod, ResourceQuota, Secret, Service,
+    ConfigMap, Event, LimitRange, ObjectReference, Pod, ResourceQuota, Secret, Service,
 };
 use astrolabe_kube::k8s_openapi::api::discovery::v1::EndpointSlice;
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
@@ -36,28 +36,53 @@ use crate::projection::workloads::{
 };
 use crate::projection::{DetailModel, ResourceTable};
 
-/// A built-in kind with a registered view. Watched untyped like custom
-/// resources; the registration parses objects into their typed form.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum BuiltinKind {
-    Pods,
-    Deployments,
-    StatefulSets,
-    ReplicaSets,
-    DaemonSets,
-    Jobs,
-    CronJobs,
-    Events,
-    Services,
-    Ingresses,
-    ConfigMaps,
-    Secrets,
-    ResourceQuotas,
-    LimitRanges,
-    HorizontalPodAutoscalers,
+/// Declares the built-in kinds once: each variant with its registration
+/// static, generating [`BuiltinKind`], [`BuiltinKind::ALL`] and
+/// [`BuiltinKind::registration`]. A variant without a static fails to
+/// compile.
+macro_rules! builtin_kinds {
+    ($($(#[$meta:meta])* $variant:ident => $registration:ident,)*) => {
+        /// A built-in kind with a registered view. Watched untyped like
+        /// custom resources; the registration parses objects into their
+        /// typed form.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub enum BuiltinKind {
+            $($(#[$meta])* $variant,)*
+        }
+
+        const KIND_COUNT: usize = [$(stringify!($variant)),*].len();
+
+        impl BuiltinKind {
+            pub const ALL: [Self; KIND_COUNT] = [$(Self::$variant,)*];
+
+            pub fn registration(self) -> &'static Registration {
+                match self {
+                    $(Self::$variant => &$registration,)*
+                }
+            }
+        }
+    };
+}
+
+builtin_kinds! {
+    Pods => PODS,
+    Deployments => DEPLOYMENTS,
+    StatefulSets => STATEFULSETS,
+    ReplicaSets => REPLICASETS,
+    DaemonSets => DAEMONSETS,
+    Jobs => JOBS,
+    CronJobs => CRONJOBS,
+    Events => EVENTS,
+    Services => SERVICES,
+    Ingresses => INGRESSES,
+    ConfigMaps => CONFIG_MAPS,
+    Secrets => SECRETS,
+    ResourceQuotas => RESOURCE_QUOTAS,
+    LimitRanges => LIMIT_RANGES,
+    HorizontalPodAutoscalers => HORIZONTAL_POD_AUTOSCALERS,
     /// Shown only as a Service's related section, so it has no
     /// navigation entry.
-    EndpointSlices,
+    EndpointSlices => ENDPOINT_SLICES,
 }
 
 /// A detail-tab toolbar action.
@@ -96,6 +121,11 @@ pub struct Registration {
     /// The list's column weights, one per column; `None` takes
     /// [`default_column_weights`](crate::projection::default_column_weights).
     pub column_weights: Option<&'static [f32]>,
+    /// The object a list row opens, when not the row's own object: an
+    /// Event opens what it is about.
+    pub row_target: Option<fn(&DynamicObject) -> Option<ObjectReference>>,
+    /// Every cell of a row opens it, not only the first.
+    pub open_all_cells: bool,
 }
 
 /// A detail's related section: `kind`'s objects in the same namespace that
@@ -139,46 +169,6 @@ impl BuiltinKind {
         ("Events", &[BuiltinKind::Events]),
     ];
 
-    pub fn registration(self) -> &'static Registration {
-        match self {
-            BuiltinKind::Pods => &PODS,
-            BuiltinKind::Deployments => &DEPLOYMENTS,
-            BuiltinKind::StatefulSets => &STATEFULSETS,
-            BuiltinKind::ReplicaSets => &REPLICASETS,
-            BuiltinKind::DaemonSets => &DAEMONSETS,
-            BuiltinKind::Jobs => &JOBS,
-            BuiltinKind::CronJobs => &CRONJOBS,
-            BuiltinKind::Events => &EVENTS,
-            BuiltinKind::Services => &SERVICES,
-            BuiltinKind::Ingresses => &INGRESSES,
-            BuiltinKind::ConfigMaps => &CONFIG_MAPS,
-            BuiltinKind::Secrets => &SECRETS,
-            BuiltinKind::ResourceQuotas => &RESOURCE_QUOTAS,
-            BuiltinKind::LimitRanges => &LIMIT_RANGES,
-            BuiltinKind::HorizontalPodAutoscalers => &HORIZONTAL_POD_AUTOSCALERS,
-            BuiltinKind::EndpointSlices => &ENDPOINT_SLICES,
-        }
-    }
-
-    pub const ALL: [Self; 16] = [
-        Self::Pods,
-        Self::Deployments,
-        Self::StatefulSets,
-        Self::ReplicaSets,
-        Self::DaemonSets,
-        Self::Jobs,
-        Self::CronJobs,
-        Self::Events,
-        Self::Services,
-        Self::Ingresses,
-        Self::ConfigMaps,
-        Self::Secrets,
-        Self::ResourceQuotas,
-        Self::LimitRanges,
-        Self::HorizontalPodAutoscalers,
-        Self::EndpointSlices,
-    ];
-
     /// The singular kind, as titles name it.
     pub fn kind(self) -> String {
         (self.registration().resource)().kind
@@ -211,6 +201,8 @@ static PODS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static DEPLOYMENTS: Registration = Registration {
@@ -232,6 +224,8 @@ static DEPLOYMENTS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static STATEFULSETS: Registration = Registration {
@@ -253,6 +247,8 @@ static STATEFULSETS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static REPLICASETS: Registration = Registration {
@@ -269,6 +265,8 @@ static REPLICASETS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static DAEMONSETS: Registration = Registration {
@@ -285,6 +283,8 @@ static DAEMONSETS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static JOBS: Registration = Registration {
@@ -301,6 +301,8 @@ static JOBS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static CRONJOBS: Registration = Registration {
@@ -317,6 +319,8 @@ static CRONJOBS: Registration = Registration {
         hide_when_empty: false,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static EVENTS: Registration = Registration {
@@ -328,6 +332,8 @@ static EVENTS: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: None,
+    row_target: Some(|object| Some(parse::<Event>(object)?.involved_object)),
+    open_all_cells: true,
 };
 
 static SERVICES: Registration = Registration {
@@ -350,6 +356,8 @@ static SERVICES: Registration = Registration {
         hide_when_empty: true,
     }),
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static INGRESSES: Registration = Registration {
@@ -361,6 +369,8 @@ static INGRESSES: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static CONFIG_MAPS: Registration = Registration {
@@ -372,6 +382,8 @@ static CONFIG_MAPS: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static SECRETS: Registration = Registration {
@@ -383,6 +395,8 @@ static SECRETS: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static RESOURCE_QUOTAS: Registration = Registration {
@@ -394,6 +408,8 @@ static RESOURCE_QUOTAS: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static LIMIT_RANGES: Registration = Registration {
@@ -405,6 +421,8 @@ static LIMIT_RANGES: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
@@ -416,6 +434,8 @@ static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
     cascade: |_| "Nothing else is deleted.",
     related: None,
     column_weights: Some(HPA_COLUMN_WEIGHTS),
+    row_target: None,
+    open_all_cells: false,
 };
 
 static ENDPOINT_SLICES: Registration = Registration {
@@ -427,6 +447,8 @@ static ENDPOINT_SLICES: Registration = Registration {
     cascade: endpoint_slice_cascade,
     related: None,
     column_weights: None,
+    row_target: None,
+    open_all_cells: false,
 };
 
 /// The EndpointSlice controller owns the slices of a Service with a

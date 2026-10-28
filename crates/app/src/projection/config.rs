@@ -104,12 +104,34 @@ pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
     }
 }
 
-/// One of a Secret's keys, its value left out.
+/// One of a Secret's keys, its value kept for Reveal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey {
     pub key: String,
     /// The decoded value's size.
     pub bytes: usize,
+    pub value: Revealable,
+}
+
+/// A value shown only on request: its `Debug` prints [`HIDDEN`], so a
+/// logged model never leaks it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Revealable(String);
+
+impl Revealable {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn reveal(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Revealable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(HIDDEN)
+    }
 }
 
 /// Status summary = type, plus the keys without their values. The YAML
@@ -135,6 +157,7 @@ pub fn secret_detail(secret: &Secret, now: Timestamp) -> DetailModel {
         .map(|(key, value)| SecretKey {
             key: key.clone(),
             bytes: value.0.len(),
+            value: Revealable::new(decoded(value)),
         })
         .collect();
     model.yaml = masked_yaml(value);
@@ -160,10 +183,9 @@ fn masked_yaml(mut value: Value) -> String {
 }
 
 /// A revealed value: the decoded text, or its size when it is not UTF-8.
-pub fn secret_value(secret: &Secret, key: &str) -> Option<String> {
-    let bytes = secret.data.as_ref()?.get(key)?;
-    Some(match std::str::from_utf8(&bytes.0) {
+fn decoded(bytes: &ByteString) -> String {
+    match std::str::from_utf8(&bytes.0) {
         Ok(text) => text.to_string(),
         Err(_) => binary(bytes),
-    })
+    }
 }

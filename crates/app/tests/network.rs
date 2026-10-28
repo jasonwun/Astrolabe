@@ -6,7 +6,9 @@ use astrolabe::projection::network::{
     service_ports,
 };
 use astrolabe::projection::workloads::ForwardPort;
-use astrolabe::projection::{DetailField, DetailItem, DetailSection, DetailValue, SummaryTable};
+use astrolabe::projection::{
+    DetailField, DetailItem, DetailSection, DetailValue, Forward, ForwardTo, SummaryTable,
+};
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -528,6 +530,30 @@ fn service_ports_offer_tcp_ports_with_their_target() {
             label: "7000".to_string()
         }]
     );
+}
+
+#[test]
+fn a_service_detail_forwards_to_its_tcp_ports() {
+    let model = service_detail(&node_port_service(), now());
+
+    assert_eq!(
+        model.forward,
+        Some(Forward {
+            to: ForwardTo::Service,
+            ports: vec![
+                ForwardPort {
+                    port: 80,
+                    label: "80/http → 8080".to_string()
+                },
+                ForwardPort {
+                    port: 9000,
+                    label: "9000/admin → admin".to_string()
+                },
+            ],
+            empty: "No TCP ports",
+        })
+    );
+    assert_eq!(model.containers, None);
 }
 
 /// Synthetic Ingress (plausible shape, not captured from a server).

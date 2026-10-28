@@ -4,7 +4,7 @@ use astrolabe::projection::workloads::{
     ForwardPort, deployment_detail, pod_detail, pod_ports, project_deployments, project_pods,
     running_containers, selector_matches,
 };
-use astrolabe::projection::{ReplicaCounts, SummaryTable};
+use astrolabe::projection::{Containers, Forward, ForwardTo, ReplicaCounts, SummaryTable};
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
@@ -555,4 +555,29 @@ fn exec_targets_sidecars_and_app_containers_but_not_run_once_init_containers() {
 fn a_pod_without_a_spec_has_no_ports() {
     let pod: Pod = serde_json::from_value(serde_json::json!({"metadata": {"name": "p"}})).unwrap();
     assert!(pod_ports(&pod).is_empty());
+}
+
+#[test]
+fn a_pod_detail_offers_its_containers_and_ports_to_the_actions() {
+    let model = pod_detail(&crashing_pod(), now());
+
+    assert_eq!(
+        model.containers,
+        Some(Containers {
+            all: ["migrate", "app", "sidecar"].map(String::from).to_vec(),
+            running: ["app", "sidecar"].map(String::from).to_vec(),
+        })
+    );
+    assert_eq!(
+        model.forward,
+        Some(Forward {
+            to: ForwardTo::Pod,
+            ports: vec![ForwardPort {
+                port: 80,
+                label: "80/http (app)".to_string()
+            }],
+            empty: "No declared ports",
+        })
+    );
+    assert_eq!(model.suspended, None);
 }
