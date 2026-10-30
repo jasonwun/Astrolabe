@@ -10,6 +10,16 @@ Run it last on the final commit, after review fixes; the PR's Evidence
 cites that run: its output pasted verbatim, with any notes outside the
 code block.
 
+## Move-only refactors
+
+```sh
+dev/move-check.sh             # lines the diff does not just move
+```
+
+Run it before review on a ticket that only moves code; the residue
+should be `mod`/`use` lines, new modules' `//!` docs and rustfmt
+re-wraps. What else counts is in `CODING_STANDARDS.md`.
+
 ## Cluster e2e
 
 `crates/kube/tests/e2e_cluster.rs` is `#[ignore]`d by default; it needs a

@@ -42,11 +42,13 @@ so navigate by coordinates read off a screenshot:
 ```sh
 dev/shot.sh "$SCRATCH/shots" start                              # get-app-state
 dev/shot.sh "$SCRATCH/shots" pods click --x 263 --y 204         # act, then capture
+dev/shot.sh "$SCRATCH/shots" table --crop 240,120,640,300       # x,y,w,h in window points
 ```
 
-`dev/shot.sh` runs the orca action, keeps the Retina original as
-`<name>-orig.png` and prints the path of `<name>.png`, shrunk to one pixel
-per window point.
+`dev/shot.sh` runs the orca action against the astrolabe started from this
+worktree (other worktrees run their own, and the process name would pick
+any of them), keeps the Retina original as `<name>-orig.png` and prints the
+path of `<name>.png`, shrunk to one pixel per window point.
 
 - Read only the shrunk copy. A Retina original carries four times the
   pixels, and eight of them overflowed #20's context window. At one pixel
@@ -54,14 +56,9 @@ per window point.
   stand.
 
   Keep the `-orig.png` for the PR's evidence. When only one region
-  matters, crop to it as well: a whole window still reads at
-  120-170KB, a cropped table at about 16KB (#68). `--cropToHeightWidth`
-  alone crops around the centre; give the offset, in Retina pixels
-  (twice the points read off the shrunk copy) (#75):
-
-  ```sh
-  sips -c <h> <w> --cropOffset <y> <x> <name>-orig.png --out <crop>.png
-  ```
+  matters, pass `--crop` with the rectangle read off an earlier shrunk
+  copy: a whole window still reads at 120-170KB, a cropped table at about
+  16KB (#68).
 - Resize the window with System Events:
 
   ```sh
@@ -105,6 +102,6 @@ gh pr create --body-file body.md --attach ./shot.png   # also gh pr edit / gh pr
 ## 5. Clean up
 
 ```sh
-pkill -x astrolabe                  # the background task then exits 143
+kill "$(dev/shot.sh --pid)"         # this worktree's app; the background task then exits 143
 dev/demo.sh delete                 # this worktree's namespace only
 ```

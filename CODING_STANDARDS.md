@@ -81,6 +81,19 @@ Origin: #42 asked for unchanged test assertions while replacing string
 row keys with `ObjectKey`; the implementer had to guess the line (#42
 retro).
 
+## Move-only refactors
+
+In a ticket that only moves code between files, review the residue of
+`dev/move-check.sh`, not the whole diff: it pairs removed and added
+lines, visibility changes included. A `//!` doc on a new module file, the
+`mod`/`use` lines the split needs, and rustfmt's re-wrap of a signature
+that gained `pub(super)` are part of the move, not findings. Anything else
+in the residue is a behaviour change and is a finding.
+
+Origin: #112 split `resource_detail.rs` into three child modules; review
+had to tell moved lines from changed ones by eye across a 1,000-line
+diff (#112 retro).
+
 ## Cluster-dependent copy and choices
 
 UI copy or choices that describe what the cluster will do (a delete's
