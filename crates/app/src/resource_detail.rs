@@ -14,7 +14,7 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -24,16 +24,19 @@ use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
 use crate::clock;
 use crate::projection::config::{HIDDEN, SecretKey};
 use crate::projection::{
-    DetailField, DetailItem, DetailModel, Forward, ForwardTo, ReplicaCounts, ResourceTable,
-    SummaryTable, custom_resource_detail, definition_detail, namespace_detail, track_ages,
+    DetailField, DetailItem, DetailModel, ReplicaCounts, ResourceTable, SummaryTable,
+    custom_resource_detail, definition_detail, namespace_detail, track_ages,
 };
 use crate::resource_list::OpenDetail;
-use crate::session::{
-    CustomKindId, ExecRequest, ForwardRequest, ForwardState, ForwardTarget, LogRequest, ObjectRef,
-    Operation, Session,
-};
+use crate::session::{CustomKindId, ExecRequest, LogRequest, ObjectRef, Session};
 use crate::store::ObjectKey;
-use crate::yaml_editor::YamlEditorView;
+
+mod editor_panel;
+mod pod_actions;
+mod workload_actions;
+
+pub use editor_panel::EditorPanel;
+use pod_actions::{Picking, PodAction, forward_target};
 
 /// What a detail tab shows: one object, addressed in its list's store.
 /// Custom resources are version-free (#41): each resolve reads the watch at
@@ -139,26 +142,6 @@ pub struct ResourceDetailPanel {
     tick: Task<()>,
     focus_handle: FocusHandle,
 }
-
-/// A Pod action that runs in one container; Forward also serves Services.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PodAction {
-    Logs,
-    Exec,
-    /// Picks a port, not a container.
-    Forward,
-}
-
-/// What the picker asks: a container, or for Exec in a chosen container,
-/// a shell.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Picking {
-    action: PodAction,
-    container: Option<String>,
-}
-
-/// The shells Exec offers; `sh` exists in nearly every image.
-const SHELLS: &[&str] = &["sh", "bash"];
 
 /// The object as of this render, with what its actions need.
 struct Resolved {
@@ -342,355 +325,6 @@ impl ResourceDetailPanel {
         );
     }
 
-    fn open_scale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let input = cx.new(|cx| InputState::new(window, cx));
-        cx.subscribe_in(&input, window, |panel, _, event: &InputEvent, _, cx| {
-            if let InputEvent::PressEnter { .. } = event {
-                panel.apply_scale(cx);
-            }
-        })
-        .detach();
-        input.update(cx, |input, cx| input.focus(window, cx));
-        self.scale = Some(input);
-        cx.notify();
-    }
-
-    fn apply_scale(&mut self, cx: &mut Context<Self>) {
-        let Some(input) = &self.scale else {
-            return;
-        };
-        let replicas = match input.read(cx).value().trim().parse::<i32>() {
-            Ok(replicas) if replicas >= 0 => replicas,
-            _ => return self.show_notice("Replicas must be a whole number, 0 or more", cx),
-        };
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::Scale {
-            object: resolved.object,
-            replicas,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.scale = None;
-        self.report(
-            result,
-            "Scaling…",
-            format!("Scaled to {replicas}"),
-            "Scale",
-            cx,
-        );
-    }
-
-    fn rollout_restart(&mut self, cx: &mut Context<Self>) {
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::RolloutRestart {
-            object: resolved.object,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.report(
-            result,
-            "Restarting…",
-            "Restart requested".to_string(),
-            "Restart",
-            cx,
-        );
-    }
-
-    fn set_suspend(&mut self, suspend: bool, cx: &mut Context<Self>) {
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::SetSuspend {
-            object: resolved.object,
-            suspend,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        let (pending, done, verb) = if suspend {
-            ("Suspending…", "Suspended", "Suspend")
-        } else {
-            ("Resuming…", "Resumed", "Resume")
-        };
-        self.report(result, pending, done.to_string(), verb, cx);
-    }
-
-    fn trigger(&mut self, cx: &mut Context<Self>) {
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::TriggerCronJob {
-            object: resolved.object,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.report(
-            result,
-            "Triggering…",
-            "Job creation requested".to_string(),
-            "Trigger",
-            cx,
-        );
-    }
-
-    /// Run `action` in the only container, or ask which one.
-    fn pick_container(&mut self, action: PodAction, cx: &mut Context<Self>) {
-        let containers = self
-            .resolve(cx)
-            .map(|resolved| containers(&resolved.model, action))
-            .unwrap_or_default();
-        match containers.as_slice() {
-            [only] => self.run_in(action, only.clone(), cx),
-            _ => self.ask(action, None, cx),
-        }
-    }
-
-    fn ask(&mut self, action: PodAction, container: Option<String>, cx: &mut Context<Self>) {
-        self.picking = Some(Picking { action, container });
-        cx.notify();
-    }
-
-    fn run_in(&mut self, action: PodAction, container: String, cx: &mut Context<Self>) {
-        let DetailTarget::Builtin { key, .. } = &self.target else {
-            return;
-        };
-        match action {
-            PodAction::Logs => {
-                self.picking = None;
-                cx.notify();
-                cx.emit(OpenLogs {
-                    title: format!("Logs {key} ({container})"),
-                    request: LogRequest {
-                        pod: key.clone(),
-                        container,
-                    },
-                })
-            }
-            PodAction::Exec => self.ask(action, Some(container), cx),
-            PodAction::Forward => {}
-        }
-    }
-
-    fn forward(&mut self, port: u16, cx: &mut Context<Self>) {
-        self.picking = None;
-        cx.notify();
-        let Some(target) = self
-            .resolve(cx)
-            .and_then(|resolved| forward_target(&resolved.model, &resolved.object.key))
-        else {
-            return;
-        };
-        let request = ForwardRequest { target, port };
-        self.session
-            .update(cx, |session, cx| session.forward_port(request, cx));
-    }
-
-    fn exec(&mut self, container: String, shell: &str, cx: &mut Context<Self>) {
-        self.picking = None;
-        cx.notify();
-        let DetailTarget::Builtin { key, .. } = &self.target else {
-            return;
-        };
-        cx.emit(OpenExec {
-            title: format!("Exec {key} ({container})"),
-            request: ExecRequest {
-                pod: key.clone(),
-                container,
-                shell: shell.to_string(),
-            },
-        });
-    }
-
-    fn render_picker(
-        &self,
-        picking: Picking,
-        model: &DetailModel,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let border = cx.theme().border;
-        let Picking { action, container } = picking;
-        let prompt = match (action, &container) {
-            (PodAction::Logs, _) => "Logs: choose a container".to_string(),
-            (PodAction::Exec, None) => "Exec: choose a container".to_string(),
-            (PodAction::Exec, Some(container)) => format!("Exec in {container}: choose a shell"),
-            (PodAction::Forward, _) => "Port forward: choose a port".to_string(),
-        };
-        let choices: Vec<AnyElement> =
-            match (action, container) {
-                (PodAction::Forward, _) => model
-                    .forward
-                    .as_ref()
-                    .map(|forward| self.render_ports(forward, cx))
-                    .unwrap_or_default(),
-                (_, None) => containers(model, action)
-                    .into_iter()
-                    .map(|container| {
-                        button(
-                            SharedString::from(format!("pick-container-{container}")),
-                            container.clone(),
-                            border,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.run_in(action, container.clone(), cx)
-                        }))
-                        .into_any_element()
-                    })
-                    .collect(),
-                (_, Some(container)) => SHELLS
-                    .iter()
-                    .map(|shell| {
-                        let container = container.clone();
-                        button(
-                            SharedString::from(format!("pick-shell-{shell}")),
-                            *shell,
-                            border,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.exec(container.clone(), shell, cx)
-                        }))
-                        .into_any_element()
-                    })
-                    .collect(),
-            };
-        h_flex()
-            .id("container-picker")
-            .test_support()
-            .gap_2()
-            .p_2()
-            .border_b_1()
-            .border_color(border)
-            .child(
-                div()
-                    .id("picker-prompt")
-                    .aria_label(prompt.clone())
-                    .test_support()
-                    .text_sm()
-                    .child(prompt),
-            )
-            .children(choices)
-            .child(
-                button("picker-cancel", "Cancel", border).on_click(cx.listener(
-                    |panel, _, _, cx| {
-                        panel.picking = None;
-                        cx.notify();
-                    },
-                )),
-            )
-    }
-
-    /// One button per declared port (a Service's TCP ports), or why there
-    /// are none.
-    fn render_ports(&self, forward: &Forward, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let border = cx.theme().border;
-        let ports = forward.ports.clone();
-        if ports.is_empty() {
-            let text = forward.empty;
-            return vec![
-                div()
-                    .id("picker-empty")
-                    .aria_label(text)
-                    .test_support()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(text)
-                    .into_any_element(),
-            ];
-        }
-        ports
-            .into_iter()
-            .map(|port| {
-                let number = port.port;
-                button(
-                    SharedString::from(format!("pick-port-{number}")),
-                    port.label,
-                    border,
-                )
-                .on_click(cx.listener(move |panel, _, _, cx| panel.forward(number, cx)))
-                .into_any_element()
-            })
-            .collect()
-    }
-
-    /// The session's forwards to the shown Pod or Service, each with Stop.
-    fn render_forwards(&self, target: ForwardTarget, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let theme = cx.theme();
-        let session = self.session.read(cx);
-        let rows: Vec<AnyElement> = session
-            .forwards(&target)
-            .map(|forward| {
-                let request = forward.request.clone();
-                let port = request.port;
-                let (text, color) = match &forward.state {
-                    ForwardState::Starting => {
-                        (format!("Starting → {port}…"), theme.muted_foreground)
-                    }
-                    ForwardState::Listening(local) => {
-                        (format!("localhost:{local} → {port}"), theme.foreground)
-                    }
-                    ForwardState::Failed(error) => {
-                        (format!("Forward to {port} failed: {error}"), theme.danger)
-                    }
-                };
-                let last_error = forward.last_error.as_ref().map(|error| {
-                    let text = format!("Last connection failed: {error}");
-                    div()
-                        .id(SharedString::from(format!("forward-error-{port}")))
-                        .aria_label(text.clone())
-                        .test_support()
-                        .text_xs()
-                        .text_color(theme.danger)
-                        .child(text)
-                });
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("forward-{port}")))
-                            .aria_label(text.clone())
-                            .test_support()
-                            .text_sm()
-                            .text_color(color)
-                            .child(text),
-                    )
-                    .children(last_error)
-                    .child(
-                        button(
-                            SharedString::from(format!("forward-stop-{port}")),
-                            "Stop",
-                            theme.border,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel
-                                .session
-                                .update(cx, |session, cx| session.stop_forward(&request, cx))
-                        })),
-                    )
-                    .into_any_element()
-            })
-            .collect();
-        if rows.is_empty() {
-            return None;
-        }
-        Some(
-            v_flex()
-                .id("detail-forwards")
-                .test_support()
-                .gap_1()
-                .p_2()
-                .border_b_1()
-                .border_color(theme.border)
-                .children(rows)
-                .into_any_element(),
-        )
-    }
-
     /// A Secret's keys, each value masked until revealed.
     fn render_secret_keys(&self, keys: &[SecretKey], cx: &mut Context<Self>) -> Option<AnyElement> {
         if keys.is_empty() {
@@ -840,46 +474,6 @@ impl ResourceDetailPanel {
                         .child(notice),
                 )
             })
-    }
-
-    fn render_scale(
-        &self,
-        input: &Entity<InputState>,
-        replicas: Option<ReplicaCounts>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let label = match replicas {
-            Some(counts) => format!("Replicas (now {})", counts.desired),
-            None => "Replicas".to_string(),
-        };
-        let border = theme.border;
-        let button = |id: &'static str, label: &'static str| button(id, label, border);
-        h_flex()
-            .id("scale-form")
-            .gap_2()
-            .p_2()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .id("scale-label")
-                    .aria_label(label.clone())
-                    .test_support()
-                    .text_sm()
-                    .child(label),
-            )
-            .child(Input::new(input).id("scale-input").w(px(120.)))
-            .child(
-                button("scale-apply", "Apply")
-                    .on_click(cx.listener(|panel, _, _, cx| panel.apply_scale(cx))),
-            )
-            .child(
-                button("scale-cancel", "Cancel").on_click(cx.listener(|panel, _, _, cx| {
-                    panel.scale = None;
-                    cx.notify();
-                })),
-            )
     }
 
     /// The related kind's list columns over the selected objects; a row's
@@ -1033,26 +627,6 @@ impl ResourceDetailPanel {
                     ))),
             )
     }
-}
-
-/// The containers `action` can target: Logs reads every container, init
-/// containers first; Exec needs one still running.
-fn containers(model: &DetailModel, action: PodAction) -> Vec<String> {
-    let Some(containers) = &model.containers else {
-        return Vec::new();
-    };
-    match action {
-        PodAction::Logs => containers.all.clone(),
-        PodAction::Exec | PodAction::Forward => containers.running.clone(),
-    }
-}
-
-/// What Port Forward reaches from the detail of the object at `key`.
-fn forward_target(model: &DetailModel, key: &ObjectKey) -> Option<ForwardTarget> {
-    Some(match model.forward.as_ref()?.to {
-        ForwardTo::Pod => ForwardTarget::Pod(key.clone()),
-        ForwardTo::Service => ForwardTarget::Service(key.clone()),
-    })
 }
 
 fn button(
@@ -1428,52 +1002,5 @@ impl Render for ResourceDetailPanel {
                     .child(yaml),
             )
             .into_any_element()
-    }
-}
-
-/// The Edit YAML tab: the #21 editor loop on one object's manifest.
-pub struct EditorPanel {
-    title: String,
-    editor: Entity<YamlEditorView>,
-}
-
-impl EditorPanel {
-    pub fn new(title: String, editor: Entity<YamlEditorView>) -> Self {
-        Self { title, editor }
-    }
-}
-
-impl EventEmitter<PanelEvent> for EditorPanel {}
-
-impl Focusable for EditorPanel {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.editor.focus_handle(cx)
-    }
-}
-
-impl BasePanel for EditorPanel {
-    fn panel_name(&self) -> &'static str {
-        "YamlEditor"
-    }
-}
-
-impl Panel for EditorPanel {
-    fn tab_name(&self, _: &App) -> Option<SharedString> {
-        Some(format!("Edit {}", self.title).into())
-    }
-
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        format!("Edit {}", self.title)
-    }
-}
-
-impl Render for EditorPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("yaml-edit-tab")
-            .aria_label(format!("Edit {}", self.title))
-            .test_support()
-            .size_full()
-            .child(self.editor.clone())
     }
 }
