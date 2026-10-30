@@ -7,8 +7,9 @@ cargo test --workspace        # hermetic default suite
 ```
 
 Run it last on the final commit, after review fixes, through the wrapper,
-naming the test binaries your change affects (`tests/<name>.rs`, or the
-crate name for its unit tests):
+naming the test binaries your change affects: `<name>` for
+`tests/<name>.rs`, or the crate name for its unit tests (`astrolabe_kube`
+or `astrolabe-kube`; `astrolabe` prints both its lib and main unit tests):
 
 ```sh
 dev/test-evidence.sh watched session
@@ -19,9 +20,10 @@ temp file (path on stderr), and exits with cargo's status. Its stdout is
 the PR's Evidence block, pasted as is:
 
 - each named binary's `Running` and `test result` lines;
-- each failing test's name and panic message;
-- one tally line: binaries run and passed / failed / ignored, summed over
-  every `test result` line.
+- each failing test's name and captured output, panic message included;
+- each binary that crashed (abort, signal) before its `test result` line;
+- one tally line: test binaries and doc-test runs, and passed / failed /
+  ignored summed over every `test result` line.
 
 Notes go outside the code block. Do not paste the full log. A named binary
 missing from the log fails the script; check the spelling.
