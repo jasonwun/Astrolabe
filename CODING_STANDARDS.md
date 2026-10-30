@@ -166,17 +166,19 @@ retro).
 
 ## Tests that claim the Registration's path
 
-A test that claims to exercise what the app does for a built-in kind
-calls the Registration (`BuiltinKind::X.registration().detail` or
-`.list`) with a `DynamicObject`. A test helper that rebuilds the
-Registration's glue (parsing, choosing which JSON to pass) is a finding:
-the copy drifts from the Registration and passes when the app's path
-differs.
+A test of a built-in kind's list or detail calls the Registration with a
+`DynamicObject`: `(BuiltinKind::X.registration().detail)(&object, now)`
+or `.list`. `dev/registration-path.sh` (CI) fails a test that calls a
+projection function the Registration wraps; review covers the rest: a
+helper that rebuilds the Registration's glue (parsing, choosing which
+JSON to pass) some other way is a finding, since the copy drifts from
+the Registration and passes when the app's path differs.
 
 Origin: #100's test helper rebuilt the Services Registration's
 `try_parse` and `.data` call; its first version passed `metadata` the
 app never sees, and neither reviewer suggested calling the Registration
-(#100 retro).
+(#100 retro). The rule then took one ticket per file (#114, #121) until
+the check covered every test (#114 retro).
 
 ## View-test steps the support module already has
 
