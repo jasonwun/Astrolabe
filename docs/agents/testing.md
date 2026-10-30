@@ -6,9 +6,27 @@
 cargo test --workspace        # hermetic default suite
 ```
 
-Run it last on the final commit, after review fixes; the PR's Evidence
-cites that run: its output pasted verbatim, with any notes outside the
-code block.
+Run it last on the final commit, after review fixes, through the wrapper,
+naming the test binaries your change affects: `<name>` for
+`tests/<name>.rs`, or the crate name for its unit tests (`astrolabe_kube`
+or `astrolabe-kube`; `astrolabe` prints both its lib and main unit tests):
+
+```sh
+dev/test-evidence.sh watched session
+```
+
+It runs the suite once with `--no-fail-fast`, writes the full log to a
+temp file (path on stderr), and exits with cargo's status. Its stdout is
+the PR's Evidence block, pasted as is:
+
+- each named binary's `Running` and `test result` lines;
+- each failing test's name and captured output, panic message included;
+- each binary that crashed (abort, signal) before its `test result` line;
+- one tally line: test binaries and doc-test runs, and passed / failed /
+  ignored summed over every `test result` line.
+
+Notes go outside the code block. Do not paste the full log. A named binary
+missing from the log fails the script; check the spelling.
 
 ## Move-only refactors
 
