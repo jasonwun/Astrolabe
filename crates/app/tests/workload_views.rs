@@ -62,8 +62,8 @@ fn pods_list_and_detail_use_the_generic_pipeline(cx: &mut TestAppContext) {
 
     ui.frame(|window, cx| {
         assert!(window.try_find_by_label("Workloads").is_some());
-        assert!(window.try_find("nav-deployments").is_some());
-        window.click("nav-pods", cx);
+        assert!(window.try_find(BuiltinKind::Deployments.nav_id()).is_some());
+        window.click(BuiltinKind::Pods.nav_id(), cx);
     });
     snapshot(&mut pods, vec![crashing_pod("default")]);
     ui.settle();
@@ -131,7 +131,7 @@ fn deployments_show_a_replica_bar(cx: &mut TestAppContext) {
     ui.namespaces(&["default"]);
     ui.settle();
 
-    ui.frame(|window, cx| window.click("nav-deployments", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Deployments.nav_id(), cx));
     snapshot(&mut deployments, vec![web_deployment()]);
     ui.settle();
     ui.frame(|window, cx| {
@@ -174,7 +174,7 @@ fn the_pods_list_follows_the_namespace_selection(cx: &mut TestAppContext) {
     ui.namespaces(&["default", "web"]);
     ui.settle();
 
-    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     snapshot(&mut default_pods, Vec::new());
     ui.settle();
     ui.frame(|window, cx| {
@@ -196,7 +196,7 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-deployments", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Deployments.nav_id(), cx));
     snapshot(&mut deployments, vec![web_deployment()]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/web", cx));
@@ -281,7 +281,7 @@ fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     snapshot(&mut pods, vec![crashing_pod("default")]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/web-1", cx));
@@ -300,7 +300,7 @@ fn deleting_a_bare_pod_warns_of_nothing_else(cx: &mut TestAppContext) {
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     snapshot(&mut pods, vec![labeled_pod("debug", "tools")]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/debug", cx));
@@ -358,7 +358,7 @@ fn a_pod_detail_lists_its_events(cx: &mut TestAppContext) {
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     snapshot(&mut pods, vec![crashing_pod("default")]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/web-1", cx));
@@ -426,7 +426,7 @@ fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-deployments", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Deployments.nav_id(), cx));
     snapshot(&mut deployments, vec![web_deployment()]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/web", cx));

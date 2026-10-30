@@ -61,8 +61,7 @@ fn open_list(
     let mut ui = open(cx, vec![(key(kind, "default"), events)]);
     ui.namespaces(&["default"]);
     ui.settle();
-    let nav = format!("nav-{}", kind.registration().label.to_lowercase());
-    ui.frame(|window, cx| window.click(nav, cx));
+    ui.frame(|window, cx| window.click(kind.nav_id(), cx));
     snapshot(&mut objects, vec![object]);
     ui.settle();
     (ui, objects)

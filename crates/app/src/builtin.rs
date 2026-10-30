@@ -16,6 +16,7 @@ use astrolabe_kube::k8s_openapi::serde::de::DeserializeOwned;
 use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
+use gpui_kit::SharedString;
 
 use crate::projection::autoscaling::{HPA_COLUMN_WEIGHTS, hpa_detail, project_hpas};
 use crate::projection::config::{
@@ -168,6 +169,11 @@ impl BuiltinKind {
         ),
         ("Events", &[BuiltinKind::Events]),
     ];
+
+    /// The navigation item's element id, from the label.
+    pub fn nav_id(self) -> SharedString {
+        format!("nav-{}", self.registration().label.to_lowercase()).into()
+    }
 
     /// The singular kind, as titles name it.
     pub fn kind(self) -> String {

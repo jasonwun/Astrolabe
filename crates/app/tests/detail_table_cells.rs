@@ -42,7 +42,7 @@ fn a_summary_table_cell_stops_short_of_the_next_column(cx: &mut TestAppContext) 
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-configmaps", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::ConfigMaps.nav_id(), cx));
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm"},
@@ -74,7 +74,7 @@ fn summary_table_cell_ids_are_unique_within_the_table(cx: &mut TestAppContext) {
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-configmaps", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::ConfigMaps.nav_id(), cx));
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm"},
@@ -125,7 +125,7 @@ fn a_pod_event_message_stops_short_of_the_count_column(cx: &mut TestAppContext) 
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     let pod = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "agent-1", "namespace": "default", "uid": "uid-pod"},

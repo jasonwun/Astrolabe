@@ -327,10 +327,9 @@ impl SessionView {
                     .flat_map(|(section, kinds)| {
                         std::iter::once(heading(section).into_any_element()).chain(
                             kinds.iter().map(|&kind| {
-                                let label = kind.registration().label;
                                 item(
-                                    format!("nav-{}", label.to_lowercase()).into(),
-                                    label.to_string(),
+                                    kind.nav_id(),
+                                    kind.registration().label.to_string(),
                                     0,
                                     current == ListView::Builtin(kind),
                                 )

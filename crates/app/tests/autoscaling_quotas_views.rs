@@ -207,7 +207,7 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
         .simulate_resize(gpui_kit::size(gpui_kit::px(1300.), gpui_kit::px(800.)));
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-horizontalpodautoscalers", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::HorizontalPodAutoscalers.nav_id(), cx));
     snapshot(
         &mut hpas,
         vec![object(serde_json::json!({
@@ -278,7 +278,7 @@ fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut Tes
         .simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(800.)));
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-horizontalpodautoscalers", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::HorizontalPodAutoscalers.nav_id(), cx));
     snapshot(
         &mut hpas,
         vec![object(serde_json::json!({

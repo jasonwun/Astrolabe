@@ -497,7 +497,7 @@ fn a_secret_value_shows_only_once_revealed(cx: &mut TestAppContext) {
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-secrets", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Secrets.nav_id(), cx));
     snapshot(&mut secrets, vec![db_secret()]);
     ui.settle();
     ui.frame(|window, cx| {
