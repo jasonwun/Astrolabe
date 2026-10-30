@@ -44,6 +44,14 @@ fn whole_pixel_widths_fill_the_width_exactly() {
 }
 
 #[test]
+fn the_hpa_list_weighs_every_one_of_its_columns() {
+    // Freelens 14a491f, `config-horizontal-pod-autoscalers/list-view.scss`.
+    let table = project_hpas(&[], Timestamp::UNIX_EPOCH);
+    assert_eq!(table.weights(), vec![1.5, 1.5, 1., 1., 1., 0.5, 1.5]);
+    assert_eq!(table.weights().len(), table.headers().len());
+}
+
+#[test]
 fn every_builtin_list_but_hpa_weighs_its_first_column_two_and_the_rest_one() {
     for kind in BuiltinKind::ALL {
         if kind == BuiltinKind::HorizontalPodAutoscalers {

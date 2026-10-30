@@ -22,31 +22,13 @@ const EVENT_COLUMNS: &[Column<Event>] = &[
         weight: 2.,
         cell: |event, _| event.type_.clone().unwrap_or_default(),
     },
-    Column {
-        header: "Reason",
-        weight: 1.,
-        cell: |event, _| event.reason.clone().unwrap_or_default(),
-    },
-    Column {
-        header: "Involved Object",
-        weight: 1.,
-        cell: |event, _| target(event),
-    },
-    Column {
-        header: "Message",
-        weight: 1.,
-        cell: |event, _| message(event),
-    },
-    Column {
-        header: "Count",
-        weight: 1.,
-        cell: |event, _| count(event).to_string(),
-    },
-    Column {
-        header: "Last Seen",
-        weight: 1.,
-        cell: |event, now| since(last_seen(event), now),
-    },
+    Column::new("Reason", |event, _| {
+        event.reason.clone().unwrap_or_default()
+    }),
+    Column::new("Involved Object", |event, _| target(event)),
+    Column::new("Message", |event, _| message(event)),
+    Column::new("Count", |event, _| count(event).to_string()),
+    Column::new("Last Seen", |event, now| since(last_seen(event), now)),
 ];
 
 pub fn event_detail(event: &Event, now: Timestamp) -> DetailModel {

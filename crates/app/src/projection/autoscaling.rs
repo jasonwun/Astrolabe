@@ -41,21 +41,9 @@ const HPA_COLUMNS: &[Column<HorizontalPodAutoscaler>] = &[
         weight: 1.5,
         cell: |hpa, _| list_metrics(hpa),
     },
-    Column {
-        header: "Min Pods",
-        weight: 1.,
-        cell: |hpa, _| min_pods(hpa).to_string(),
-    },
-    Column {
-        header: "Max Pods",
-        weight: 1.,
-        cell: |hpa, _| hpa.spec.max_replicas.to_string(),
-    },
-    Column {
-        header: "Replicas",
-        weight: 1.,
-        cell: |hpa, _| replicas(hpa).to_string(),
-    },
+    Column::new("Min Pods", |hpa, _| min_pods(hpa).to_string()),
+    Column::new("Max Pods", |hpa, _| hpa.spec.max_replicas.to_string()),
+    Column::new("Replicas", |hpa, _| replicas(hpa).to_string()),
     Column {
         weight: 0.5,
         ..Column::AGE

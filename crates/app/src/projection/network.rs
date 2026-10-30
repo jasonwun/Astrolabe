@@ -23,44 +23,24 @@ pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable 
 
 const SERVICE_COLUMNS: &[Column<Service>] = &[
     Column::NAME,
-    Column {
-        header: "Type",
-        weight: 1.,
-        cell: |service, _| {
-            service
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.type_.clone())
-                .unwrap_or_else(|| "-".to_string())
-        },
-    },
-    Column {
-        header: "Cluster IP",
-        weight: 1.,
-        cell: |service, _| {
-            service
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.cluster_ip.clone())
-                .unwrap_or_default()
-        },
-    },
-    Column {
-        header: "External IP",
-        weight: 1.,
-        cell: |service, _| list_external_ips(service),
-    },
-    Column {
-        header: "Ports",
-        weight: 1.,
-        cell: |service, _| port_list(service),
-    },
+    Column::new("Type", |service, _| {
+        service
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.type_.clone())
+            .unwrap_or_else(|| "-".to_string())
+    }),
+    Column::new("Cluster IP", |service, _| {
+        service
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.cluster_ip.clone())
+            .unwrap_or_default()
+    }),
+    Column::new("External IP", |service, _| list_external_ips(service)),
+    Column::new("Ports", |service, _| port_list(service)),
     Column::AGE,
-    Column {
-        header: "Status",
-        weight: 1.,
-        cell: |service, _| service_status(service).to_string(),
-    },
+    Column::new("Status", |service, _| service_status(service).to_string()),
 ];
 
 /// Freelens's `Service.getExternalIps`: the load balancer's ingress points
@@ -451,22 +431,16 @@ pub fn project_ingresses(ingresses: &[&Ingress], now: Timestamp) -> ResourceTabl
 
 const INGRESS_COLUMNS: &[Column<Ingress>] = &[
     Column::NAME,
-    Column {
-        header: "LoadBalancers",
-        weight: 1.,
-        cell: |ingress, _| load_balancers(ingress).join(", "),
-    },
-    Column {
-        header: "Rules",
-        weight: 1.,
-        cell: |ingress, _| {
-            rules(ingress)
-                .flat_map(|rule| routes(ingress, rule))
-                .map(|route| format!("{} ⇢ {}", route.url, route.backend))
-                .collect::<Vec<_>>()
-                .join(", ")
-        },
-    },
+    Column::new("LoadBalancers", |ingress, _| {
+        load_balancers(ingress).join(", ")
+    }),
+    Column::new("Rules", |ingress, _| {
+        rules(ingress)
+            .flat_map(|rule| routes(ingress, rule))
+            .map(|route| format!("{} ⇢ {}", route.url, route.backend))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }),
     Column::AGE,
 ];
 

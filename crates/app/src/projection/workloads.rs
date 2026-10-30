@@ -27,48 +27,28 @@ pub fn project_pods(pods: &[&Pod], now: Timestamp) -> ResourceTable {
 
 const POD_COLUMNS: &[Column<Pod>] = &[
     Column::NAME,
-    Column {
-        header: "Ready",
-        weight: 1.,
-        cell: |pod, _| pod_state(pod).0,
-    },
-    Column {
-        header: "Status",
-        weight: 1.,
-        cell: |pod, _| pod_state(pod).1,
-    },
-    Column {
-        header: "Restarts",
-        weight: 1.,
-        cell: |pod, now| {
-            let containers = pod
-                .status
-                .as_ref()
-                .and_then(|status| status.container_statuses.as_deref())
-                .unwrap_or_default();
-            restarts(containers, now)
-        },
-    },
-    Column {
-        header: "IP",
-        weight: 1.,
-        cell: |pod, _| {
-            pod.status
-                .as_ref()
-                .and_then(|status| status.pod_ip.clone())
-                .unwrap_or_else(|| NONE.to_string())
-        },
-    },
-    Column {
-        header: "Node",
-        weight: 1.,
-        cell: |pod, _| {
-            pod.spec
-                .as_ref()
-                .and_then(|spec| spec.node_name.clone())
-                .unwrap_or_else(|| NONE.to_string())
-        },
-    },
+    Column::new("Ready", |pod, _| pod_state(pod).0),
+    Column::new("Status", |pod, _| pod_state(pod).1),
+    Column::new("Restarts", |pod, now| {
+        let containers = pod
+            .status
+            .as_ref()
+            .and_then(|status| status.container_statuses.as_deref())
+            .unwrap_or_default();
+        restarts(containers, now)
+    }),
+    Column::new("IP", |pod, _| {
+        pod.status
+            .as_ref()
+            .and_then(|status| status.pod_ip.clone())
+            .unwrap_or_else(|| NONE.to_string())
+    }),
+    Column::new("Node", |pod, _| {
+        pod.spec
+            .as_ref()
+            .and_then(|spec| spec.node_name.clone())
+            .unwrap_or_else(|| NONE.to_string())
+    }),
     Column::AGE,
 ];
 
@@ -312,28 +292,20 @@ pub fn project_deployments(deployments: &[&Deployment], now: Timestamp) -> Resou
 
 const DEPLOYMENT_COLUMNS: &[Column<Deployment>] = &[
     Column::NAME,
-    Column {
-        header: "Ready",
-        weight: 1.,
-        cell: |deployment, _| {
-            let ready = deployment
-                .status
-                .as_ref()
-                .and_then(|s| s.ready_replicas)
-                .unwrap_or_default();
-            format!("{ready}/{}", replica_counts(deployment).desired)
-        },
-    },
-    Column {
-        header: "Up-to-date",
-        weight: 1.,
-        cell: |deployment, _| replica_counts(deployment).updated.to_string(),
-    },
-    Column {
-        header: "Available",
-        weight: 1.,
-        cell: |deployment, _| replica_counts(deployment).available.to_string(),
-    },
+    Column::new("Ready", |deployment, _| {
+        let ready = deployment
+            .status
+            .as_ref()
+            .and_then(|s| s.ready_replicas)
+            .unwrap_or_default();
+        format!("{ready}/{}", replica_counts(deployment).desired)
+    }),
+    Column::new("Up-to-date", |deployment, _| {
+        replica_counts(deployment).updated.to_string()
+    }),
+    Column::new("Available", |deployment, _| {
+        replica_counts(deployment).available.to_string()
+    }),
     Column::AGE,
 ];
 
@@ -511,30 +483,17 @@ pub fn project_statefulsets(statefulsets: &[&StatefulSet], now: Timestamp) -> Re
 
 const STATEFULSET_COLUMNS: &[Column<StatefulSet>] = &[
     Column::NAME,
-    Column {
-        header: "Ready",
-        weight: 1.,
-        cell: |statefulset, _| {
+    Column::new("Ready", |statefulset, _| {
+        count_text(
             statefulset
                 .status
                 .as_ref()
-                .and_then(|status| status.ready_replicas)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Desired",
-        weight: 1.,
-        cell: |statefulset, _| {
-            statefulset
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.replicas)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
+                .and_then(|status| status.ready_replicas),
+        )
+    }),
+    Column::new("Desired", |statefulset, _| {
+        count_text(statefulset.spec.as_ref().and_then(|spec| spec.replicas))
+    }),
     Column::AGE,
 ];
 
@@ -645,42 +604,25 @@ pub fn project_replicasets(replicasets: &[&ReplicaSet], now: Timestamp) -> Resou
 
 const REPLICASET_COLUMNS: &[Column<ReplicaSet>] = &[
     Column::NAME,
-    Column {
-        header: "Desired",
-        weight: 1.,
-        cell: |replicaset, _| {
-            replicaset
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.replicas)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Current",
-        weight: 1.,
-        cell: |replicaset, _| {
+    Column::new("Desired", |replicaset, _| {
+        count_text(replicaset.spec.as_ref().and_then(|spec| spec.replicas))
+    }),
+    Column::new("Current", |replicaset, _| {
+        count_text(
             replicaset
                 .status
                 .as_ref()
-                .and_then(|status| status.available_replicas)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Ready",
-        weight: 1.,
-        cell: |replicaset, _| {
+                .and_then(|status| status.available_replicas),
+        )
+    }),
+    Column::new("Ready", |replicaset, _| {
+        count_text(
             replicaset
                 .status
                 .as_ref()
-                .and_then(|status| status.ready_replicas)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
+                .and_then(|status| status.ready_replicas),
+        )
+    }),
     Column::AGE,
 ];
 
@@ -714,73 +656,51 @@ pub fn project_daemonsets(daemonsets: &[&DaemonSet], now: Timestamp) -> Resource
 
 const DAEMONSET_COLUMNS: &[Column<DaemonSet>] = &[
     Column::NAME,
-    Column {
-        header: "Desired",
-        weight: 1.,
-        cell: |daemonset, _| {
+    Column::new("Desired", |daemonset, _| {
+        count_text(
             daemonset
                 .status
                 .as_ref()
-                .map(|status| status.desired_number_scheduled)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Current",
-        weight: 1.,
-        cell: |daemonset, _| {
+                .map(|status| status.desired_number_scheduled),
+        )
+    }),
+    Column::new("Current", |daemonset, _| {
+        count_text(
             daemonset
                 .status
                 .as_ref()
-                .map(|status| status.current_number_scheduled)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Ready",
-        weight: 1.,
-        cell: |daemonset, _| {
+                .map(|status| status.current_number_scheduled),
+        )
+    }),
+    Column::new("Ready", |daemonset, _| {
+        count_text(daemonset.status.as_ref().map(|status| status.number_ready))
+    }),
+    Column::new("Updated", |daemonset, _| {
+        count_text(
             daemonset
                 .status
                 .as_ref()
-                .map(|status| status.number_ready)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Updated",
-        weight: 1.,
-        cell: |daemonset, _| {
+                .and_then(|status| status.updated_number_scheduled),
+        )
+    }),
+    Column::new("Available", |daemonset, _| {
+        count_text(
             daemonset
                 .status
                 .as_ref()
-                .and_then(|status| status.updated_number_scheduled)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Available",
-        weight: 1.,
-        cell: |daemonset, _| {
-            daemonset
-                .status
-                .as_ref()
-                .and_then(|status| status.number_available)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Node Selector",
-        weight: 1.,
-        cell: |daemonset, _| node_selectors(daemonset.spec.as_ref().map(|spec| &spec.template)),
-    },
+                .and_then(|status| status.number_available),
+        )
+    }),
+    Column::new("Node Selector", |daemonset, _| {
+        node_selectors(daemonset.spec.as_ref().map(|spec| &spec.template))
+    }),
     Column::AGE,
 ];
+
+/// A count the object may not report yet, shown as 0 until it does.
+fn count_text(count: Option<i32>) -> String {
+    count.unwrap_or_default().to_string()
+}
 
 pub fn daemonset_detail(daemonset: &DaemonSet, now: Timestamp) -> DetailModel {
     let spec = daemonset.spec.clone().unwrap_or_default();
@@ -840,61 +760,29 @@ pub fn project_jobs(jobs: &[&Job], now: Timestamp) -> ResourceTable {
 
 const JOB_COLUMNS: &[Column<Job>] = &[
     Column::NAME,
-    Column {
-        header: "Resumed",
-        weight: 1.,
-        cell: |job, _| {
-            (!job
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.suspend)
-                .unwrap_or(false))
-            .to_string()
-        },
-    },
-    Column {
-        header: "Status",
-        weight: 1.,
-        cell: |job, _| job_status(job).to_string(),
-    },
-    Column {
-        header: "Succeeded",
-        weight: 1.,
-        cell: |job, _| {
-            job.status
-                .as_ref()
-                .and_then(|status| status.succeeded)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Completions",
-        weight: 1.,
-        cell: |job, _| {
-            job.spec
-                .as_ref()
-                .and_then(|spec| spec.completions)
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Parallelism",
-        weight: 1.,
-        cell: |job, _| {
-            job.spec
-                .as_ref()
-                .and_then(|spec| spec.parallelism)
-                .map(|value| value.to_string())
-                .unwrap_or_default()
-        },
-    },
-    Column {
-        header: "Duration",
-        weight: 1.,
-        cell: job_duration,
-    },
+    Column::new("Resumed", |job, _| {
+        (!job
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.suspend)
+            .unwrap_or(false))
+        .to_string()
+    }),
+    Column::new("Status", |job, _| job_status(job).to_string()),
+    Column::new("Succeeded", |job, _| {
+        count_text(job.status.as_ref().and_then(|status| status.succeeded))
+    }),
+    Column::new("Completions", |job, _| {
+        count_text(job.spec.as_ref().and_then(|spec| spec.completions))
+    }),
+    Column::new("Parallelism", |job, _| {
+        job.spec
+            .as_ref()
+            .and_then(|spec| spec.parallelism)
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    }),
+    Column::new("Duration", job_duration),
     Column::AGE,
 ];
 
@@ -1006,46 +894,30 @@ pub fn project_cronjobs(cronjobs: &[&CronJob], now: Timestamp) -> ResourceTable 
 
 const CRONJOB_COLUMNS: &[Column<CronJob>] = &[
     Column::NAME,
-    Column {
-        header: "Schedule",
-        weight: 1.,
-        cell: |cronjob, _| cronjob_schedule(cronjob),
-    },
-    Column {
-        header: "Timezone",
-        weight: 1.,
-        cell: |cronjob, _| cronjob.spec.time_zone.clone().unwrap_or_default(),
-    },
-    Column {
-        header: "Resumed",
-        weight: 1.,
-        cell: |cronjob, _| (!cronjob.spec.suspend.unwrap_or(false)).to_string(),
-    },
-    Column {
-        header: "Active",
-        weight: 1.,
-        cell: |cronjob, _| {
-            cronjob
-                .status
-                .as_ref()
-                .and_then(|status| status.active.as_ref())
-                .map(|jobs| jobs.len())
-                .unwrap_or_default()
-                .to_string()
-        },
-    },
-    Column {
-        header: "Last schedule",
-        weight: 1.,
-        cell: |cronjob, now| {
-            cronjob
-                .status
-                .as_ref()
-                .and_then(|status| status.last_schedule_time.as_ref())
-                .map(|time| format_age(time.0, now))
-                .unwrap_or_else(|| "-".to_string())
-        },
-    },
+    Column::new("Schedule", |cronjob, _| cronjob_schedule(cronjob)),
+    Column::new("Timezone", |cronjob, _| {
+        cronjob.spec.time_zone.clone().unwrap_or_default()
+    }),
+    Column::new("Resumed", |cronjob, _| {
+        (!cronjob.spec.suspend.unwrap_or(false)).to_string()
+    }),
+    Column::new("Active", |cronjob, _| {
+        cronjob
+            .status
+            .as_ref()
+            .and_then(|status| status.active.as_ref())
+            .map(|jobs| jobs.len())
+            .unwrap_or_default()
+            .to_string()
+    }),
+    Column::new("Last schedule", |cronjob, now| {
+        cronjob
+            .status
+            .as_ref()
+            .and_then(|status| status.last_schedule_time.as_ref())
+            .map(|time| format_age(time.0, now))
+            .unwrap_or_else(|| "-".to_string())
+    }),
     Column::AGE,
 ];
 

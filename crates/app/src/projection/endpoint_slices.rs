@@ -17,21 +17,9 @@ pub fn project_endpoint_slices(slices: &[&EndpointSlice], now: Timestamp) -> Res
 
 const ENDPOINT_SLICE_COLUMNS: &[Column<EndpointSlice>] = &[
     Column::NAME,
-    Column {
-        header: "Type",
-        weight: 1.,
-        cell: |slice, _| slice.address_type.clone(),
-    },
-    Column {
-        header: "Ports",
-        weight: 1.,
-        cell: |slice, _| ports(slice),
-    },
-    Column {
-        header: "Endpoints",
-        weight: 1.,
-        cell: |slice, _| endpoints(slice),
-    },
+    Column::new("Type", |slice, _| slice.address_type.clone()),
+    Column::new("Ports", |slice, _| ports(slice)),
+    Column::new("Endpoints", |slice, _| endpoints(slice)),
 ];
 
 /// `getPortsString`: `port/protocol` per entry, protocol defaulting to

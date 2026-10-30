@@ -29,11 +29,9 @@ pub fn project_config_maps(config_maps: &[&ConfigMap], now: Timestamp) -> Resour
 
 const CONFIG_MAP_COLUMNS: &[Column<ConfigMap>] = &[
     Column::NAME,
-    Column {
-        header: "Keys",
-        weight: 1.,
-        cell: |config, _| key_list(config.data.iter().flatten().map(|(key, _)| key)),
-    },
+    Column::new("Keys", |config, _| {
+        key_list(config.data.iter().flatten().map(|(key, _)| key))
+    }),
     Column::AGE,
 ];
 
@@ -86,16 +84,10 @@ pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
 
 const SECRET_COLUMNS: &[Column<Secret>] = &[
     Column::NAME,
-    Column {
-        header: "Keys",
-        weight: 1.,
-        cell: |secret, _| key_list(secret.data.iter().flatten().map(|(key, _)| key)),
-    },
-    Column {
-        header: "Type",
-        weight: 1.,
-        cell: |secret, _| secret.type_.clone().unwrap_or_default(),
-    },
+    Column::new("Keys", |secret, _| {
+        key_list(secret.data.iter().flatten().map(|(key, _)| key))
+    }),
+    Column::new("Type", |secret, _| secret.type_.clone().unwrap_or_default()),
     Column::AGE,
 ];
 

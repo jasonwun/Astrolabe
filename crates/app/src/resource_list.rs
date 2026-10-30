@@ -195,10 +195,7 @@ impl ResourceListPanel {
         let session = self.session.read(cx);
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
             ListView::Namespaces => (
-                ResourceTable::with_default_weights(
-                    vec!["Name".to_string(), "Status".to_string()],
-                    project_namespaces(&session.namespaces()),
-                ),
+                project_namespaces(&session.namespaces(), now),
                 ListState::Table,
                 false,
             ),

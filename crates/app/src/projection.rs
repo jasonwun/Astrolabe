@@ -39,6 +39,17 @@ pub struct Column<K> {
     pub cell: fn(&K, Timestamp) -> String,
 }
 
+impl<K> Column<K> {
+    /// A column weighing 1, as every column after a list's first does.
+    pub const fn new(header: &'static str, cell: fn(&K, Timestamp) -> String) -> Self {
+        Self {
+            header,
+            weight: 1.,
+            cell,
+        }
+    }
+}
+
 impl<K: Resource> Column<K> {
     /// The object's name, weighing 2 as a list's first column does.
     pub const NAME: Self = Self {
@@ -47,14 +58,12 @@ impl<K: Resource> Column<K> {
         cell: |object, _| object.meta().name.clone().unwrap_or_default(),
     };
 
-    pub const AGE: Self = Self {
-        header: "Age",
-        weight: 1.,
-        cell: |object, now| age_of(object.meta(), now),
-    };
+    pub const AGE: Self = Self::new("Age", |object, now| age_of(object.meta(), now));
 }
 
-/// A list column as the list view draws it.
+/// A list column as the list view draws it: a [`Column`]'s header and
+/// weight, without its cell function, or a custom resource's printer
+/// column known only at runtime.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ListColumn {
     pub header: String,
@@ -69,17 +78,6 @@ pub struct ResourceTable {
 }
 
 impl ResourceTable {
-    /// A table whose columns take [`default_column_weights`].
-    pub fn with_default_weights(headers: Vec<String>, rows: Vec<ResourceRow>) -> Self {
-        let weights = default_column_weights(headers.len());
-        let columns = headers
-            .into_iter()
-            .zip(weights)
-            .map(|(header, weight)| ListColumn { header, weight })
-            .collect();
-        Self { columns, rows }
-    }
-
     pub fn headers(&self) -> Vec<&str> {
         self.columns
             .iter()
@@ -179,23 +177,20 @@ pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
     widths
 }
 
-pub fn project_namespaces(namespaces: &[&Namespace]) -> Vec<ResourceRow> {
-    namespaces
-        .iter()
-        .map(|namespace| {
-            let name = namespace.metadata.name.clone().unwrap_or_default();
-            let phase = namespace
-                .status
-                .as_ref()
-                .and_then(|status| status.phase.clone())
-                .unwrap_or_else(|| "Unknown".to_string());
-            ResourceRow {
-                key: ObjectKey::of(*namespace),
-                cells: vec![name, phase],
-            }
-        })
-        .collect()
+pub fn project_namespaces(namespaces: &[&Namespace], now: Timestamp) -> ResourceTable {
+    list_table(NAMESPACE_COLUMNS, namespaces, now)
 }
+
+const NAMESPACE_COLUMNS: &[Column<Namespace>] = &[
+    Column::NAME,
+    Column::new("Status", |namespace, _| {
+        namespace
+            .status
+            .as_ref()
+            .and_then(|status| status.phase.clone())
+            .unwrap_or_else(|| "Unknown".to_string())
+    }),
+];
 
 /// Name / Namespace (namespaced kinds only) / the preferred version's
 /// priority-0 printer columns (minus a literal "age") / Age.
@@ -238,7 +233,13 @@ pub fn project_custom_resources(
             }
         })
         .collect();
-    ResourceTable::with_default_weights(columns, rows)
+    let weights = default_column_weights(columns.len());
+    let columns = columns
+        .into_iter()
+        .zip(weights)
+        .map(|(header, weight)| ListColumn { header, weight })
+        .collect();
+    ResourceTable { columns, rows }
 }
 
 const DEFINITION_COLUMNS: &[Column<CustomResourceDefinition>] = &[
@@ -247,37 +248,21 @@ const DEFINITION_COLUMNS: &[Column<CustomResourceDefinition>] = &[
         weight: 2.,
         cell: |crd, _| crd.spec.names.kind.clone(),
     },
-    Column {
-        header: "Group",
-        weight: 1.,
-        cell: |crd, _| crd.spec.group.clone(),
-    },
-    Column {
-        header: "Version",
-        weight: 1.,
-        cell: |crd, _| {
-            preferred_version(crd)
-                .map(|version| version.name.clone())
-                .unwrap_or_default()
-        },
-    },
-    Column {
-        header: "ShortNames",
-        weight: 1.,
-        cell: |crd, _| {
-            crd.spec
-                .names
-                .short_names
-                .clone()
-                .unwrap_or_default()
-                .join(", ")
-        },
-    },
-    Column {
-        header: "Scope",
-        weight: 1.,
-        cell: |crd, _| crd.spec.scope.clone(),
-    },
+    Column::new("Group", |crd, _| crd.spec.group.clone()),
+    Column::new("Version", |crd, _| {
+        preferred_version(crd)
+            .map(|version| version.name.clone())
+            .unwrap_or_default()
+    }),
+    Column::new("ShortNames", |crd, _| {
+        crd.spec
+            .names
+            .short_names
+            .clone()
+            .unwrap_or_default()
+            .join(", ")
+    }),
+    Column::new("Scope", |crd, _| crd.spec.scope.clone()),
     Column::AGE,
 ];
 
