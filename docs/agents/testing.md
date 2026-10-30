@@ -28,6 +28,16 @@ the PR's Evidence block, pasted as is:
 Notes go outside the code block. Do not paste the full log. A named binary
 missing from the log fails the script; check the spelling.
 
+## Move-only refactors
+
+```sh
+dev/move-check.sh             # lines the diff does not just move
+```
+
+Run it before review on a ticket that only moves code; the residue
+should be `mod`/`use` lines, new modules' `//!` docs and rustfmt
+re-wraps. What else counts is in `CODING_STANDARDS.md`.
+
 ## Cluster e2e
 
 `crates/kube/tests/e2e_cluster.rs` is `#[ignore]`d by default; it needs a
