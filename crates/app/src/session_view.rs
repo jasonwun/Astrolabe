@@ -49,12 +49,12 @@ impl SessionView {
 
     pub fn scripted(
         cluster: String,
-        scripted: ScriptedCluster,
         namespace: String,
+        scripted: ScriptedCluster,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let session = cx.new(|cx| Session::scripted(cluster, scripted, namespace, cx));
+        let session = cx.new(|cx| Session::scripted(cluster, namespace, scripted, cx));
         Self::with_session(session, window, cx)
     }
 

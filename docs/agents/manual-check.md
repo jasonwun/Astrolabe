@@ -38,8 +38,10 @@ Debug builds open `ASTROLABE_CLUSTER` in `ASTROLABE_NAMESPACE` at launch
 (#111); release builds ignore both. `dev/demo.sh apply` is idempotent and
 prints only the namespace on stdout (kubectl's output goes to stderr). A
 context that is not in the kubeconfig logs a `warn` and the app opens the
-first context instead, so check the first screenshot shows
-`kind-astrolabe-dev` selected.
+first context in `default` instead, and a failed `dev/demo.sh apply` leaves
+`ASTROLABE_NAMESPACE` empty, so check the first screenshot shows
+`kind-astrolabe-dev` selected and `astrolabe-demo-<worktree>` as the
+namespace.
 
 ## 3. Look and drive, via Orca computer use
 

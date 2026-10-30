@@ -24,8 +24,12 @@ use gpui_kit::{TestAppContext, VisualTestContext};
 pub type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
 
 pub fn key(kind: BuiltinKind, namespace: &str) -> WatchKey {
+    key_on("kind-a", kind, namespace)
+}
+
+pub fn key_on(cluster: &str, kind: BuiltinKind, namespace: &str) -> WatchKey {
     WatchKey {
-        cluster: "kind-a".to_string(),
+        cluster: cluster.to_string(),
         kind: ResourceKind::Builtin(kind),
         namespace: Some(namespace.to_string()),
     }

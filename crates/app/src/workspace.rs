@@ -122,19 +122,20 @@ impl WorkspaceView {
     }
 
     /// Open the preselected cluster, or the first one, in the preselected
-    /// namespace.
+    /// namespace. An undiscovered preselected cluster falls back to the
+    /// launch without preselection: the first cluster in `default`.
     fn select_launch_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Preselection { cluster, namespace } = std::mem::take(&mut self.preselection);
-        let cluster = match cluster {
-            Some(cluster) if self.clusters.contains(&cluster) => Some(cluster),
+        let (cluster, namespace) = match cluster {
+            Some(cluster) if self.clusters.contains(&cluster) => (Some(cluster), namespace),
             Some(cluster) => {
                 tracing::warn!(
                     ASTROLABE_CLUSTER = %cluster,
                     "preselected cluster is not a discovered context; opening the first one"
                 );
-                self.clusters.first().cloned()
+                (self.clusters.first().cloned(), None)
             }
-            None => self.clusters.first().cloned(),
+            None => (self.clusters.first().cloned(), namespace),
         };
         if let Some(cluster) = cluster {
             self.open_cluster(cluster, namespace, window, cx);
@@ -162,7 +163,7 @@ impl WorkspaceView {
                 .and_then(|source| source.take())
             {
                 Some(scripted) => cx.new(|cx| {
-                    SessionView::scripted(cluster.clone(), scripted, namespace, window, cx)
+                    SessionView::scripted(cluster.clone(), namespace, scripted, window, cx)
                 }),
                 None => cx.new(|cx| SessionView::new(cluster.clone(), namespace, window, cx)),
             };

@@ -366,16 +366,16 @@ impl Session {
     ) -> Self {
         Self::scripted(
             cluster,
-            ScriptedCluster::new(receiver),
             DEFAULT_NAMESPACE,
+            ScriptedCluster::new(receiver),
             cx,
         )
     }
 
     pub fn scripted(
         cluster: impl Into<String>,
-        scripted: ScriptedCluster,
         namespace: impl Into<String>,
+        scripted: ScriptedCluster,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::start(
