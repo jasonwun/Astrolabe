@@ -1,8 +1,9 @@
 //! Services and Ingresses on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
+use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::network::{
-    ingress_detail, project_ingresses, project_services, service_detail, service_ports,
+    ingress_detail, project_ingresses, project_services, service_ports,
 };
 use astrolabe::projection::workloads::ForwardPort;
 use astrolabe::projection::{
@@ -59,12 +60,10 @@ fn cells(service: &Service) -> Vec<String> {
     project_services(&[service], now()).rows[0].cells.clone()
 }
 
-/// Projects `raw` the way the Services Registration does: the typed Service
-/// plus the `DynamicObject`'s untyped data.
+/// Projects `raw` through the Services Registration, as the app does.
 fn detail(raw: serde_json::Value) -> DetailModel {
     let object: DynamicObject = serde_json::from_value(raw).unwrap();
-    let service = object.clone().try_parse::<Service>().unwrap();
-    service_detail(&service, &object.data, now())
+    (BuiltinKind::Services.registration().detail)(&object, now()).unwrap()
 }
 
 fn section<'a>(sections: &'a [DetailSection], title: &str) -> Option<&'a DetailSection> {
