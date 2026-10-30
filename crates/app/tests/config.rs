@@ -34,7 +34,7 @@ fn config_maps_list_names_their_data_keys() {
 
     let table = project_config_maps(&[&config], now());
 
-    assert_eq!(table.columns, ["Name", "Keys", "Age"]);
+    assert_eq!(table.headers(), ["Name", "Keys", "Age"]);
     assert_eq!(
         table.rows[0].cells,
         ["app", "crlf, long, mode, nginx.conf", "60m"]
@@ -91,7 +91,7 @@ fn secrets_list_follows_freelens_columns() {
 
     let table = project_secrets(&[&secret], now());
 
-    assert_eq!(table.columns, ["Name", "Keys", "Type", "Age"]);
+    assert_eq!(table.headers(), ["Name", "Keys", "Type", "Age"]);
     assert_eq!(
         table.rows[0].cells,
         ["db", "cert, password", "Opaque", "60m"]

@@ -71,7 +71,7 @@ fn hpa_list_follows_freelens_columns() {
     let table = project_hpas(&[&web_hpa()], now());
 
     assert_eq!(
-        table.columns,
+        table.headers(),
         [
             "Name",
             "Metrics",

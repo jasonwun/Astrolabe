@@ -22,46 +22,50 @@ use astrolabe_kube::k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
-use super::{DetailModel, DetailSection, ResourceRow, ResourceTable, SummaryTable, age_of, detail};
-use crate::store::ObjectKey;
-
-/// Column weights of [`project_hpas`]'s list: Name, Metrics and Conditions
-/// 1.5, Age 0.5, the rest 1.
-pub const HPA_COLUMN_WEIGHTS: &[f32] = &[1.5, 1.5, 1., 1., 1., 0.5, 1.5];
+use super::{Column, DetailModel, DetailSection, ResourceTable, SummaryTable, detail, list_table};
 
 /// Name / Metrics / Min Pods / Max Pods / Replicas / Age / Conditions, as
 /// Freelens's HPA list shows them.
 pub fn project_hpas(hpas: &[&HorizontalPodAutoscaler], now: Timestamp) -> ResourceTable {
-    let rows = hpas
-        .iter()
-        .map(|hpa| ResourceRow {
-            key: ObjectKey::of(*hpa),
-            cells: vec![
-                hpa.metadata.name.clone().unwrap_or_default(),
-                list_metrics(hpa),
-                min_pods(hpa).to_string(),
-                hpa.spec.max_replicas.to_string(),
-                replicas(hpa).to_string(),
-                age_of(&hpa.metadata, now),
-                condition_list(hpa),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: [
-            "Name",
-            "Metrics",
-            "Min Pods",
-            "Max Pods",
-            "Replicas",
-            "Age",
-            "Conditions",
-        ]
-        .map(String::from)
-        .to_vec(),
-        rows,
-    }
+    list_table(HPA_COLUMNS, hpas, now)
 }
+
+/// Name, Metrics and Conditions weigh 1.5, Age 0.5, the rest 1.
+const HPA_COLUMNS: &[Column<HorizontalPodAutoscaler>] = &[
+    Column {
+        weight: 1.5,
+        ..Column::NAME
+    },
+    Column {
+        header: "Metrics",
+        weight: 1.5,
+        cell: |hpa, _| list_metrics(hpa),
+    },
+    Column {
+        header: "Min Pods",
+        weight: 1.,
+        cell: |hpa, _| min_pods(hpa).to_string(),
+    },
+    Column {
+        header: "Max Pods",
+        weight: 1.,
+        cell: |hpa, _| hpa.spec.max_replicas.to_string(),
+    },
+    Column {
+        header: "Replicas",
+        weight: 1.,
+        cell: |hpa, _| replicas(hpa).to_string(),
+    },
+    Column {
+        weight: 0.5,
+        ..Column::AGE
+    },
+    Column {
+        header: "Conditions",
+        weight: 1.5,
+        cell: |hpa, _| condition_list(hpa),
+    },
+];
 
 fn min_pods(hpa: &HorizontalPodAutoscaler) -> i32 {
     hpa.spec.min_replicas.unwrap_or_default()

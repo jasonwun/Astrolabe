@@ -261,7 +261,7 @@ mod custom {
         let table = project_custom_resources(&kind(&crd), &[&object], now());
 
         assert_eq!(
-            table.columns,
+            table.headers(),
             ["Name", "Namespace", "Spec", "Replicas", "Last Run", "Age"]
         );
         assert_eq!(
@@ -283,7 +283,7 @@ mod custom {
 
         let table = project_custom_resources(&kind(&crd), &[&object], now());
 
-        assert_eq!(table.columns, ["Name", "Age"]);
+        assert_eq!(table.headers(), ["Name", "Age"]);
         assert_eq!(table.rows[0].cells, ["global", "5m"]);
     }
 
@@ -298,7 +298,7 @@ mod custom {
 
         let all = project_definitions(&[&crontab, &other], &BTreeSet::new(), now());
         assert_eq!(
-            all.columns,
+            all.headers(),
             ["Resource", "Group", "Version", "ShortNames", "Scope", "Age"]
         );
         assert_eq!(

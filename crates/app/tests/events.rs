@@ -55,7 +55,7 @@ fn events_list_kubectl_columns_newest_first() {
     );
     let table = project_events(&[&pulled, &backoff], now());
     assert_eq!(
-        table.columns,
+        table.headers(),
         [
             "Type",
             "Reason",

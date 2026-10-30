@@ -11,47 +11,57 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::workloads::{ForwardPort, int_or_string};
 use super::{
-    DetailField, DetailModel, DetailSection, DetailValue, Forward, ForwardTo, ResourceRow,
-    ResourceTable, SummaryTable, age_of, detail,
+    Column, DetailField, DetailModel, DetailSection, DetailValue, Forward, ForwardTo,
+    ResourceTable, SummaryTable, detail, list_table,
 };
-use crate::store::ObjectKey;
 
 /// Name / Type / Cluster IP / External IP / Ports / Age / Status, as
 /// Freelens's Services list shows them.
 pub fn project_services(services: &[&Service], now: Timestamp) -> ResourceTable {
-    let rows = services
-        .iter()
-        .map(|service| {
-            let spec = service.spec.clone().unwrap_or_default();
-            ResourceRow {
-                key: ObjectKey::of(*service),
-                cells: vec![
-                    service.metadata.name.clone().unwrap_or_default(),
-                    spec.type_.clone().unwrap_or_else(|| "-".to_string()),
-                    spec.cluster_ip.clone().unwrap_or_default(),
-                    list_external_ips(service),
-                    port_list(service),
-                    age_of(&service.metadata, now),
-                    service_status(service).to_string(),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable {
-        columns: [
-            "Name",
-            "Type",
-            "Cluster IP",
-            "External IP",
-            "Ports",
-            "Age",
-            "Status",
-        ]
-        .map(String::from)
-        .to_vec(),
-        rows,
-    }
+    list_table(SERVICE_COLUMNS, services, now)
 }
+
+const SERVICE_COLUMNS: &[Column<Service>] = &[
+    Column::NAME,
+    Column {
+        header: "Type",
+        weight: 1.,
+        cell: |service, _| {
+            service
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.type_.clone())
+                .unwrap_or_else(|| "-".to_string())
+        },
+    },
+    Column {
+        header: "Cluster IP",
+        weight: 1.,
+        cell: |service, _| {
+            service
+                .spec
+                .as_ref()
+                .and_then(|spec| spec.cluster_ip.clone())
+                .unwrap_or_default()
+        },
+    },
+    Column {
+        header: "External IP",
+        weight: 1.,
+        cell: |service, _| list_external_ips(service),
+    },
+    Column {
+        header: "Ports",
+        weight: 1.,
+        cell: |service, _| port_list(service),
+    },
+    Column::AGE,
+    Column {
+        header: "Status",
+        weight: 1.,
+        cell: |service, _| service_status(service).to_string(),
+    },
+];
 
 /// Freelens's `Service.getExternalIps`: the load balancer's ingress points
 /// (each one's IP, else its hostname) once the status lists any, else
@@ -436,29 +446,29 @@ pub fn service_ports(service: &Service) -> Vec<ForwardPort> {
 /// Name / LoadBalancers / Rules / Age, as Freelens's Ingresses list shows
 /// them.
 pub fn project_ingresses(ingresses: &[&Ingress], now: Timestamp) -> ResourceTable {
-    let rows = ingresses
-        .iter()
-        .map(|ingress| ResourceRow {
-            key: ObjectKey::of(*ingress),
-            cells: vec![
-                ingress.metadata.name.clone().unwrap_or_default(),
-                load_balancers(ingress).join(", "),
-                rules(ingress)
-                    .flat_map(|rule| routes(ingress, rule))
-                    .map(|route| format!("{} ⇢ {}", route.url, route.backend))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                age_of(&ingress.metadata, now),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "LoadBalancers", "Rules", "Age"]
-            .map(String::from)
-            .to_vec(),
-        rows,
-    }
+    list_table(INGRESS_COLUMNS, ingresses, now)
 }
+
+const INGRESS_COLUMNS: &[Column<Ingress>] = &[
+    Column::NAME,
+    Column {
+        header: "LoadBalancers",
+        weight: 1.,
+        cell: |ingress, _| load_balancers(ingress).join(", "),
+    },
+    Column {
+        header: "Rules",
+        weight: 1.,
+        cell: |ingress, _| {
+            rules(ingress)
+                .flat_map(|rule| routes(ingress, rule))
+                .map(|route| format!("{} ⇢ {}", route.url, route.backend))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+    },
+    Column::AGE,
+];
 
 /// Freelens's `Ingress.getLoadBalancers`: each ingress point's hostname, else
 /// its IP.

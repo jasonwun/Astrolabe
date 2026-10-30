@@ -99,7 +99,7 @@ fn services_list_follows_freelens_columns() {
     let table = project_services(&[&service], now());
 
     assert_eq!(
-        table.columns,
+        table.headers(),
         [
             "Name",
             "Type",
@@ -585,7 +585,7 @@ fn ingresses_list_lens_columns() {
 
     let table = project_ingresses(&[&ingress], now());
 
-    assert_eq!(table.columns, ["Name", "LoadBalancers", "Rules", "Age"]);
+    assert_eq!(table.headers(), ["Name", "LoadBalancers", "Rules", "Age"]);
     assert_eq!(
         table.rows[0].cells,
         [

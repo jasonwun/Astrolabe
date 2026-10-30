@@ -48,7 +48,7 @@ fn compute_quota() -> ResourceQuota {
 fn resource_quotas_list_names_and_ages() {
     let table = project_resource_quotas(&[&compute_quota()], now());
 
-    assert_eq!(table.columns, ["Name", "Age"]);
+    assert_eq!(table.headers(), ["Name", "Age"]);
     assert_eq!(table.rows[0].cells, ["compute", "60m"]);
 }
 
@@ -163,7 +163,7 @@ fn defaults() -> LimitRange {
 fn limit_ranges_list_names_and_ages() {
     let table = project_limit_ranges(&[&defaults()], now());
 
-    assert_eq!(table.columns, ["Name", "Age"]);
+    assert_eq!(table.headers(), ["Name", "Age"]);
     assert_eq!(table.rows[0].cells, ["defaults", "60m"]);
 }
 

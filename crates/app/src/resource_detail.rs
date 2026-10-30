@@ -519,20 +519,15 @@ impl ResourceDetailPanel {
                         .id("related-head")
                         .text_sm()
                         .text_color(muted)
-                        .children(
-                            related
-                                .table
-                                .columns
-                                .iter()
-                                .enumerate()
-                                .map(|(index, name)| {
-                                    cell(
-                                        SharedString::from(format!("related-column-{index}")),
-                                        name.clone(),
-                                        index == 0,
-                                    )
-                                }),
-                        )
+                        .children(related.table.columns.iter().enumerate().map(
+                            |(index, column)| {
+                                cell(
+                                    SharedString::from(format!("related-column-{index}")),
+                                    column.header.clone(),
+                                    index == 0,
+                                )
+                            },
+                        ))
                         .into_any_element(),
                 );
                 for (row_index, row) in related.table.rows.into_iter().enumerate() {
