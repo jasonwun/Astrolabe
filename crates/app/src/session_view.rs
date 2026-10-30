@@ -37,18 +37,24 @@ pub struct SessionView {
 }
 
 impl SessionView {
-    pub fn new(cluster: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let session = cx.new(|cx| Session::new(cluster, cx));
+    pub fn new(
+        cluster: String,
+        namespace: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let session = cx.new(|cx| Session::new(cluster, namespace, cx));
         Self::with_session(session, window, cx)
     }
 
     pub fn scripted(
         cluster: String,
         scripted: ScriptedCluster,
+        namespace: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let session = cx.new(|cx| Session::scripted(cluster, scripted, cx));
+        let session = cx.new(|cx| Session::scripted(cluster, scripted, namespace, cx));
         Self::with_session(session, window, cx)
     }
 

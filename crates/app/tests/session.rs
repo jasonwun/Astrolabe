@@ -458,7 +458,7 @@ fn session_watch_error_forces_complete_namespace_relist(cx: &mut TestAppContext)
     logs.install();
     let server = ScriptedApiserver::spawn();
     let _kubeconfig = KubeconfigGuard::new(server.port);
-    let session = cx.update(|cx| cx.new(|cx| Session::new("scripted", cx)));
+    let session = cx.update(|cx| cx.new(|cx| Session::new("scripted", "default", cx)));
 
     // 1. Initial list/watch establishes a healthy snapshot.
     pump_until(cx, "initial snapshot", |cx| {

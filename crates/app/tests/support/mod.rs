@@ -12,7 +12,7 @@ use astrolabe::session::{
     ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
     ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
-use astrolabe::workspace::WorkspaceView;
+use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -134,7 +134,12 @@ pub fn open(
         cluster = cluster.watch(key, events);
     }
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(vec![("kind-a".to_string(), cluster)], window, cx)
+        WorkspaceView::from_clusters(
+            vec![("kind-a".to_string(), cluster)],
+            Preselection::default(),
+            window,
+            cx,
+        )
     });
     Ui {
         cx,

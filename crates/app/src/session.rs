@@ -325,6 +325,9 @@ pub struct Forward {
     _reports: Task<()>,
 }
 
+/// The namespace a session starts in unless told otherwise.
+pub const DEFAULT_NAMESPACE: &str = "default";
+
 pub struct Session {
     watch_key: WatchKey,
     namespaces: Watched<Namespace>,
@@ -343,10 +346,16 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(cluster: impl Into<String>, cx: &mut Context<Self>) -> Self {
+    /// Connect to `cluster`, with `namespace` selected from the start: the
+    /// first namespaced watch already uses it.
+    pub fn new(
+        cluster: impl Into<String>,
+        namespace: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let cluster = cluster.into();
         let io = ClusterIo::connect(cluster.clone());
-        Self::start(cluster, io, cx)
+        Self::start(cluster, io, namespace.into(), cx)
     }
 
     /// Namespace events only: CRDs never arrive, discovery finds nothing.
@@ -355,18 +364,29 @@ impl Session {
         receiver: mpsc::Receiver<NamespaceWatchMessage>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::scripted(cluster, ScriptedCluster::new(receiver), cx)
+        Self::scripted(
+            cluster,
+            ScriptedCluster::new(receiver),
+            DEFAULT_NAMESPACE,
+            cx,
+        )
     }
 
     pub fn scripted(
         cluster: impl Into<String>,
         scripted: ScriptedCluster,
+        namespace: impl Into<String>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::start(cluster.into(), ClusterIo::Scripted(scripted), cx)
+        Self::start(
+            cluster.into(),
+            ClusterIo::Scripted(scripted),
+            namespace.into(),
+            cx,
+        )
     }
 
-    fn start(cluster: String, io: ClusterIo, cx: &mut Context<Self>) -> Self {
+    fn start(cluster: String, io: ClusterIo, namespace: String, cx: &mut Context<Self>) -> Self {
         let mut session = Self {
             namespaces: Watched::new(cluster.clone(), "namespace"),
             crds: Watched::new(cluster.clone(), "CRD"),
@@ -380,7 +400,7 @@ impl Session {
             discovery_runs: 0,
             catalog: Vec::new(),
             objects: BTreeMap::new(),
-            namespace: "default".to_string(),
+            namespace,
             viewing: None,
             forwards: Vec::new(),
             io,

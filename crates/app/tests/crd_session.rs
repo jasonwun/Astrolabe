@@ -113,7 +113,7 @@ fn harness(
     for (key, receiver) in custom {
         cluster = cluster.watch(key, receiver);
     }
-    let session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, cx)));
+    let session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, "default", cx)));
     Harness {
         session,
         namespaces,
@@ -230,7 +230,7 @@ fn a_first_crd_snapshot_already_discovered_does_not_rediscover(cx: &mut TestAppC
                 )]))
             }
         });
-    let _session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, cx)));
+    let _session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, "default", cx)));
     snapshot(
         &mut crds,
         vec![crd("stable.example.com", "CronTab", "Namespaced")],
