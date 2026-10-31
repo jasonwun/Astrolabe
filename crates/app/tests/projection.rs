@@ -2,6 +2,7 @@ use astrolabe::projection::{ResourceRow, project_namespaces};
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 fn namespace(name: &str, phase: &str) -> Namespace {
     Namespace {
@@ -22,10 +23,10 @@ fn namespaces_project_to_handwritten_columns() {
     let active = namespace("default", "Active");
     let terminating = namespace("old", "Terminating");
 
-    let rows = project_namespaces(&[&active, &terminating]);
+    let table = project_namespaces(&[&active, &terminating], Timestamp::UNIX_EPOCH);
 
     assert_eq!(
-        rows,
+        table.rows,
         vec![
             ResourceRow {
                 key: ObjectKey::cluster_scoped("default"),
@@ -37,6 +38,7 @@ fn namespaces_project_to_handwritten_columns() {
             },
         ]
     );
+    assert_eq!(table.weights(), [2., 1.]);
 }
 
 mod namespace_detail {
@@ -261,9 +263,10 @@ mod custom {
         let table = project_custom_resources(&kind(&crd), &[&object], now());
 
         assert_eq!(
-            table.columns,
+            table.headers(),
             ["Name", "Namespace", "Spec", "Replicas", "Last Run", "Age"]
         );
+        assert_eq!(table.weights(), [2., 1., 1., 1., 1., 1.]);
         assert_eq!(
             table.rows,
             [ResourceRow {
@@ -283,7 +286,7 @@ mod custom {
 
         let table = project_custom_resources(&kind(&crd), &[&object], now());
 
-        assert_eq!(table.columns, ["Name", "Age"]);
+        assert_eq!(table.headers(), ["Name", "Age"]);
         assert_eq!(table.rows[0].cells, ["global", "5m"]);
     }
 
@@ -298,9 +301,10 @@ mod custom {
 
         let all = project_definitions(&[&crontab, &other], &BTreeSet::new(), now());
         assert_eq!(
-            all.columns,
+            all.headers(),
             ["Resource", "Group", "Version", "ShortNames", "Scope", "Age"]
         );
+        assert_eq!(all.weights(), [2., 1., 1., 1., 1., 1.]);
         assert_eq!(
             all.rows[0].cells,
             [

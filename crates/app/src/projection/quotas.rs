@@ -10,39 +10,20 @@
 
 use astrolabe_kube::k8s_openapi::api::core::v1::{LimitRange, LimitRangeItem, ResourceQuota};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::Resource;
 
 use super::{
-    DetailField, DetailModel, DetailSection, DetailValue, ResourceRow, ResourceTable, SummaryTable,
-    age_of, detail,
+    Column, DetailField, DetailModel, DetailSection, DetailValue, ResourceTable, SummaryTable,
+    detail, list_table,
 };
-use crate::store::ObjectKey;
 
 /// Name / Age, as Freelens's ResourceQuotas list shows them.
 pub fn project_resource_quotas(quotas: &[&ResourceQuota], now: Timestamp) -> ResourceTable {
-    name_and_age(quotas, now)
+    list_table(&[Column::NAME, Column::AGE], quotas, now)
 }
 
 /// Name / Age, as Freelens's LimitRanges list shows them.
 pub fn project_limit_ranges(limits: &[&LimitRange], now: Timestamp) -> ResourceTable {
-    name_and_age(limits, now)
-}
-
-fn name_and_age<K: Resource>(objects: &[&K], now: Timestamp) -> ResourceTable {
-    let rows = objects
-        .iter()
-        .map(|object| ResourceRow {
-            key: ObjectKey::of(*object),
-            cells: vec![
-                object.meta().name.clone().unwrap_or_default(),
-                age_of(object.meta(), now),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Age"].map(String::from).to_vec(),
-        rows,
-    }
+    list_table(&[Column::NAME, Column::AGE], limits, now)
 }
 
 /// Freelens's ResourceQuota details: a Quotas row per hard limit, its usage

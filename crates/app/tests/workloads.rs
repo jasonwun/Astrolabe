@@ -75,7 +75,7 @@ fn pods_list_kubectl_columns() {
     let table = project_pods(&[&pod], now());
 
     assert_eq!(
-        table.columns,
+        table.headers(),
         ["Name", "Ready", "Status", "Restarts", "IP", "Node", "Age"]
     );
     assert_eq!(
@@ -358,7 +358,7 @@ fn deployments_list_kubectl_columns() {
     let table = project_deployments(&[&deployment], now());
 
     assert_eq!(
-        table.columns,
+        table.headers(),
         ["Name", "Ready", "Up-to-date", "Available", "Age"]
     );
     assert_eq!(

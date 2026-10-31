@@ -18,7 +18,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use gpui_kit::SharedString;
 
-use crate::projection::autoscaling::{HPA_COLUMN_WEIGHTS, hpa_detail, project_hpas};
+use crate::projection::autoscaling::{hpa_detail, project_hpas};
 use crate::projection::config::{
     config_map_detail, project_config_maps, project_secrets, secret_detail,
 };
@@ -119,9 +119,6 @@ pub struct Registration {
     /// What else deleting this object takes with it, for the confirmation.
     pub cascade: fn(&DynamicObject) -> &'static str,
     pub related: Option<Related>,
-    /// The list's column weights, one per column; `None` takes
-    /// [`default_column_weights`](crate::projection::default_column_weights).
-    pub column_weights: Option<&'static [f32]>,
     /// The object a list row opens, when not the row's own object: an
     /// Event opens what it is about.
     pub row_target: Option<fn(&DynamicObject) -> Option<ObjectReference>>,
@@ -206,7 +203,6 @@ static PODS: Registration = Registration {
         select: pod_events,
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -229,7 +225,6 @@ static DEPLOYMENTS: Registration = Registration {
         select: deployment_pods,
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -252,7 +247,6 @@ static STATEFULSETS: Registration = Registration {
         select: |object, pods| owned_by(object, pods, "StatefulSet"),
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -270,7 +264,6 @@ static REPLICASETS: Registration = Registration {
         select: |object, pods| owned_by(object, pods, "ReplicaSet"),
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -288,7 +281,6 @@ static DAEMONSETS: Registration = Registration {
         select: |object, pods| owned_by(object, pods, "DaemonSet"),
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -306,7 +298,6 @@ static JOBS: Registration = Registration {
         select: |object, pods| owned_by(object, pods, "Job"),
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -324,7 +315,6 @@ static CRONJOBS: Registration = Registration {
         select: |object, jobs| owned_by(object, jobs, "CronJob"),
         hide_when_empty: false,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -337,7 +327,6 @@ static EVENTS: Registration = Registration {
     actions: &[],
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: None,
     row_target: Some(|object| Some(parse::<Event>(object)?.involved_object)),
     open_all_cells: true,
 };
@@ -361,7 +350,6 @@ static SERVICES: Registration = Registration {
         select: |object, slices| owned_by(object, slices, "Service"),
         hide_when_empty: true,
     }),
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -374,7 +362,6 @@ static INGRESSES: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -387,7 +374,6 @@ static CONFIG_MAPS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -400,7 +386,6 @@ static SECRETS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -413,7 +398,6 @@ static RESOURCE_QUOTAS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -426,7 +410,6 @@ static LIMIT_RANGES: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };
@@ -439,7 +422,6 @@ static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: |_| "Nothing else is deleted.",
     related: None,
-    column_weights: Some(HPA_COLUMN_WEIGHTS),
     row_target: None,
     open_all_cells: false,
 };
@@ -452,7 +434,6 @@ static ENDPOINT_SLICES: Registration = Registration {
     actions: DEFAULT_ACTIONS,
     cascade: endpoint_slice_cascade,
     related: None,
-    column_weights: None,
     row_target: None,
     open_all_cells: false,
 };

@@ -30,7 +30,7 @@ fn statefulsets_list_and_detail_follow_freelens() {
     .unwrap();
 
     let table = project_statefulsets(&[&statefulset], now());
-    assert_eq!(table.columns, ["Name", "Ready", "Desired", "Age"]);
+    assert_eq!(table.headers(), ["Name", "Ready", "Desired", "Age"]);
     assert_eq!(table.rows[0].cells, ["db", "2", "3", "60m"]);
 
     let detail = statefulset_detail(&statefulset, now());
@@ -69,7 +69,7 @@ fn replicasets_list_and_detail_follow_freelens() {
     .unwrap();
     let table = project_replicasets(&[&replicaset], now());
     assert_eq!(
-        table.columns,
+        table.headers(),
         ["Name", "Desired", "Current", "Ready", "Age"]
     );
     assert_eq!(table.rows[0].cells, ["web-abc", "3", "2", "2", "60m"]);
@@ -102,7 +102,7 @@ fn daemonsets_list_and_detail_follow_freelens() {
     .unwrap();
     let table = project_daemonsets(&[&daemonset], now());
     assert_eq!(
-        table.columns,
+        table.headers(),
         [
             "Name",
             "Desired",
@@ -160,7 +160,7 @@ fn jobs_list_and_detail_follow_freelens_completion_status() {
     .unwrap();
     let table = project_jobs(&[&job], now());
     assert_eq!(
-        table.columns,
+        table.headers(),
         [
             "Name",
             "Resumed",
@@ -222,7 +222,7 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
     .unwrap();
     let table = project_cronjobs(&[&cronjob], now());
     assert_eq!(
-        table.columns,
+        table.headers(),
         [
             "Name",
             "Schedule",

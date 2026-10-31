@@ -198,7 +198,7 @@ fn every_builtin_registration_matches_its_contract() {
             "{kind:?} related kind"
         );
         assert_eq!(
-            (registration.list)(&[], now).columns,
+            (registration.list)(&[], now).headers(),
             contract.columns,
             "{kind:?} list columns"
         );

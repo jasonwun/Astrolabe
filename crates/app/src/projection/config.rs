@@ -9,8 +9,7 @@ use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use serde_json::Value;
 
-use super::{DetailModel, ResourceRow, ResourceTable, SummaryTable, age_of, detail, object_yaml};
-use crate::store::ObjectKey;
+use super::{Column, DetailModel, ResourceTable, SummaryTable, detail, list_table, object_yaml};
 
 /// What a masked value shows.
 pub const HIDDEN: &str = "<hidden>";
@@ -25,22 +24,16 @@ const PREVIEW_CHARS: usize = 80;
 /// Name / Keys / Age, as Freelens's ConfigMaps list shows them: the keys of
 /// `data` (Freelens leaves `binaryData` out).
 pub fn project_config_maps(config_maps: &[&ConfigMap], now: Timestamp) -> ResourceTable {
-    let rows = config_maps
-        .iter()
-        .map(|config| ResourceRow {
-            key: ObjectKey::of(*config),
-            cells: vec![
-                config.metadata.name.clone().unwrap_or_default(),
-                key_list(config.data.iter().flatten().map(|(key, _)| key)),
-                age_of(&config.metadata, now),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Keys", "Age"].map(String::from).to_vec(),
-        rows,
-    }
+    list_table(CONFIG_MAP_COLUMNS, config_maps, now)
 }
+
+const CONFIG_MAP_COLUMNS: &[Column<ConfigMap>] = &[
+    Column::NAME,
+    Column::new("Keys", |config, _| {
+        key_list(config.data.iter().flatten().map(|(key, _)| key))
+    }),
+    Column::AGE,
+];
 
 fn key_list<'a>(keys: impl Iterator<Item = &'a String>) -> String {
     keys.map(String::as_str).collect::<Vec<_>>().join(", ")
@@ -86,23 +79,17 @@ pub fn config_map_detail(config: &ConfigMap, now: Timestamp) -> DetailModel {
 
 /// Name / Keys / Type / Age, as Freelens's Secrets list shows them.
 pub fn project_secrets(secrets: &[&Secret], now: Timestamp) -> ResourceTable {
-    let rows = secrets
-        .iter()
-        .map(|secret| ResourceRow {
-            key: ObjectKey::of(*secret),
-            cells: vec![
-                secret.metadata.name.clone().unwrap_or_default(),
-                key_list(secret.data.iter().flatten().map(|(key, _)| key)),
-                secret.type_.clone().unwrap_or_default(),
-                age_of(&secret.metadata, now),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Keys", "Type", "Age"].map(String::from).to_vec(),
-        rows,
-    }
+    list_table(SECRET_COLUMNS, secrets, now)
 }
+
+const SECRET_COLUMNS: &[Column<Secret>] = &[
+    Column::NAME,
+    Column::new("Keys", |secret, _| {
+        key_list(secret.data.iter().flatten().map(|(key, _)| key))
+    }),
+    Column::new("Type", |secret, _| secret.type_.clone().unwrap_or_default()),
+    Column::AGE,
+];
 
 /// One of a Secret's keys, its value kept for Reveal.
 #[derive(Clone, Debug, PartialEq, Eq)]

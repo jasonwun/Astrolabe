@@ -43,7 +43,7 @@ fn cells(slice: &EndpointSlice) -> Vec<String> {
 #[test]
 fn columns_are_name_type_ports_endpoints() {
     assert_eq!(
-        project_endpoint_slices(&[], now()).columns,
+        project_endpoint_slices(&[], now()).headers(),
         ["Name", "Type", "Ports", "Endpoints"]
     );
 }

@@ -31,19 +31,99 @@ pub struct ResourceRow {
     pub cells: Vec<String>,
 }
 
+/// One list column: its header, its share of the list's width, and how a
+/// row's object fills its cell.
+pub struct Column<K> {
+    pub header: &'static str,
+    pub weight: f32,
+    pub cell: fn(&K, Timestamp) -> String,
+}
+
+impl<K> Column<K> {
+    /// A column weighing 1, as every column after a list's first does.
+    pub const fn new(header: &'static str, cell: fn(&K, Timestamp) -> String) -> Self {
+        Self {
+            header,
+            weight: 1.,
+            cell,
+        }
+    }
+}
+
+impl<K: Resource> Column<K> {
+    /// The object's name, weighing 2 as a list's first column does.
+    pub const NAME: Self = Self {
+        header: "Name",
+        weight: 2.,
+        cell: |object, _| object.meta().name.clone().unwrap_or_default(),
+    };
+
+    pub const AGE: Self = Self::new("Age", |object, now| age_of(object.meta(), now));
+}
+
+/// A list column as the list view draws it: a [`Column`]'s header and
+/// weight, without its cell function, or a custom resource's printer
+/// column known only at runtime.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListColumn {
+    pub header: String,
+    pub weight: f32,
+}
+
 /// A list view's columns and rows.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ResourceTable {
-    pub columns: Vec<String>,
+    pub columns: Vec<ListColumn>,
     pub rows: Vec<ResourceRow>,
+}
+
+impl ResourceTable {
+    pub fn headers(&self) -> Vec<&str> {
+        self.columns
+            .iter()
+            .map(|column| column.header.as_str())
+            .collect()
+    }
+
+    pub fn weights(&self) -> Vec<f32> {
+        self.columns.iter().map(|column| column.weight).collect()
+    }
+}
+
+/// The table of `objects` under `columns`: one row per object, its cells in
+/// column order.
+pub fn list_table<K: Resource>(
+    columns: &[Column<K>],
+    objects: &[&K],
+    now: Timestamp,
+) -> ResourceTable {
+    ResourceTable {
+        columns: columns
+            .iter()
+            .map(|column| ListColumn {
+                header: column.header.to_string(),
+                weight: column.weight,
+            })
+            .collect(),
+        rows: objects
+            .iter()
+            .map(|object| ResourceRow {
+                key: ObjectKey::of(*object),
+                cells: columns
+                    .iter()
+                    .map(|column| (column.cell)(object, now))
+                    .collect(),
+            })
+            .collect(),
+    }
 }
 
 /// The narrowest a list column gets, so short headers (`Age`, `Min Pods`)
 /// stay readable; below the sum of minimums the list scrolls sideways.
 pub const MIN_COLUMN_WIDTH: f32 = 80.;
 
-/// Column weights for a list that declares none: the first (Name) column
-/// weighs 2 and every other column 1.
+/// Column weights for a list whose columns are known only at runtime: the
+/// first (Name) column weighs 2 and every other column 1.
 pub fn default_column_weights(count: usize) -> Vec<f32> {
     (0..count).map(|ix| if ix == 0 { 2. } else { 1. }).collect()
 }
@@ -97,23 +177,20 @@ pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
     widths
 }
 
-pub fn project_namespaces(namespaces: &[&Namespace]) -> Vec<ResourceRow> {
-    namespaces
-        .iter()
-        .map(|namespace| {
-            let name = namespace.metadata.name.clone().unwrap_or_default();
-            let phase = namespace
-                .status
-                .as_ref()
-                .and_then(|status| status.phase.clone())
-                .unwrap_or_else(|| "Unknown".to_string());
-            ResourceRow {
-                key: ObjectKey::of(*namespace),
-                cells: vec![name, phase],
-            }
-        })
-        .collect()
+pub fn project_namespaces(namespaces: &[&Namespace], now: Timestamp) -> ResourceTable {
+    list_table(NAMESPACE_COLUMNS, namespaces, now)
 }
+
+const NAMESPACE_COLUMNS: &[Column<Namespace>] = &[
+    Column::NAME,
+    Column::new("Status", |namespace, _| {
+        namespace
+            .status
+            .as_ref()
+            .and_then(|status| status.phase.clone())
+            .unwrap_or_else(|| "Unknown".to_string())
+    }),
+];
 
 /// Name / Namespace (namespaced kinds only) / the preferred version's
 /// priority-0 printer columns (minus a literal "age") / Age.
@@ -156,8 +233,38 @@ pub fn project_custom_resources(
             }
         })
         .collect();
+    let weights = default_column_weights(columns.len());
+    let columns = columns
+        .into_iter()
+        .zip(weights)
+        .map(|(header, weight)| ListColumn { header, weight })
+        .collect();
     ResourceTable { columns, rows }
 }
+
+const DEFINITION_COLUMNS: &[Column<CustomResourceDefinition>] = &[
+    Column {
+        header: "Resource",
+        weight: 2.,
+        cell: |crd, _| crd.spec.names.kind.clone(),
+    },
+    Column::new("Group", |crd, _| crd.spec.group.clone()),
+    Column::new("Version", |crd, _| {
+        preferred_version(crd)
+            .map(|version| version.name.clone())
+            .unwrap_or_default()
+    }),
+    Column::new("ShortNames", |crd, _| {
+        crd.spec
+            .names
+            .short_names
+            .clone()
+            .unwrap_or_default()
+            .join(", ")
+    }),
+    Column::new("Scope", |crd, _| crd.spec.scope.clone()),
+    Column::AGE,
+];
 
 /// The Definitions list; an empty `groups` filter shows every group.
 pub fn project_definitions(
@@ -165,34 +272,12 @@ pub fn project_definitions(
     groups: &BTreeSet<String>,
     now: Timestamp,
 ) -> ResourceTable {
-    let columns = ["Resource", "Group", "Version", "ShortNames", "Scope", "Age"]
-        .map(String::from)
-        .to_vec();
-    let rows = crds
+    let crds: Vec<_> = crds
         .iter()
+        .copied()
         .filter(|crd| groups.is_empty() || groups.contains(&crd.spec.group))
-        .map(|crd| {
-            let spec = &crd.spec;
-            ResourceRow {
-                key: ObjectKey::of(*crd),
-                cells: vec![
-                    spec.names.kind.clone(),
-                    spec.group.clone(),
-                    preferred_version(crd)
-                        .map(|version| version.name.clone())
-                        .unwrap_or_default(),
-                    spec.names
-                        .short_names
-                        .clone()
-                        .unwrap_or_default()
-                        .join(", "),
-                    spec.scope.clone(),
-                    age_of(&crd.metadata, now),
-                ],
-            }
-        })
         .collect();
-    ResourceTable { columns, rows }
+    list_table(DEFINITION_COLUMNS, &crds, now)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

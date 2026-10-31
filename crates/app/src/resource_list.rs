@@ -17,8 +17,8 @@ use gpui_kit::*;
 use crate::builtin::{BuiltinKind, Registration};
 use crate::clock;
 use crate::projection::{
-    ResourceRow, ResourceTable, column_widths, default_column_weights, project_custom_resources,
-    project_definitions, project_namespaces, track_ages,
+    ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
+    project_namespaces, track_ages,
 };
 use crate::resource_detail::DetailTarget;
 use crate::session::{CustomKindId, Session};
@@ -80,7 +80,6 @@ impl ResourceListPanel {
             TableState::new(
                 RowsTable {
                     table: ResourceTable::default(),
-                    weights: Vec::new(),
                     measured_width: 0.,
                     widths: Vec::new(),
                     open_row: None,
@@ -194,16 +193,9 @@ impl ResourceListPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let now = clock::now(cx);
         let session = self.session.read(cx);
-        let weights = self
-            .view
-            .registration()
-            .and_then(|registration| registration.column_weights);
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
             ListView::Namespaces => (
-                ResourceTable {
-                    columns: vec!["Name".to_string(), "Status".to_string()],
-                    rows: project_namespaces(&session.namespaces()),
-                },
+                project_namespaces(&session.namespaces(), now),
                 ListState::Table,
                 false,
             ),
@@ -291,19 +283,8 @@ impl ResourceListPanel {
             .registration()
             .is_some_and(|registration| registration.open_all_cells);
         self.table.update(cx, |state, cx| {
-            debug_assert!(
-                weights.is_none_or(|weights| weights.len() == table.columns.len()),
-                "column weights do not match the list's columns"
-            );
-            let weights = weights
-                .filter(|weights| weights.len() == table.columns.len())
-                .map_or_else(
-                    || default_column_weights(table.columns.len()),
-                    <[f32]>::to_vec,
-                );
             let rows = state.delegate_mut();
             rows.table = table;
-            rows.weights = weights;
             rows.open_all_cells = open_all_cells;
             rows.fit_columns();
             state.refresh(cx);
@@ -473,10 +454,9 @@ type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 /// columns share the table's width by weight.
 pub(crate) struct RowsTable {
     table: ResourceTable,
-    weights: Vec<f32>,
     /// The table's last measured inner width.
     measured_width: f32,
-    /// `weights` fitted to `measured_width`.
+    /// The table's column weights fitted to `measured_width`.
     widths: Vec<f32>,
     open_row: Option<OpenRow>,
     open_all_cells: bool,
@@ -488,7 +468,7 @@ impl RowsTable {
     }
 
     fn fit_columns(&mut self) {
-        self.widths = column_widths(self.measured_width, &self.weights);
+        self.widths = column_widths(self.measured_width, &self.table.weights());
     }
 
     /// Refits the columns to a newly measured width; false when it is
@@ -513,7 +493,7 @@ impl TableDelegate for RowsTable {
     }
 
     fn column(&self, col_ix: usize, _cx: &App) -> Column {
-        let name = self.table.columns[col_ix].clone();
+        let name = self.table.columns[col_ix].header.clone();
         Column::new(SharedString::from(format!("col-{col_ix}")), name)
             .width(px(self.widths[col_ix]))
     }
@@ -526,7 +506,7 @@ impl TableDelegate for RowsTable {
     ) -> impl IntoElement {
         // The table already labels the enclosing `col-header` with the
         // column name, so the header text carries no label of its own.
-        let name = self.table.columns[col_ix].clone();
+        let name = self.table.columns[col_ix].header.clone();
         div()
             .id(SharedString::from(format!("column-{col_ix}")))
             .w_full()

@@ -7,31 +7,20 @@
 use astrolabe_kube::k8s_openapi::api::discovery::v1::EndpointSlice;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
-use super::{DetailModel, ResourceRow, ResourceTable, detail};
-use crate::store::ObjectKey;
+use super::{Column, DetailModel, ResourceTable, detail, list_table};
 
 /// Name / Type / Ports / Endpoints, as Freelens's Service details table
 /// shows a Service's slices.
-pub fn project_endpoint_slices(slices: &[&EndpointSlice], _now: Timestamp) -> ResourceTable {
-    let rows = slices
-        .iter()
-        .map(|slice| ResourceRow {
-            key: ObjectKey::of(*slice),
-            cells: vec![
-                slice.metadata.name.clone().unwrap_or_default(),
-                slice.address_type.clone(),
-                ports(slice),
-                endpoints(slice),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Type", "Ports", "Endpoints"]
-            .map(String::from)
-            .to_vec(),
-        rows,
-    }
+pub fn project_endpoint_slices(slices: &[&EndpointSlice], now: Timestamp) -> ResourceTable {
+    list_table(ENDPOINT_SLICE_COLUMNS, slices, now)
 }
+
+const ENDPOINT_SLICE_COLUMNS: &[Column<EndpointSlice>] = &[
+    Column::NAME,
+    Column::new("Type", |slice, _| slice.address_type.clone()),
+    Column::new("Ports", |slice, _| ports(slice)),
+    Column::new("Endpoints", |slice, _| endpoints(slice)),
+];
 
 /// `getPortsString`: `port/protocol` per entry, protocol defaulting to
 /// TCP. An entry without a port (all ports) shows the protocol alone where

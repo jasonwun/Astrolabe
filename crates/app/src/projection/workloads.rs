@@ -13,47 +13,44 @@ use astrolabe_kube::k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 use super::{
-    Containers, DetailField, DetailItem, DetailModel, DetailSection, Forward, ForwardTo,
-    ReplicaCounts, ResourceRow, ResourceTable, SummaryTable, age_of, detail, format_age,
+    Column, Containers, DetailField, DetailItem, DetailModel, DetailSection, Forward, ForwardTo,
+    ReplicaCounts, ResourceTable, SummaryTable, detail, format_age, list_table,
 };
-use crate::store::ObjectKey;
 
 pub(crate) const NONE: &str = "<none>";
 
 /// Name / Ready / Status / Restarts / IP / Node / Age, as `kubectl get pods
 /// -o wide` prints them.
 pub fn project_pods(pods: &[&Pod], now: Timestamp) -> ResourceTable {
-    let columns = ["Name", "Ready", "Status", "Restarts", "IP", "Node", "Age"]
-        .map(String::from)
-        .to_vec();
-    let rows = pods
-        .iter()
-        .map(|pod| {
-            let spec = pod.spec.as_ref();
-            let status = pod.status.as_ref();
-            let containers = status
-                .and_then(|status| status.container_statuses.as_deref())
-                .unwrap_or_default();
-            let (ready, reason) = pod_state(pod);
-            ResourceRow {
-                key: ObjectKey::of(*pod),
-                cells: vec![
-                    pod.metadata.name.clone().unwrap_or_default(),
-                    ready,
-                    reason,
-                    restarts(containers, now),
-                    status
-                        .and_then(|status| status.pod_ip.clone())
-                        .unwrap_or_else(|| NONE.to_string()),
-                    spec.and_then(|spec| spec.node_name.clone())
-                        .unwrap_or_else(|| NONE.to_string()),
-                    age_of(&pod.metadata, now),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable { columns, rows }
+    list_table(POD_COLUMNS, pods, now)
 }
+
+const POD_COLUMNS: &[Column<Pod>] = &[
+    Column::NAME,
+    Column::new("Ready", |pod, _| pod_state(pod).0),
+    Column::new("Status", |pod, _| pod_state(pod).1),
+    Column::new("Restarts", |pod, now| {
+        let containers = pod
+            .status
+            .as_ref()
+            .and_then(|status| status.container_statuses.as_deref())
+            .unwrap_or_default();
+        restarts(containers, now)
+    }),
+    Column::new("IP", |pod, _| {
+        pod.status
+            .as_ref()
+            .and_then(|status| status.pod_ip.clone())
+            .unwrap_or_else(|| NONE.to_string())
+    }),
+    Column::new("Node", |pod, _| {
+        pod.spec
+            .as_ref()
+            .and_then(|spec| spec.node_name.clone())
+            .unwrap_or_else(|| NONE.to_string())
+    }),
+    Column::AGE,
+];
 
 /// Restart count summed over the app containers, with the most recent
 /// restart's age (kubectl >= 1.24).
@@ -290,34 +287,27 @@ fn describe_state(state: &ContainerState, now: Timestamp) -> String {
 
 /// `kubectl get deployments` columns.
 pub fn project_deployments(deployments: &[&Deployment], now: Timestamp) -> ResourceTable {
-    let rows = deployments
-        .iter()
-        .map(|deployment| {
-            let counts = replica_counts(deployment);
-            let ready = deployment
-                .status
-                .as_ref()
-                .and_then(|s| s.ready_replicas)
-                .unwrap_or_default();
-            ResourceRow {
-                key: ObjectKey::of(*deployment),
-                cells: vec![
-                    deployment.metadata.name.clone().unwrap_or_default(),
-                    format!("{ready}/{}", counts.desired),
-                    counts.updated.to_string(),
-                    counts.available.to_string(),
-                    age_of(&deployment.metadata, now),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Ready", "Up-to-date", "Available", "Age"]
-            .map(String::from)
-            .to_vec(),
-        rows,
-    }
+    list_table(DEPLOYMENT_COLUMNS, deployments, now)
 }
+
+const DEPLOYMENT_COLUMNS: &[Column<Deployment>] = &[
+    Column::NAME,
+    Column::new("Ready", |deployment, _| {
+        let ready = deployment
+            .status
+            .as_ref()
+            .and_then(|s| s.ready_replicas)
+            .unwrap_or_default();
+        format!("{ready}/{}", replica_counts(deployment).desired)
+    }),
+    Column::new("Up-to-date", |deployment, _| {
+        replica_counts(deployment).updated.to_string()
+    }),
+    Column::new("Available", |deployment, _| {
+        replica_counts(deployment).available.to_string()
+    }),
+    Column::AGE,
+];
 
 /// Status summary = the replica bar, the rollout strategy and selector, and
 /// `status.conditions`.
@@ -488,35 +478,24 @@ pub fn selector_text(selector: &LabelSelector) -> String {
 
 /// Name / Ready / Desired / Age (Freelens 14a491f, workloads-statefulsets).
 pub fn project_statefulsets(statefulsets: &[&StatefulSet], now: Timestamp) -> ResourceTable {
-    let rows = statefulsets
-        .iter()
-        .map(|statefulset| ResourceRow {
-            key: ObjectKey::of(*statefulset),
-            cells: vec![
-                statefulset.metadata.name.clone().unwrap_or_default(),
-                statefulset
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.ready_replicas)
-                    .unwrap_or_default()
-                    .to_string(),
-                statefulset
-                    .spec
-                    .as_ref()
-                    .and_then(|spec| spec.replicas)
-                    .unwrap_or_default()
-                    .to_string(),
-                age_of(&statefulset.metadata, now),
-            ],
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Ready", "Desired", "Age"]
-            .map(String::from)
-            .to_vec(),
-        rows,
-    }
+    list_table(STATEFULSET_COLUMNS, statefulsets, now)
 }
+
+const STATEFULSET_COLUMNS: &[Column<StatefulSet>] = &[
+    Column::NAME,
+    Column::new("Ready", |statefulset, _| {
+        count_text(
+            statefulset
+                .status
+                .as_ref()
+                .and_then(|status| status.ready_replicas),
+        )
+    }),
+    Column::new("Desired", |statefulset, _| {
+        count_text(statefulset.spec.as_ref().and_then(|spec| spec.replicas))
+    }),
+    Column::AGE,
+];
 
 pub fn statefulset_detail(statefulset: &StatefulSet, now: Timestamp) -> DetailModel {
     let spec = statefulset.spec.clone().unwrap_or_default();
@@ -620,40 +599,32 @@ fn push_pod_policies(
 }
 
 pub fn project_replicasets(replicasets: &[&ReplicaSet], now: Timestamp) -> ResourceTable {
-    let rows = replicasets
-        .iter()
-        .map(|replicaset| {
-            let status = replicaset.status.as_ref();
-            ResourceRow {
-                key: ObjectKey::of(*replicaset),
-                cells: vec![
-                    replicaset.metadata.name.clone().unwrap_or_default(),
-                    replicaset
-                        .spec
-                        .as_ref()
-                        .and_then(|spec| spec.replicas)
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .and_then(|status| status.available_replicas)
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .and_then(|status| status.ready_replicas)
-                        .unwrap_or_default()
-                        .to_string(),
-                    age_of(&replicaset.metadata, now),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable {
-        columns: ["Name", "Desired", "Current", "Ready", "Age"]
-            .map(String::from)
-            .to_vec(),
-        rows,
-    }
+    list_table(REPLICASET_COLUMNS, replicasets, now)
 }
+
+const REPLICASET_COLUMNS: &[Column<ReplicaSet>] = &[
+    Column::NAME,
+    Column::new("Desired", |replicaset, _| {
+        count_text(replicaset.spec.as_ref().and_then(|spec| spec.replicas))
+    }),
+    Column::new("Current", |replicaset, _| {
+        count_text(
+            replicaset
+                .status
+                .as_ref()
+                .and_then(|status| status.available_replicas),
+        )
+    }),
+    Column::new("Ready", |replicaset, _| {
+        count_text(
+            replicaset
+                .status
+                .as_ref()
+                .and_then(|status| status.ready_replicas),
+        )
+    }),
+    Column::AGE,
+];
 
 pub fn replicaset_detail(replicaset: &ReplicaSet, now: Timestamp) -> DetailModel {
     let spec = replicaset.spec.clone().unwrap_or_default();
@@ -680,56 +651,55 @@ pub fn replicaset_detail(replicaset: &ReplicaSet, now: Timestamp) -> DetailModel
 }
 
 pub fn project_daemonsets(daemonsets: &[&DaemonSet], now: Timestamp) -> ResourceTable {
-    let rows = daemonsets
-        .iter()
-        .map(|daemonset| {
-            let status = daemonset.status.as_ref();
-            let template = daemonset.spec.as_ref().map(|spec| &spec.template);
-            ResourceRow {
-                key: ObjectKey::of(*daemonset),
-                cells: vec![
-                    daemonset.metadata.name.clone().unwrap_or_default(),
-                    status
-                        .map(|status| status.desired_number_scheduled)
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .map(|status| status.current_number_scheduled)
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .map(|status| status.number_ready)
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .and_then(|status| status.updated_number_scheduled)
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .and_then(|status| status.number_available)
-                        .unwrap_or_default()
-                        .to_string(),
-                    node_selectors(template),
-                    age_of(&daemonset.metadata, now),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable {
-        columns: [
-            "Name",
-            "Desired",
-            "Current",
-            "Ready",
-            "Updated",
-            "Available",
-            "Node Selector",
-            "Age",
-        ]
-        .map(String::from)
-        .to_vec(),
-        rows,
-    }
+    list_table(DAEMONSET_COLUMNS, daemonsets, now)
+}
+
+const DAEMONSET_COLUMNS: &[Column<DaemonSet>] = &[
+    Column::NAME,
+    Column::new("Desired", |daemonset, _| {
+        count_text(
+            daemonset
+                .status
+                .as_ref()
+                .map(|status| status.desired_number_scheduled),
+        )
+    }),
+    Column::new("Current", |daemonset, _| {
+        count_text(
+            daemonset
+                .status
+                .as_ref()
+                .map(|status| status.current_number_scheduled),
+        )
+    }),
+    Column::new("Ready", |daemonset, _| {
+        count_text(daemonset.status.as_ref().map(|status| status.number_ready))
+    }),
+    Column::new("Updated", |daemonset, _| {
+        count_text(
+            daemonset
+                .status
+                .as_ref()
+                .and_then(|status| status.updated_number_scheduled),
+        )
+    }),
+    Column::new("Available", |daemonset, _| {
+        count_text(
+            daemonset
+                .status
+                .as_ref()
+                .and_then(|status| status.number_available),
+        )
+    }),
+    Column::new("Node Selector", |daemonset, _| {
+        node_selectors(daemonset.spec.as_ref().map(|spec| &spec.template))
+    }),
+    Column::AGE,
+];
+
+/// A count the object may not report yet, shown as 0 until it does.
+fn count_text(count: Option<i32>) -> String {
+    count.unwrap_or_default().to_string()
 }
 
 pub fn daemonset_detail(daemonset: &DaemonSet, now: Timestamp) -> DetailModel {
@@ -785,49 +755,36 @@ fn push_pod_template_fields(
 }
 
 pub fn project_jobs(jobs: &[&Job], now: Timestamp) -> ResourceTable {
-    let rows = jobs
-        .iter()
-        .map(|job| {
-            let spec = job.spec.as_ref();
-            let status = job.status.as_ref();
-            ResourceRow {
-                key: ObjectKey::of(*job),
-                cells: vec![
-                    job.metadata.name.clone().unwrap_or_default(),
-                    (!spec.and_then(|spec| spec.suspend).unwrap_or(false)).to_string(),
-                    job_status(job).to_string(),
-                    status
-                        .and_then(|status| status.succeeded)
-                        .unwrap_or_default()
-                        .to_string(),
-                    spec.and_then(|spec| spec.completions)
-                        .unwrap_or_default()
-                        .to_string(),
-                    spec.and_then(|spec| spec.parallelism)
-                        .map(|value| value.to_string())
-                        .unwrap_or_default(),
-                    job_duration(job, now),
-                    age_of(&job.metadata, now),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable {
-        columns: [
-            "Name",
-            "Resumed",
-            "Status",
-            "Succeeded",
-            "Completions",
-            "Parallelism",
-            "Duration",
-            "Age",
-        ]
-        .map(String::from)
-        .to_vec(),
-        rows,
-    }
+    list_table(JOB_COLUMNS, jobs, now)
 }
+
+const JOB_COLUMNS: &[Column<Job>] = &[
+    Column::NAME,
+    Column::new("Resumed", |job, _| {
+        (!job
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.suspend)
+            .unwrap_or(false))
+        .to_string()
+    }),
+    Column::new("Status", |job, _| job_status(job).to_string()),
+    Column::new("Succeeded", |job, _| {
+        count_text(job.status.as_ref().and_then(|status| status.succeeded))
+    }),
+    Column::new("Completions", |job, _| {
+        count_text(job.spec.as_ref().and_then(|spec| spec.completions))
+    }),
+    Column::new("Parallelism", |job, _| {
+        job.spec
+            .as_ref()
+            .and_then(|spec| spec.parallelism)
+            .map(|value| value.to_string())
+            .unwrap_or_default()
+    }),
+    Column::new("Duration", job_duration),
+    Column::AGE,
+];
 
 fn job_status(job: &Job) -> &'static str {
     let Some(status) = &job.status else {
@@ -932,47 +889,37 @@ pub fn job_detail(job: &Job, now: Timestamp) -> DetailModel {
 }
 
 pub fn project_cronjobs(cronjobs: &[&CronJob], now: Timestamp) -> ResourceTable {
-    let rows = cronjobs
-        .iter()
-        .map(|cronjob| {
-            let spec = &cronjob.spec;
-            let status = cronjob.status.as_ref();
-            ResourceRow {
-                key: ObjectKey::of(*cronjob),
-                cells: vec![
-                    cronjob.metadata.name.clone().unwrap_or_default(),
-                    cronjob_schedule(cronjob),
-                    spec.time_zone.clone().unwrap_or_default(),
-                    (!spec.suspend.unwrap_or(false)).to_string(),
-                    status
-                        .and_then(|status| status.active.as_ref())
-                        .map(|jobs| jobs.len())
-                        .unwrap_or_default()
-                        .to_string(),
-                    status
-                        .and_then(|status| status.last_schedule_time.as_ref())
-                        .map(|time| format_age(time.0, now))
-                        .unwrap_or_else(|| "-".to_string()),
-                    age_of(&cronjob.metadata, now),
-                ],
-            }
-        })
-        .collect();
-    ResourceTable {
-        columns: [
-            "Name",
-            "Schedule",
-            "Timezone",
-            "Resumed",
-            "Active",
-            "Last schedule",
-            "Age",
-        ]
-        .map(String::from)
-        .to_vec(),
-        rows,
-    }
+    list_table(CRONJOB_COLUMNS, cronjobs, now)
 }
+
+const CRONJOB_COLUMNS: &[Column<CronJob>] = &[
+    Column::NAME,
+    Column::new("Schedule", |cronjob, _| cronjob_schedule(cronjob)),
+    Column::new("Timezone", |cronjob, _| {
+        cronjob.spec.time_zone.clone().unwrap_or_default()
+    }),
+    Column::new("Resumed", |cronjob, _| {
+        (!cronjob.spec.suspend.unwrap_or(false)).to_string()
+    }),
+    Column::new("Active", |cronjob, _| {
+        cronjob
+            .status
+            .as_ref()
+            .and_then(|status| status.active.as_ref())
+            .map(|jobs| jobs.len())
+            .unwrap_or_default()
+            .to_string()
+    }),
+    Column::new("Last schedule", |cronjob, now| {
+        cronjob
+            .status
+            .as_ref()
+            .and_then(|status| status.last_schedule_time.as_ref())
+            .map(|time| format_age(time.0, now))
+            .unwrap_or_else(|| "-".to_string())
+    }),
+    Column::AGE,
+];
 
 fn cronjob_schedule(cronjob: &CronJob) -> String {
     if cronjob_never_run(cronjob) {
