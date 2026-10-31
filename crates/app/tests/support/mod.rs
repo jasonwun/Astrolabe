@@ -158,8 +158,7 @@ pub fn open_detail(
 ) {
     ui.namespaces(&["default"]);
     ui.settle();
-    let nav = format!("nav-{}", kind.registration().label.to_lowercase());
-    ui.frame(|window, cx| window.click(nav, cx));
+    ui.frame(|window, cx| window.click(kind.nav_id(), cx));
     snapshot(watch, objects);
     ui.settle();
     ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));

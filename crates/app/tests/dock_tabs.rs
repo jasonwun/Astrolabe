@@ -134,7 +134,7 @@ fn closes_a_child_tab(cx: &mut TestAppContext, open_child: impl FnOnce(&mut Ui<'
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     snapshot(&mut pods, vec![pod()]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/web-1", cx));

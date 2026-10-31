@@ -48,7 +48,7 @@ fn global_event_rows_open_the_involved_object(cx: &mut TestAppContext) {
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-events", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
     snapshot(&mut events, vec![event("web.started", "Pod", "web-1")]);
     snapshot(&mut pods, vec![pod()]);
     ui.settle();
@@ -76,7 +76,7 @@ fn events_open_cluster_scoped_namespaces_without_a_namespace_key(cx: &mut TestAp
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-events", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
     snapshot(
         &mut events,
         vec![event("namespace.active", "Namespace", "default")],
@@ -96,7 +96,7 @@ fn an_unopenable_involved_object_reports_why(cx: &mut TestAppContext) {
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-events", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
     snapshot(&mut events, vec![event("node.started", "Node", "node-a")]);
     ui.settle();
     ui.frame(|window, cx| window.click("row-default/node.started", cx));
@@ -126,7 +126,7 @@ fn a_custom_kind_with_a_builtin_name_is_not_opened_as_builtin(cx: &mut TestAppCo
     );
     ui.namespaces(&["default"]);
     ui.settle();
-    ui.frame(|window, cx| window.click("nav-events", cx));
+    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
     let mut custom = event("custom.job", "Job", "custom");
     custom.data["involvedObject"]["apiVersion"] = serde_json::json!("example.com/v1");
     snapshot(&mut events, vec![custom]);
