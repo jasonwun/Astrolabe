@@ -6,7 +6,6 @@
 
 use std::collections::BTreeSet;
 
-use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -72,8 +71,8 @@ impl ResourceDetailPanel {
     pub fn new(session: Entity<Session>, target: DetailTarget, cx: &mut Context<Self>) -> Self {
         let needed = watches(&target);
         session.update(cx, |session, cx| {
-            for (kind, namespace) in &needed {
-                session.watch_builtin(*kind, namespace, cx);
+            for watch in &needed {
+                session.watch_builtin(watch.kind, &watch.namespace, cx);
             }
         });
         cx.observe(&session, |panel, session, cx| {
@@ -101,12 +100,7 @@ impl ResourceDetailPanel {
     }
 
     fn resolve(&self, cx: &App) -> Option<Resolved> {
-        self.resolve_at(clock::now(cx), cx)
-    }
-
-    /// [`Self::resolve`] with ages projected from `now`.
-    fn resolve_at(&self, now: Timestamp, cx: &App) -> Option<Resolved> {
-        detail::resolve(&self.target, self.session.read(cx), now)
+        detail::resolve(&self.target, self.session.read(cx), clock::now(cx))
     }
 
     fn display_name(&self) -> String {
@@ -667,7 +661,9 @@ impl Panel for ResourceDetailPanel {
 impl Render for ResourceDetailPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = clock::now(cx);
-        let (resolved, next_tick) = track_ages(now, || self.resolve_at(now, cx));
+        let (resolved, next_tick) = track_ages(now, || {
+            detail::resolve(&self.target, self.session.read(cx), now)
+        });
         self.tick = cx.spawn(async move |panel, cx| {
             cx.background_executor().timer(next_tick).await;
             panel.update(cx, |_, cx| cx.notify()).ok();

@@ -5,7 +5,7 @@
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::detail::{DetailTarget, RelatedOutcome, Resolved, resolve, watches};
+use astrolabe::detail::{DetailTarget, NeededWatch, RelatedOutcome, Resolved, resolve, watches};
 use astrolabe::session::{ScriptedCluster, Session, WatchError};
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
@@ -27,7 +27,9 @@ fn target(kind: BuiltinKind, name: &str) -> DetailTarget {
 }
 
 /// A session on a scripted cluster with `target`'s needed watches started,
-/// and the senders of those watches, shown kind first.
+/// as the detail panel starts them, and the senders of those watches: the
+/// shown kind's, then the Related kind's. `target`'s kind must have a
+/// Related section.
 fn session(
     target: &DetailTarget,
     cx: &mut TestAppContext,
@@ -37,16 +39,22 @@ fn session(
     Sender<DynamicObject>,
 ) {
     let needed = watches(target);
+    let [shown_watch, related_watch] = needed.as_slice() else {
+        panic!("expected a shown and a related watch, got {needed:?}");
+    };
     let (_namespaces, namespace_events) = mpsc::channel(32);
     let (shown, shown_events) = mpsc::channel(32);
     let (related, related_events) = mpsc::channel(32);
     let cluster = ScriptedCluster::new(namespace_events)
-        .watch(key(needed[0].0, &needed[0].1), shown_events)
-        .watch(key(needed[1].0, &needed[1].1), related_events);
+        .watch(key(shown_watch.kind, &shown_watch.namespace), shown_events)
+        .watch(
+            key(related_watch.kind, &related_watch.namespace),
+            related_events,
+        );
     let session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", "default", cluster, cx)));
     session.update(cx, |session, cx| {
-        for (kind, namespace) in &needed {
-            session.watch_builtin(*kind, namespace, cx);
+        for watch in &needed {
+            session.watch_builtin(watch.kind, &watch.namespace, cx);
         }
     });
     (session, shown, related)
@@ -106,8 +114,14 @@ fn a_service_detail_needs_its_own_and_its_endpoint_slices_watch() {
     assert_eq!(
         watches(&target),
         [
-            (BuiltinKind::Services, "team-a".to_string()),
-            (BuiltinKind::EndpointSlices, "team-a".to_string()),
+            NeededWatch {
+                kind: BuiltinKind::Services,
+                namespace: "team-a".to_string(),
+            },
+            NeededWatch {
+                kind: BuiltinKind::EndpointSlices,
+                namespace: "team-a".to_string(),
+            },
         ]
     );
 }

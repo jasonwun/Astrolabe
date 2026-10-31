@@ -121,11 +121,17 @@ pub fn forbidden_message(label: &str) -> String {
     format!("No permission to list {} here", label.to_lowercase())
 }
 
-/// The built-in watches `target` reads, as (kind, namespace): the shown
-/// kind's and its Related kind's, in the target's namespace. Other targets
-/// read the session's own watches, or a custom kind's watch that follows its
-/// preferred version.
-pub fn watches(target: &DetailTarget) -> Vec<(BuiltinKind, String)> {
+/// A built-in watch a detail reads: `kind`'s objects in `namespace`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NeededWatch {
+    pub kind: BuiltinKind,
+    pub namespace: String,
+}
+
+/// The built-in watches `target` reads: the shown kind's, then its Related
+/// kind's, in the target's namespace. Other targets read the session's own
+/// watches, or a custom kind's watch that follows its preferred version.
+pub fn watches(target: &DetailTarget) -> Vec<NeededWatch> {
     let DetailTarget::Builtin { kind, key } = target else {
         return Vec::new();
     };
@@ -139,7 +145,10 @@ pub fn watches(target: &DetailTarget) -> Vec<(BuiltinKind, String)> {
                 .as_ref()
                 .map(|related| related.kind),
         )
-        .map(|kind| (kind, namespace.clone()))
+        .map(|kind| NeededWatch {
+            kind,
+            namespace: namespace.clone(),
+        })
         .collect()
 }
 
