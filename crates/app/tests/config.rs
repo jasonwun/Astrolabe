@@ -1,20 +1,33 @@
 //! ConfigMaps and Secrets on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
-use astrolabe::projection::SummaryTable;
-use astrolabe::projection::config::{
-    Revealable, SecretKey, config_map_detail, project_config_maps, project_secrets, secret_detail,
-};
-use astrolabe_kube::k8s_openapi::api::core::v1::{ConfigMap, Secret};
+use astrolabe::builtin::BuiltinKind;
+use astrolabe::projection::config::{Revealable, SecretKey};
+use astrolabe::projection::{DetailModel, ResourceTable, SummaryTable};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::kube::core::DynamicObject;
+use support::object;
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
 }
 
+/// Lists `raws` through `kind`'s Registration, as the app does.
+fn list(kind: BuiltinKind, raws: Vec<serde_json::Value>) -> ResourceTable {
+    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
+    (kind.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
+}
+
+/// Projects `raw` through `kind`'s Registration, as the app does.
+fn detail(kind: BuiltinKind, raw: serde_json::Value) -> DetailModel {
+    (kind.registration().detail)(&object(raw), now()).unwrap()
+}
+
 /// Synthetic ConfigMap (plausible shape, not captured from a server).
-fn app_config() -> ConfigMap {
-    serde_json::from_value(serde_json::json!({
+fn app_config() -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "data": {
@@ -24,15 +37,14 @@ fn app_config() -> ConfigMap {
             "long": "x".repeat(100)
         },
         "binaryData": {"logo.png": "iVBORw0KGgo="}
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn config_maps_list_names_their_data_keys() {
     let config = app_config();
 
-    let table = project_config_maps(&[&config], now());
+    let table = list(BuiltinKind::ConfigMaps, vec![config]);
 
     assert_eq!(table.headers(), ["Name", "Keys", "Age"]);
     assert_eq!(
@@ -43,7 +55,7 @@ fn config_maps_list_names_their_data_keys() {
 
 #[test]
 fn a_config_map_detail_previews_each_value() {
-    let model = config_map_detail(&app_config(), now());
+    let model = detail(BuiltinKind::ConfigMaps, app_config());
 
     assert_eq!(model.title, "ConfigMap default/app");
     assert_eq!(
@@ -64,32 +76,31 @@ fn a_config_map_detail_previews_each_value() {
 #[test]
 fn a_config_map_without_data_has_no_data_table() {
     let mut config = app_config();
-    config.data = None;
-    config.immutable = Some(true);
-    let model = config_map_detail(&config, now());
+    config.as_object_mut().unwrap().remove("data");
+    config["immutable"] = serde_json::json!(true);
+    let model = detail(BuiltinKind::ConfigMaps, config);
     assert!(model.status.is_empty());
     assert!(model.tables.is_empty());
 }
 
 /// Synthetic Secret (plausible shape, not captured from a server):
 /// `password` is "hunter2", `cert` is not UTF-8.
-fn db_secret() -> Secret {
-    serde_json::from_value(serde_json::json!({
+fn db_secret() -> serde_json::Value {
+    serde_json::json!({
         "apiVersion": "v1", "kind": "Secret",
         "metadata": {"name": "db", "namespace": "default", "uid": "uid-secret",
                      "creationTimestamp": "2026-10-22T11:00:00Z",
                      "labels": {"app": "db", "tier": "data"}},
         "type": "Opaque",
         "data": {"password": "aHVudGVyMg==", "cert": "/w=="}
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn secrets_list_follows_freelens_columns() {
     let secret = db_secret();
 
-    let table = project_secrets(&[&secret], now());
+    let table = list(BuiltinKind::Secrets, vec![secret]);
 
     assert_eq!(table.headers(), ["Name", "Keys", "Type", "Age"]);
     assert_eq!(
@@ -100,7 +111,7 @@ fn secrets_list_follows_freelens_columns() {
 
 #[test]
 fn a_secret_detail_keeps_key_values_out_of_debug() {
-    let model = secret_detail(&db_secret(), now());
+    let model = detail(BuiltinKind::Secrets, db_secret());
 
     assert_eq!(model.title, "Secret default/db");
     assert_eq!(model.status, [("Type".to_string(), "Opaque".to_string())]);
@@ -125,7 +136,7 @@ fn a_secret_detail_keeps_key_values_out_of_debug() {
 
 #[test]
 fn a_secret_yaml_preview_masks_its_values_but_edit_gets_them() {
-    let model = secret_detail(&db_secret(), now());
+    let model = detail(BuiltinKind::Secrets, db_secret());
 
     assert!(!model.yaml.contains("aHVudGVyMg=="), "{}", model.yaml);
     assert!(model.yaml.contains("password: <hidden>"), "{}", model.yaml);
@@ -145,7 +156,7 @@ fn a_revealable_value_never_shows_in_debug() {
 
 #[test]
 fn a_revealed_value_is_decoded() {
-    let model = secret_detail(&db_secret(), now());
+    let model = detail(BuiltinKind::Secrets, db_secret());
     let revealed: Vec<(&str, &str)> = model
         .secret_keys
         .iter()
@@ -163,18 +174,12 @@ fn a_revealed_value_is_decoded() {
 fn a_secret_last_applied_annotation_is_masked_too() {
     let mut secret = db_secret();
     let applied = r#"{"apiVersion":"v1","data":{"password":"aHVudGVyMg=="},"kind":"Secret"}"#;
-    secret.metadata.annotations = Some(
-        [
-            (
-                "kubectl.kubernetes.io/last-applied-configuration".to_string(),
-                applied.to_string(),
-            ),
-            ("team".to_string(), "db".to_string()),
-        ]
-        .into(),
-    );
+    secret["metadata"]["annotations"] = serde_json::json!({
+        "kubectl.kubernetes.io/last-applied-configuration": applied,
+        "team": "db"
+    });
 
-    let model = secret_detail(&secret, now());
+    let model = detail(BuiltinKind::Secrets, secret);
 
     assert_eq!(
         model.annotations,

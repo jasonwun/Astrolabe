@@ -2,16 +2,13 @@
 //! Freelens 088d085's columns and detail fields.
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::network::{
-    ingress_detail, project_ingresses, project_services, service_ports,
-};
+use astrolabe::projection::network::service_ports;
 use astrolabe::projection::workloads::ForwardPort;
 use astrolabe::projection::{
     DetailField, DetailItem, DetailModel, DetailSection, DetailValue, Forward, ForwardTo,
-    SummaryTable,
+    ResourceTable, SummaryTable,
 };
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
-use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use support::object;
@@ -59,14 +56,21 @@ fn node_port_object() -> serde_json::Value {
     )
 }
 
-fn cells(service: &Service) -> Vec<String> {
-    project_services(&[service], now()).rows[0].cells.clone()
+fn cells(service: serde_json::Value) -> Vec<String> {
+    list(BuiltinKind::Services, vec![service]).rows[0]
+        .cells
+        .clone()
 }
 
-/// Projects `raw` through the Services Registration, as the app does.
-fn detail(raw: serde_json::Value) -> DetailModel {
-    let object: DynamicObject = object(raw);
-    (BuiltinKind::Services.registration().detail)(&object, now()).unwrap()
+/// Lists `raws` through `kind`'s Registration, as the app does.
+fn list(kind: BuiltinKind, raws: Vec<serde_json::Value>) -> ResourceTable {
+    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
+    (kind.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
+}
+
+/// Projects `raw` through `kind`'s Registration, as the app does.
+fn detail(kind: BuiltinKind, raw: serde_json::Value) -> DetailModel {
+    (kind.registration().detail)(&object(raw), now()).unwrap()
 }
 
 fn section<'a>(sections: &'a [DetailSection], title: &str) -> Option<&'a DetailSection> {
@@ -97,9 +101,9 @@ fn value(field: Option<&DetailField>) -> Option<&str> {
 
 #[test]
 fn services_list_follows_freelens_columns() {
-    let service = node_port_service();
+    let service = node_port_object();
 
-    let table = project_services(&[&service], now());
+    let table = list(BuiltinKind::Services, vec![service]);
 
     assert_eq!(
         table.headers(),
@@ -129,11 +133,11 @@ fn services_list_follows_freelens_columns() {
 
 #[test]
 fn a_bare_service_shows_blanks_and_a_dash() {
-    let bare = service(
+    let bare = service_object(
         serde_json::json!({"clusterIP": "None"}),
         serde_json::json!({}),
     );
-    let row = cells(&bare);
+    let row = cells(bare);
     assert_eq!(row[1], "-");
     assert_eq!(row[2..5], ["None", "-", ""]);
 }
@@ -141,7 +145,7 @@ fn a_bare_service_shows_blanks_and_a_dash() {
 #[test]
 fn a_port_names_its_target_only_when_it_differs() {
     let ports = |ports: serde_json::Value| {
-        cells(&service(
+        cells(service_object(
             serde_json::json!({"type": "ClusterIP", "ports": ports}),
             serde_json::json!({}),
         ))[4]
@@ -160,7 +164,7 @@ fn a_port_names_its_target_only_when_it_differs() {
 #[test]
 fn external_ips_prefer_the_load_balancer() {
     let external = |spec: serde_json::Value, status: serde_json::Value| {
-        let row = cells(&service(spec, status));
+        let row = cells(service_object(spec, status));
         (row[3].clone(), row[6].clone())
     };
     let pair = |ip: &str, status: &str| (ip.to_string(), status.to_string());
@@ -209,7 +213,7 @@ fn external_ips_prefer_the_load_balancer() {
 
 #[test]
 fn a_service_detail_separates_base_fields_from_connection() {
-    let model = detail(node_port_object());
+    let model = detail(BuiltinKind::Services, node_port_object());
 
     assert_eq!(model.title, "Service default/web");
     assert_eq!(
@@ -241,10 +245,13 @@ fn a_service_detail_separates_base_fields_from_connection() {
 
 #[test]
 fn connection_array_fields_follow_array_length() {
-    let model = detail(service_object(
-        serde_json::json!({"clusterIPs": [""], "ipFamilies": [""]}),
-        serde_json::json!({}),
-    ));
+    let model = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({"clusterIPs": [""], "ipFamilies": [""]}),
+            serde_json::json!({}),
+        ),
+    );
     let connection = section(&model.sections, "Connection").unwrap();
     assert_eq!(value(field(connection, "Cluster IPs")), Some(""));
     assert_eq!(value(field(connection, "IP families")), Some(""));
@@ -252,16 +259,19 @@ fn connection_array_fields_follow_array_length() {
 
 #[test]
 fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
-    let full = detail(service_object(
-        serde_json::json!({
-            "type": "ClusterIP", "sessionAffinity": "ClientIP",
-            "internalTrafficPolicy": "Local",
-            "trafficDistribution": "PreferClose",
-            "publishNotReadyAddresses": false,
-            "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": 150}}
-        }),
-        serde_json::json!({}),
-    ));
+    let full = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({
+                "type": "ClusterIP", "sessionAffinity": "ClientIP",
+                "internalTrafficPolicy": "Local",
+                "trafficDistribution": "PreferClose",
+                "publishNotReadyAddresses": false,
+                "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": 150}}
+            }),
+            serde_json::json!({}),
+        ),
+    );
     assert_eq!(
         full.status,
         [
@@ -276,10 +286,13 @@ fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
     let affinity = section(&full.sections, "Session Affinity Config").unwrap();
     assert_eq!(value(field(affinity, "Client IP Timeout")), Some("2m 30s"));
 
-    let bare = detail(service_object(
-        serde_json::json!({"type": "ClusterIP", "clusterIP": "", "ipFamilyPolicy": ""}),
-        serde_json::json!({}),
-    ));
+    let bare = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({"type": "ClusterIP", "clusterIP": "", "ipFamilyPolicy": ""}),
+            serde_json::json!({}),
+        ),
+    );
     assert_eq!(
         bare.status,
         [
@@ -295,10 +308,13 @@ fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
             .is_empty()
     );
 
-    let no_client_ip = detail(service_object(
-        serde_json::json!({"sessionAffinityConfig": {}}),
-        serde_json::json!({}),
-    ));
+    let no_client_ip = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({"sessionAffinityConfig": {}}),
+            serde_json::json!({}),
+        ),
+    );
     assert!(
         section(&no_client_ip.sections, "Session Affinity Config")
             .unwrap()
@@ -309,26 +325,29 @@ fn optional_base_fields_and_session_affinity_config_follow_their_presence() {
 
 #[test]
 fn a_load_balancer_detail_shows_optional_fields_and_ingress_port_tables() {
-    let model = detail(service_object(
-        serde_json::json!({
-            "type": "LoadBalancer",
-            "allocateLoadBalancerNodePorts": false,
-            "loadBalancerIP": "9.9.9.9",
-            "loadBalancerClass": "example.com/internal",
-            "externalTrafficPolicy": "Local",
-            "healthCheckNodePort": 30000
-        }),
-        serde_json::json!({"loadBalancer": {"ingress": [
-            {
-                "hostname": "lb.example", "ip": "9.9.9.9", "ipMode": "VIP",
-                "ports": [
-                    {"port": 80},
-                    {"port": 53, "protocol": "UDP", "error": "PortUnavailable"}
-                ]
-            },
-            {"hostname": "second.example"}
-        ]}}),
-    ));
+    let model = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({
+                "type": "LoadBalancer",
+                "allocateLoadBalancerNodePorts": false,
+                "loadBalancerIP": "9.9.9.9",
+                "loadBalancerClass": "example.com/internal",
+                "externalTrafficPolicy": "Local",
+                "healthCheckNodePort": 30000
+            }),
+            serde_json::json!({"loadBalancer": {"ingress": [
+                {
+                    "hostname": "lb.example", "ip": "9.9.9.9", "ipMode": "VIP",
+                    "ports": [
+                        {"port": 80},
+                        {"port": 53, "protocol": "UDP", "error": "PortUnavailable"}
+                    ]
+                },
+                {"hostname": "second.example"}
+            ]}}),
+        ),
+    );
     let balancer = section(&model.sections, "Load Balancer").unwrap();
     let mut expected = [
         ("Allocate Load Balancer Node Ports", "false"),
@@ -369,17 +388,23 @@ fn a_load_balancer_detail_shows_optional_fields_and_ingress_port_tables() {
     );
     assert!(field(connection, "Cluster IPs").is_none());
 
-    let cluster_ip = detail(service_object(
-        serde_json::json!({"type": "ClusterIP", "loadBalancerIP": "9.9.9.9"}),
-        serde_json::json!({"loadBalancer": {"ingress": [{"ip": "9.9.9.9"}]}}),
-    ));
+    let cluster_ip = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({"type": "ClusterIP", "loadBalancerIP": "9.9.9.9"}),
+            serde_json::json!({"loadBalancer": {"ingress": [{"ip": "9.9.9.9"}]}}),
+        ),
+    );
     assert!(section(&cluster_ip.sections, "Load Balancer").is_none());
 }
 
 #[test]
 fn external_ips_use_service_port_protocols_and_external_name_fallback() {
     let external = |spec: serde_json::Value| {
-        let model = detail(service_object(spec, serde_json::json!({})));
+        let model = detail(
+            BuiltinKind::Services,
+            service_object(spec, serde_json::json!({})),
+        );
         let connection = section(&model.sections, "Connection").unwrap();
         field(connection, "External IPs").cloned()
     };
@@ -438,7 +463,7 @@ fn load_balancer_conditions_follow_their_presence() {
             "message": "load balancer is ready"
         }]}}
     });
-    let model = detail(raw);
+    let model = detail(BuiltinKind::Services, raw);
     let conditions = section(&model.sections, "Conditions").unwrap();
     assert_eq!(
         fields(conditions),
@@ -452,10 +477,13 @@ fn load_balancer_conditions_follow_their_presence() {
         .map(DetailField::from)
     );
 
-    let without = detail(service_object(
-        serde_json::json!({"type": "LoadBalancer"}),
-        serde_json::json!({"loadBalancer": {}}),
-    ));
+    let without = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({"type": "LoadBalancer"}),
+            serde_json::json!({"loadBalancer": {}}),
+        ),
+    );
     assert!(section(&without.sections, "Conditions").is_none());
     assert!(
         section(&without.sections, "Load Balancer")
@@ -474,7 +502,7 @@ fn topology_keys_are_retained_from_the_original_service() {
             "topologyKeys": ["kubernetes.io/hostname", "topology.kubernetes.io/zone"]
         }
     });
-    let model = detail(raw);
+    let model = detail(BuiltinKind::Services, raw);
     assert_eq!(
         model.status,
         [
@@ -487,10 +515,13 @@ fn topology_keys_are_retained_from_the_original_service() {
         ]
     );
 
-    let without = detail(service_object(
-        serde_json::json!({"type": "ClusterIP"}),
-        serde_json::json!({}),
-    ));
+    let without = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({"type": "ClusterIP"}),
+            serde_json::json!({}),
+        ),
+    );
     assert!(
         !without
             .status
@@ -529,7 +560,7 @@ fn service_ports_offer_tcp_ports_with_their_target() {
 
 #[test]
 fn a_service_detail_forwards_to_its_tcp_ports() {
-    let model = detail(node_port_object());
+    let model = detail(BuiltinKind::Services, node_port_object());
 
     assert_eq!(
         model.forward,
@@ -552,8 +583,8 @@ fn a_service_detail_forwards_to_its_tcp_ports() {
 }
 
 /// Synthetic Ingress (plausible shape, not captured from a server).
-fn web_ingress() -> Ingress {
-    serde_json::from_value(serde_json::json!({
+fn web_ingress() -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-ing",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {
@@ -578,15 +609,14 @@ fn web_ingress() -> Ingress {
             {"ip": "172.18.0.2"},
             {"ip": "172.18.0.3", "hostname": "lb.example"}
         ]}}
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn ingresses_list_lens_columns() {
     let ingress = web_ingress();
 
-    let table = project_ingresses(&[&ingress], now());
+    let table = list(BuiltinKind::Ingresses, vec![ingress]);
 
     assert_eq!(table.headers(), ["Name", "LoadBalancers", "Rules", "Age"]);
     assert_eq!(
@@ -604,31 +634,31 @@ fn ingresses_list_lens_columns() {
 
 #[test]
 fn an_ingress_without_tls_routes_over_http() {
-    let ingress: Ingress = serde_json::from_value(serde_json::json!({
+    let ingress = serde_json::json!({
         "metadata": {"name": "any"},
         "spec": {"rules": [{"host": "a.example", "http": {"paths": [
             {"path": "/api", "pathType": "Prefix",
              "backend": {"service": {"name": "api", "port": {"number": 80}}}}
         ]}}]}
-    }))
-    .unwrap();
-    let row = project_ingresses(&[&ingress], now()).rows[0].cells.clone();
+    });
+    let row = list(BuiltinKind::Ingresses, vec![ingress.clone()]).rows[0]
+        .cells
+        .clone();
     assert_eq!(row[1..3], ["", "http://a.example/api ⇢ api:80"]);
     assert_eq!(
-        ingress_detail(&ingress, now()).status,
+        detail(BuiltinKind::Ingresses, ingress).status,
         [("Ports".to_string(), "80".to_string())]
     );
 }
 
 #[test]
 fn an_ingress_without_rules_listens_on_its_default_backend_port() {
-    let ingress: Ingress = serde_json::from_value(serde_json::json!({
+    let ingress = serde_json::json!({
         "metadata": {"name": "any"},
         "spec": {"defaultBackend": {"service": {"name": "fallback", "port": {"number": 8080}}}}
-    }))
-    .unwrap();
+    });
     assert_eq!(
-        ingress_detail(&ingress, now()).status,
+        detail(BuiltinKind::Ingresses, ingress).status,
         [
             ("Ports".to_string(), "8080".to_string()),
             ("Service".to_string(), "fallback:8080".to_string()),
@@ -638,7 +668,7 @@ fn an_ingress_without_rules_listens_on_its_default_backend_port() {
 
 #[test]
 fn an_ingress_detail_follows_lens() {
-    let model = ingress_detail(&web_ingress(), now());
+    let model = detail(BuiltinKind::Ingresses, web_ingress());
 
     assert_eq!(model.title, "Ingress default/web");
     assert_eq!(

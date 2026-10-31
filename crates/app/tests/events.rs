@@ -1,17 +1,33 @@
 //! The Events list component (#17): kubectl's columns, newest first, and
 //! the involvedObject filter a related section applies.
 
-use astrolabe::projection::events::{event_involves, project_events};
+use astrolabe::builtin::BuiltinKind;
+use astrolabe::projection::ResourceTable;
+use astrolabe::projection::events::event_involves;
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Event, Pod};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::kube::core::DynamicObject;
+use support::object;
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
 }
 
-/// Synthetic Event (plausible shape, not captured from a server).
+/// Lists `raws` through the Events Registration, as the app does.
+fn list(raws: Vec<serde_json::Value>) -> ResourceTable {
+    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
+    (BuiltinKind::Events.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
+}
+
 fn event(name: &str, extra: serde_json::Value) -> Event {
+    serde_json::from_value(event_json(name, extra)).unwrap()
+}
+
+/// Synthetic Event (plausible shape, not captured from a server).
+fn event_json(name: &str, extra: serde_json::Value) -> serde_json::Value {
     let mut value = serde_json::json!({
         "apiVersion": "v1", "kind": "Event",
         "metadata": {"name": name, "namespace": "default",
@@ -23,7 +39,7 @@ fn event(name: &str, extra: serde_json::Value) -> Event {
         .as_object_mut()
         .unwrap()
         .extend(extra.as_object().unwrap().clone());
-    serde_json::from_value(value).unwrap()
+    value
 }
 
 /// Synthetic Pod (plausible shape, not captured from a server).
@@ -36,7 +52,7 @@ fn pod(name: &str, uid: Option<&str>) -> Pod {
 
 #[test]
 fn events_list_kubectl_columns_newest_first() {
-    let backoff = event(
+    let backoff = event_json(
         "web-1.backoff",
         serde_json::json!({
             "type": "Warning", "reason": "BackOff",
@@ -46,14 +62,14 @@ fn events_list_kubectl_columns_newest_first() {
             "lastTimestamp": "2026-10-22T11:58:00Z",
         }),
     );
-    let pulled = event(
+    let pulled = event_json(
         "web-1.pulled",
         serde_json::json!({
             "type": "Normal", "reason": "Pulled", "message": "Pulled image nginx",
             "firstTimestamp": "2026-10-22T11:30:00Z",
         }),
     );
-    let table = project_events(&[&pulled, &backoff], now());
+    let table = list(vec![pulled, backoff]);
     assert_eq!(
         table.headers(),
         [
@@ -97,7 +113,7 @@ fn events_list_kubectl_columns_newest_first() {
 #[test]
 fn a_series_event_reads_its_series() {
     // events.k8s.io-style: eventTime instead of firstTimestamp, a series.
-    let probe = event(
+    let probe = event_json(
         "web-1.unhealthy",
         serde_json::json!({
             "type": "Warning", "reason": "Unhealthy", "count": 1,
@@ -105,25 +121,25 @@ fn a_series_event_reads_its_series() {
             "series": {"count": 40, "lastObservedTime": "2026-10-22T11:59:30.000000Z"},
         }),
     );
-    let table = project_events(&[&probe], now());
+    let table = list(vec![probe]);
     assert_eq!(table.rows[0].cells[4], "40");
     assert_eq!(table.rows[0].cells[5], "30s");
 }
 
 #[test]
 fn an_event_without_any_time_is_unknown() {
-    let bare = event("bare", serde_json::json!({}));
-    let table = project_events(&[&bare], now());
+    let bare = event_json("bare", serde_json::json!({}));
+    let table = list(vec![bare]);
     assert_eq!(table.rows[0].cells[5], "<unknown>");
 }
 
 #[test]
 fn an_unnamed_involved_object_shows_its_kind() {
-    let node = event(
+    let node = event_json(
         "node",
         serde_json::json!({"involvedObject": {"kind": "Node"}}),
     );
-    assert_eq!(project_events(&[&node], now()).rows[0].cells[2], "node");
+    assert_eq!(list(vec![node]).rows[0].cells[2], "node");
 }
 
 #[test]
