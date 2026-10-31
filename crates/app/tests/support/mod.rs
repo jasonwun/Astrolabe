@@ -3,7 +3,9 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
+use std::io::Write;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
@@ -20,6 +22,7 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, VisualTestContext};
+use tracing_subscriber::util::SubscriberInitExt as _;
 
 pub type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
 
@@ -214,5 +217,54 @@ impl Ui<'_> {
             window.render_frame(cx);
             f(window, cx)
         })
+    }
+}
+
+/// Shared buffer behind a `tracing` subscriber, so tests can assert on the
+/// log lines a developer would see via RUST_LOG.
+#[derive(Clone, Default)]
+pub struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+impl LogCapture {
+    /// Capture every thread's logs for the rest of the test binary; only
+    /// the binary's first install captures anything.
+    pub fn install(&self) {
+        let _ = self.subscriber().try_init();
+    }
+
+    /// Capture what `f` logs on this thread.
+    pub fn scoped<R>(&self, f: impl FnOnce() -> R) -> R {
+        tracing::subscriber::with_default(self.subscriber(), f)
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+
+    fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
+        tracing_subscriber::fmt()
+            .with_env_filter("astrolabe=debug,astrolabe_kube=debug,kube_runtime=debug")
+            .with_ansi(false)
+            .with_writer(self.clone())
+            .finish()
+    }
+}
+
+impl Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+    type Writer = LogCapture;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
     }
 }

@@ -5,14 +5,22 @@ sees: invisible text (#52) and a tab with no close button (#51) both passed
 the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
-Run this check after review fixes, on a branch rebased onto
-`origin/main`: a check on a stale base is redone once main's UI changes
-land (#75). Done when every view the final change touches has been
+Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the
 change adds (populated, empty, forbidden), each screenshot has been read
 back, each is embedded in the PR, and every out-of-scope problem the
 check finds is a `needs-triage` issue linked from the PR body. Repeat the affected views and replace their evidence after
 any later UI change, so the PR shows the final UI diff.
+
+## 0. Rebase onto main
+
+A check on a stale base is redone once main's UI changes land (#75,
+#111):
+
+```sh
+git fetch origin main && git rebase origin/main
+git log --oneline HEAD..origin/main    # done when this prints nothing
+```
 
 ## 1. Seed the cluster
 

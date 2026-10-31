@@ -15,6 +15,9 @@ use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, TestAppContext};
+use support::LogCapture;
+
+mod support;
 
 fn namespace(name: &str) -> Namespace {
     Namespace {
@@ -414,37 +417,6 @@ fn pump_until(
         }
         assert!(Instant::now() < deadline, "timed out waiting for {what}");
         thread::sleep(Duration::from_millis(10));
-    }
-}
-
-/// Shared buffer behind a `tracing` subscriber, so tests can assert on the
-/// log lines a developer would see via RUST_LOG.
-#[derive(Clone, Default)]
-struct LogCapture(Arc<Mutex<Vec<u8>>>);
-
-impl LogCapture {
-    fn install(&self) {
-        let writer = self.clone();
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter("astrolabe=debug,astrolabe_kube=debug,kube_runtime=debug")
-            .with_ansi(false)
-            .with_writer(move || writer.clone())
-            .try_init();
-    }
-
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
-}
-
-impl Write for LogCapture {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 
