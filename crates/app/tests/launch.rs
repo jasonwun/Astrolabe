@@ -2,15 +2,12 @@
 //! chosen namespace at launch; sessions opened later start in `default`.
 
 use astrolabe::builtin::BuiltinKind;
-use std::io::Write;
-use std::sync::{Arc, Mutex};
-
 use astrolabe::session::{NamespaceWatchMessage, ObjectWatchMessage, ScriptedCluster, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{TestAppContext, VisualTestContext};
-use support::{key_on, object, snapshot};
+use support::{LogCapture, key_on, object, snapshot};
 
 mod support;
 
@@ -100,14 +97,8 @@ fn first_namespaced_watch_of_the_launch_session_uses_the_preselected_namespace(
 fn launch_falls_back_to_the_first_cluster_when_the_preselected_one_is_unknown(
     cx: &mut TestAppContext,
 ) {
-    let log = Log::default();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(log.clone())
-        .with_ansi(false)
-        .finish();
-    let (cx, _senders) = tracing::subscriber::with_default(subscriber, || {
-        launch(cx, preselect("kind-missing", "team-a"), Vec::new())
-    });
+    let log = LogCapture::default();
+    let (cx, _senders) = log.scoped(|| launch(cx, preselect("kind-missing", "team-a"), Vec::new()));
     cx.update(|window, cx| {
         window.render_frame(cx);
         assert!(window.try_find_by_label("kind-a: Connecting").is_some());
@@ -117,35 +108,6 @@ fn launch_falls_back_to_the_first_cluster_when_the_preselected_one_is_unknown(
     let log = log.text();
     assert!(log.contains("WARN"), "{log}");
     assert!(log.contains("ASTROLABE_CLUSTER=kind-missing"), "{log}");
-}
-
-/// Collects what a `tracing` subscriber writes.
-#[derive(Clone, Default)]
-struct Log(Arc<Mutex<Vec<u8>>>);
-
-impl Log {
-    fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
-    }
-}
-
-impl Write for Log {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Log {
-    type Writer = Log;
-
-    fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
-    }
 }
 
 #[gpui_kit::test]

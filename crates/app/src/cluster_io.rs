@@ -140,6 +140,8 @@ pub struct ScriptedCluster {
 }
 
 impl ScriptedCluster {
+    /// Keep the sender behind `namespaces` alive while the session should
+    /// stay connected: dropping it ends the watch, which reads as Stale.
     pub fn new(namespaces: mpsc::Receiver<NamespaceWatchMessage>) -> Self {
         Self {
             namespaces: Some(namespaces),

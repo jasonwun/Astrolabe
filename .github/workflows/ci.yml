@@ -15,6 +15,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: dev/comment-width.sh
       - run: dev/registration-path.sh
+      - run: dev/log-capture.sh
       # Dependency-direction guard: the kube layer must stay gpui-free.
       - name: astrolabe-kube must not depend on gpui
         run: |
