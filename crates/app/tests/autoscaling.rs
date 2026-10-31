@@ -2,31 +2,14 @@
 //! Freelens 14a491f's columns and detail fields.
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{DetailItem, DetailModel, DetailSection, ResourceTable, SummaryTable};
+use astrolabe::projection::{DetailItem, DetailSection, SummaryTable};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::core::DynamicObject;
-use support::object;
+use support::{detail, list};
 
 mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
-}
-
-/// Lists `raws` through the HorizontalPodAutoscalers Registration, as the
-/// app does.
-fn list(raws: Vec<serde_json::Value>) -> ResourceTable {
-    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
-    (BuiltinKind::HorizontalPodAutoscalers.registration().list)(
-        &objects.iter().collect::<Vec<_>>(),
-        now(),
-    )
-}
-
-/// Projects `raw` through the HorizontalPodAutoscalers Registration, as the
-/// app does.
-fn detail(raw: serde_json::Value) -> DetailModel {
-    (BuiltinKind::HorizontalPodAutoscalers.registration().detail)(&object(raw), now()).unwrap()
 }
 
 /// Synthetic autoscaling/v2 HPA (plausible shape, not captured from a
@@ -83,7 +66,11 @@ fn web_hpa() -> serde_json::Value {
 
 #[test]
 fn hpa_list_follows_freelens_columns() {
-    let table = list(vec![web_hpa()]);
+    let table = list(
+        BuiltinKind::HorizontalPodAutoscalers,
+        vec![web_hpa()],
+        now(),
+    );
 
     assert_eq!(
         table.headers(),
@@ -122,7 +109,7 @@ fn an_hpa_without_metrics_min_replicas_or_status_lists_defaults() {
         }
     });
 
-    let table = list(vec![bare]);
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![bare], now());
 
     assert_eq!(table.rows[0].cells, ["bare", "--", "0", "5", "0", "", ""]);
 }
@@ -135,13 +122,13 @@ fn a_single_metric_has_no_more_suffix_and_a_false_ready_condition_shows_negated(
         .unwrap()
         .truncate(1);
     let status = &mut single["status"];
-    status["currentMetrics"] = serde_json::Value::Null;
+    status.as_object_mut().unwrap().remove("currentMetrics");
     status["conditions"] = serde_json::json!([
         {"type": "AbleToScale", "status": "True", "lastTransitionTime": "2026-10-22T11:00:00Z"},
         {"type": "Ready", "status": "False", "lastTransitionTime": "2026-10-22T11:00:00Z"}
     ]);
 
-    let table = list(vec![single]);
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![single], now());
 
     assert_eq!(table.rows[0].cells[1], "unknown / 50%");
     assert_eq!(table.rows[0].cells[6], "NotReady, AbleToScale");
@@ -170,7 +157,7 @@ fn metrics_section(rows: &[[&str; 2]]) -> DetailSection {
 
 #[test]
 fn an_hpa_detail_shows_freelens_fields_desired_replicas_and_metrics() {
-    let model = detail(web_hpa());
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, web_hpa(), now());
 
     assert_eq!(model.title, "HorizontalPodAutoscaler default/web");
     assert_eq!(
@@ -216,7 +203,7 @@ fn an_hpa_detail_without_metrics_or_status_has_no_metrics_section() {
         }
     });
 
-    let model = detail(bare);
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, bare, now());
 
     assert_eq!(
         model.status,
@@ -243,10 +230,13 @@ fn external_only(mut hpa: serde_json::Value) -> serde_json::Value {
 #[test]
 fn an_external_metric_names_its_selector_only_when_it_has_one() {
     let mut external = external_only(web_hpa());
-    external["spec"]["metrics"][0]["external"]["metric"]["selector"] = serde_json::Value::Null;
-    external["status"] = serde_json::Value::Null;
+    external["spec"]["metrics"][0]["external"]["metric"]
+        .as_object_mut()
+        .unwrap()
+        .remove("selector");
+    external.as_object_mut().unwrap().remove("status");
 
-    let model = detail(external);
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, external, now());
 
     assert_eq!(
         model.sections,
@@ -262,7 +252,7 @@ fn an_external_selector_names_match_labels_before_match_expressions() {
         "matchLabels": {"queue": "jobs", "app": "web"}
     });
 
-    let model = detail(external);
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, external, now());
 
     let DetailItem::Table(table) = &model.sections[0].items[0] else {
         panic!("{:?}", model.sections);
@@ -280,9 +270,9 @@ fn an_empty_external_average_reads_as_unknown_like_a_missing_one() {
     external["spec"]["metrics"][0]["external"]["target"] = serde_json::json!({
         "type": "AverageValue", "averageValue": ""
     });
-    external["status"] = serde_json::Value::Null;
+    external.as_object_mut().unwrap().remove("status");
 
-    let table = list(vec![external]);
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![external], now());
 
     assert_eq!(table.rows[0].cells[1], "unknown / unknown");
 }

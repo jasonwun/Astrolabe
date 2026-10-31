@@ -1,26 +1,14 @@
 //! P3 built-in workload projections, aligned with Freelens 14a491f.
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{DetailModel, ReplicaCounts, ResourceTable};
+use astrolabe::projection::ReplicaCounts;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::core::DynamicObject;
-use support::object;
+use support::{detail, list};
 
 mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
-}
-
-/// Lists `raws` through `kind`'s Registration, as the app does.
-fn list(kind: BuiltinKind, raws: Vec<serde_json::Value>) -> ResourceTable {
-    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
-    (kind.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
-}
-
-/// Projects `raw` through `kind`'s Registration, as the app does.
-fn detail(kind: BuiltinKind, raw: serde_json::Value) -> DetailModel {
-    (kind.registration().detail)(&object(raw), now()).unwrap()
 }
 
 #[test]
@@ -40,11 +28,11 @@ fn statefulsets_list_and_detail_follow_freelens() {
         "status": {"replicas": 3, "readyReplicas": 2, "updatedReplicas": 2, "availableReplicas": 2, "unavailableReplicas": 1}
     });
 
-    let table = list(BuiltinKind::StatefulSets, vec![statefulset.clone()]);
+    let table = list(BuiltinKind::StatefulSets, vec![statefulset.clone()], now());
     assert_eq!(table.headers(), ["Name", "Ready", "Desired", "Age"]);
     assert_eq!(table.rows[0].cells, ["db", "2", "3", "60m"]);
 
-    let detail = detail(BuiltinKind::StatefulSets, statefulset);
+    let detail = detail(BuiltinKind::StatefulSets, statefulset, now());
     assert_eq!(detail.title, "StatefulSet default/db");
     assert_eq!(
         detail.replicas,
@@ -77,13 +65,13 @@ fn replicasets_list_and_detail_follow_freelens() {
                  "template": {"spec": {"containers": [{"name": "web", "image": "nginx:1.27"}]}}},
         "status": {"replicas": 3, "availableReplicas": 2, "readyReplicas": 2}
     });
-    let table = list(BuiltinKind::ReplicaSets, vec![replicaset.clone()]);
+    let table = list(BuiltinKind::ReplicaSets, vec![replicaset.clone()], now());
     assert_eq!(
         table.headers(),
         ["Name", "Desired", "Current", "Ready", "Age"]
     );
     assert_eq!(table.rows[0].cells, ["web-abc", "3", "2", "2", "60m"]);
-    let detail = detail(BuiltinKind::ReplicaSets, replicaset);
+    let detail = detail(BuiltinKind::ReplicaSets, replicaset, now());
     assert_eq!(
         detail.status,
         [
@@ -109,7 +97,7 @@ fn daemonsets_list_and_detail_follow_freelens() {
                    "numberReady": 3, "updatedNumberScheduled": 2, "numberAvailable": 3,
                    "numberUnavailable": 1, "numberMisscheduled": 0}
     });
-    let table = list(BuiltinKind::DaemonSets, vec![daemonset.clone()]);
+    let table = list(BuiltinKind::DaemonSets, vec![daemonset.clone()], now());
     assert_eq!(
         table.headers(),
         [
@@ -127,7 +115,7 @@ fn daemonsets_list_and_detail_follow_freelens() {
         table.rows[0].cells,
         ["agent", "4", "4", "3", "2", "3", "role=worker", "60m"]
     );
-    let detail = detail(BuiltinKind::DaemonSets, daemonset);
+    let detail = detail(BuiltinKind::DaemonSets, daemonset, now());
     assert_eq!(
         detail.status,
         [
@@ -166,7 +154,7 @@ fn jobs_list_and_detail_follow_freelens_completion_status() {
                    "startTime": "2026-10-22T11:50:00Z", "completionTime": "2026-10-22T11:55:00Z",
                    "completedIndexes": "0-3", "conditions": [{"type": "Complete", "status": "True"}]}
     });
-    let table = list(BuiltinKind::Jobs, vec![job.clone()]);
+    let table = list(BuiltinKind::Jobs, vec![job.clone()], now());
     assert_eq!(
         table.headers(),
         [
@@ -184,7 +172,7 @@ fn jobs_list_and_detail_follow_freelens_completion_status() {
         table.rows[0].cells,
         ["migrate", "true", "Complete", "4", "4", "2", "5m", "60m"]
     );
-    let detail = detail(BuiltinKind::Jobs, job);
+    let detail = detail(BuiltinKind::Jobs, job, now());
     assert_eq!(
         detail.status,
         [
@@ -227,7 +215,7 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
         "status": {"active": [{"kind": "Job", "name": "nightly-1", "namespace": "default", "uid": "job-1", "apiVersion": "batch/v1"}],
                    "lastScheduleTime": "2026-10-22T11:58:00Z", "lastSuccessfulTime": "2026-10-22T11:57:00Z"}
     });
-    let table = list(BuiltinKind::CronJobs, vec![cronjob.clone()]);
+    let table = list(BuiltinKind::CronJobs, vec![cronjob.clone()], now());
     assert_eq!(
         table.headers(),
         [
@@ -244,7 +232,7 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
         table.rows[0].cells,
         ["nightly", "0 0 * * *", "UTC", "true", "1", "2m", "60m"]
     );
-    let detail = detail(BuiltinKind::CronJobs, cronjob);
+    let detail = detail(BuiltinKind::CronJobs, cronjob, now());
     assert_eq!(
         detail.status,
         [
@@ -293,7 +281,7 @@ fn a_zero_second_ttl_reads_zero_seconds() {
             "template": {"spec": {"containers": [], "restartPolicy": "Never"}}
         }}}
     });
-    let detail = detail(BuiltinKind::CronJobs, cronjob);
+    let detail = detail(BuiltinKind::CronJobs, cronjob, now());
     let ttl = detail.sections[0].items.iter().find_map(|item| {
         let astrolabe::projection::DetailItem::Field(field) = item else {
             return None;
@@ -320,7 +308,10 @@ fn schedule_descriptions_cover_steps_weekdays_and_invalid_syntax() {
                 "template": {"spec": {"containers": [], "restartPolicy": "Never"}}
             }}}
         });
-        detail(BuiltinKind::CronJobs, cronjob).status.remove(0).1
+        detail(BuiltinKind::CronJobs, cronjob, now())
+            .status
+            .remove(0)
+            .1
     };
     assert_eq!(detail("*/15 * * * *"), "*/15 * * * * (Every 15 minutes)");
     assert_eq!(
@@ -341,7 +332,7 @@ fn empty_template_fields_stay_distinct_from_empty_items() {
             "containers": [{"name": "empty", "image": ""}], "affinity": {}
         }}}
     });
-    let detail = detail(BuiltinKind::StatefulSets, statefulset);
+    let detail = detail(BuiltinKind::StatefulSets, statefulset, now());
     assert_eq!(detail.status, [("Images".to_string(), String::new())]);
 }
 
@@ -352,7 +343,7 @@ fn a_cronjob_detail_says_whether_it_is_suspended() {
             "metadata": {"name": "nightly", "namespace": "default"},
             "spec": spec
         });
-        detail(BuiltinKind::CronJobs, cronjob).suspended
+        detail(BuiltinKind::CronJobs, cronjob, now()).suspended
     };
     let template = serde_json::json!({"spec": {
         "template": {"spec": {"containers": [], "restartPolicy": "Never"}}

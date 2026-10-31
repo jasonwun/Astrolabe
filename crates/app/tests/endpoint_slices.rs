@@ -5,10 +5,8 @@
 //! apiserver).
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{DetailModel, ResourceTable};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::core::DynamicObject;
-use support::object;
+use support::{detail, list, object};
 
 mod support;
 
@@ -32,39 +30,30 @@ fn slice_json(name: &str, owner: &str, ports: serde_json::Value) -> serde_json::
     })
 }
 
-fn slice(ports: serde_json::Value) -> serde_json::Value {
-    slice_json("web-abc", "web", ports)
-}
-
-/// Lists `raws` through the EndpointSlices Registration, as the app does.
-fn list(raws: Vec<serde_json::Value>) -> ResourceTable {
-    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
-    (BuiltinKind::EndpointSlices.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
-}
-
-/// Projects `raw` through the EndpointSlices Registration, as the app does.
-fn detail(raw: serde_json::Value) -> DetailModel {
-    (BuiltinKind::EndpointSlices.registration().detail)(&object(raw), now()).unwrap()
-}
-
 fn cells(slice: serde_json::Value) -> Vec<String> {
-    list(vec![slice]).rows[0].cells.clone()
+    list(BuiltinKind::EndpointSlices, vec![slice], now()).rows[0]
+        .cells
+        .clone()
 }
 
 #[test]
 fn columns_are_name_type_ports_endpoints() {
     assert_eq!(
-        list(vec![]).headers(),
+        list(BuiltinKind::EndpointSlices, vec![], now()).headers(),
         ["Name", "Type", "Ports", "Endpoints"]
     );
 }
 
 #[test]
 fn a_slice_projects_its_ports_and_flattened_endpoints() {
-    let slice = slice(serde_json::json!([
-        {"name": "http", "port": 80, "protocol": "TCP"},
-        {"name": "dns", "port": 53, "protocol": "UDP"}
-    ]));
+    let slice = slice_json(
+        "web-abc",
+        "web",
+        serde_json::json!([
+            {"name": "http", "port": 80, "protocol": "TCP"},
+            {"name": "dns", "port": 53, "protocol": "UDP"}
+        ]),
+    );
     assert_eq!(
         cells(slice),
         [
@@ -78,7 +67,7 @@ fn a_slice_projects_its_ports_and_flattened_endpoints() {
 
 #[test]
 fn a_port_without_protocol_is_tcp() {
-    let slice = slice(serde_json::json!([{"port": 8080}]));
+    let slice = slice_json("web-abc", "web", serde_json::json!([{"port": 8080}]));
     assert_eq!(cells(slice)[2], "8080/TCP");
 }
 
@@ -86,7 +75,11 @@ fn a_port_without_protocol_is_tcp() {
 /// ports); Astrolabe shows the protocol alone.
 #[test]
 fn a_port_entry_without_a_port_shows_only_its_protocol() {
-    let slice = slice(serde_json::json!([{"protocol": "UDP"}, {}]));
+    let slice = slice_json(
+        "web-abc",
+        "web",
+        serde_json::json!([{"protocol": "UDP"}, {}]),
+    );
     assert_eq!(cells(slice)[2], "UDP, TCP");
 }
 
@@ -99,8 +92,12 @@ fn a_slice_without_ports_or_endpoints_shows_empty_cells() {
 
 #[test]
 fn the_detail_shows_address_type_ports_and_endpoints() {
-    let slice = slice(serde_json::json!([{"port": 80}, {"protocol": "SCTP"}]));
-    let model = detail(slice);
+    let slice = slice_json(
+        "web-abc",
+        "web",
+        serde_json::json!([{"port": 80}, {"protocol": "SCTP"}]),
+    );
+    let model = detail(BuiltinKind::EndpointSlices, slice, now());
     assert_eq!(model.title, "EndpointSlice default/web-abc");
     assert_eq!(
         model.status,

@@ -2,13 +2,11 @@
 //! the involvedObject filter a related section applies.
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::ResourceTable;
 use astrolabe::projection::events::event_involves;
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Event, Pod};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::core::DynamicObject;
-use support::object;
+use support::list;
 
 mod support;
 
@@ -16,13 +14,7 @@ fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
 }
 
-/// Lists `raws` through the Events Registration, as the app does.
-fn list(raws: Vec<serde_json::Value>) -> ResourceTable {
-    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
-    (BuiltinKind::Events.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
-}
-
-fn event(name: &str, extra: serde_json::Value) -> Event {
+fn typed_event(name: &str, extra: serde_json::Value) -> Event {
     serde_json::from_value(event_json(name, extra)).unwrap()
 }
 
@@ -69,7 +61,7 @@ fn events_list_kubectl_columns_newest_first() {
             "firstTimestamp": "2026-10-22T11:30:00Z",
         }),
     );
-    let table = list(vec![pulled, backoff]);
+    let table = list(BuiltinKind::Events, vec![pulled, backoff], now());
     assert_eq!(
         table.headers(),
         [
@@ -121,7 +113,7 @@ fn a_series_event_reads_its_series() {
             "series": {"count": 40, "lastObservedTime": "2026-10-22T11:59:30.000000Z"},
         }),
     );
-    let table = list(vec![probe]);
+    let table = list(BuiltinKind::Events, vec![probe], now());
     assert_eq!(table.rows[0].cells[4], "40");
     assert_eq!(table.rows[0].cells[5], "30s");
 }
@@ -129,7 +121,7 @@ fn a_series_event_reads_its_series() {
 #[test]
 fn an_event_without_any_time_is_unknown() {
     let bare = event_json("bare", serde_json::json!({}));
-    let table = list(vec![bare]);
+    let table = list(BuiltinKind::Events, vec![bare], now());
     assert_eq!(table.rows[0].cells[5], "<unknown>");
 }
 
@@ -139,12 +131,15 @@ fn an_unnamed_involved_object_shows_its_kind() {
         "node",
         serde_json::json!({"involvedObject": {"kind": "Node"}}),
     );
-    assert_eq!(list(vec![node]).rows[0].cells[2], "node");
+    assert_eq!(
+        list(BuiltinKind::Events, vec![node], now()).rows[0].cells[2],
+        "node"
+    );
 }
 
 #[test]
 fn events_involve_the_object_with_their_uid() {
-    let about_web = event("e", serde_json::json!({}));
+    let about_web = typed_event("e", serde_json::json!({}));
     assert!(event_involves(
         &about_web,
         "Pod",
@@ -165,7 +160,7 @@ fn events_involve_the_object_with_their_uid() {
 
 #[test]
 fn without_a_uid_kind_and_name_decide() {
-    let no_uid = event(
+    let no_uid = typed_event(
         "e",
         serde_json::json!({"involvedObject": {"kind": "Pod", "name": "web-1",
                                               "namespace": "default"}}),

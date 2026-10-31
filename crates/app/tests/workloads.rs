@@ -4,32 +4,18 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::workloads::{
     ForwardPort, pod_ports, running_containers, selector_matches,
 };
-use astrolabe::projection::{
-    Containers, DetailModel, Forward, ForwardTo, ReplicaCounts, ResourceTable, SummaryTable,
-};
+use astrolabe::projection::{Containers, Forward, ForwardTo, ReplicaCounts, SummaryTable};
 use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::core::DynamicObject;
 use std::collections::BTreeMap;
-use support::object;
+use support::{detail, list};
 
 mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
-}
-
-/// Lists `raws` through `kind`'s Registration, as the app does.
-fn list(kind: BuiltinKind, raws: Vec<serde_json::Value>) -> ResourceTable {
-    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
-    (kind.registration().list)(&objects.iter().collect::<Vec<_>>(), now())
-}
-
-/// Projects `raw` through `kind`'s Registration, as the app does.
-fn detail(kind: BuiltinKind, raw: serde_json::Value) -> DetailModel {
-    (kind.registration().detail)(&object(raw), now()).unwrap()
 }
 
 /// Synthetic Pod (plausible shape, not captured from a server): one init
@@ -83,14 +69,14 @@ fn typed_pod(spec: serde_json::Value, status: serde_json::Value) -> Pod {
 }
 
 fn status_of(pod: serde_json::Value) -> String {
-    list(BuiltinKind::Pods, vec![pod]).rows[0].cells[2].clone()
+    list(BuiltinKind::Pods, vec![pod], now()).rows[0].cells[2].clone()
 }
 
 #[test]
 fn pods_list_kubectl_columns() {
     let pod = crashing_pod();
 
-    let table = list(BuiltinKind::Pods, vec![pod]);
+    let table = list(BuiltinKind::Pods, vec![pod], now());
 
     assert_eq!(
         table.headers(),
@@ -121,7 +107,7 @@ fn unscheduled_pods_show_none_for_ip_and_node() {
         serde_json::json!({"phase": "Pending"}),
     );
 
-    let cells = &list(BuiltinKind::Pods, vec![pending]).rows[0].cells;
+    let cells = &list(BuiltinKind::Pods, vec![pending], now()).rows[0].cells;
 
     assert_eq!(cells[1..6], ["0/1", "Pending", "0", "<none>", "<none>"]);
 }
@@ -272,7 +258,7 @@ fn completed_sidecar_with_running_app_reads_running_or_not_ready() {
 fn pod_detail_summarizes_containers_including_init_and_last_state() {
     let pod = crashing_pod();
 
-    let detail = detail(BuiltinKind::Pods, pod);
+    let detail = detail(BuiltinKind::Pods, pod, now());
 
     assert_eq!(detail.title, "Pod default/web-1");
     assert_eq!(
@@ -331,7 +317,7 @@ fn containers_without_a_status_yet_still_list_from_the_spec() {
         serde_json::json!({"phase": "Pending"}),
     );
 
-    let detail = detail(BuiltinKind::Pods, pending);
+    let detail = detail(BuiltinKind::Pods, pending, now());
 
     assert_eq!(
         detail.tables[0].rows,
@@ -371,7 +357,7 @@ fn rolling_deployment() -> serde_json::Value {
 fn deployments_list_kubectl_columns() {
     let deployment = rolling_deployment();
 
-    let table = list(BuiltinKind::Deployments, vec![deployment]);
+    let table = list(BuiltinKind::Deployments, vec![deployment], now());
 
     assert_eq!(
         table.headers(),
@@ -391,7 +377,7 @@ fn a_deployment_with_no_status_yet_reads_zero() {
         "spec": {"selector": {}, "template": {}}
     });
 
-    let table = list(BuiltinKind::Deployments, vec![fresh]);
+    let table = list(BuiltinKind::Deployments, vec![fresh], now());
 
     // spec.replicas defaults to 1 server-side; an unset field reads that way.
     assert_eq!(table.rows[0].cells[1..4], ["0/1", "0", "0"]);
@@ -401,7 +387,7 @@ fn a_deployment_with_no_status_yet_reads_zero() {
 fn deployment_detail_shows_replica_bar_and_strategy() {
     let deployment = rolling_deployment();
 
-    let detail = detail(BuiltinKind::Deployments, deployment);
+    let detail = detail(BuiltinKind::Deployments, deployment, now());
 
     assert_eq!(detail.title, "Deployment default/web");
     assert_eq!(
@@ -438,7 +424,7 @@ fn recreate_strategy_has_no_rolling_parameters() {
     let mut deployment = rolling_deployment();
     deployment["spec"]["strategy"] = serde_json::json!({"type": "Recreate"});
 
-    let detail = detail(BuiltinKind::Deployments, deployment);
+    let detail = detail(BuiltinKind::Deployments, deployment, now());
 
     assert_eq!(
         detail.status,
@@ -573,7 +559,7 @@ fn a_pod_without_a_spec_has_no_ports() {
 
 #[test]
 fn a_pod_detail_offers_its_containers_and_ports_to_the_actions() {
-    let model = detail(BuiltinKind::Pods, crashing_pod());
+    let model = detail(BuiltinKind::Pods, crashing_pod(), now());
 
     assert_eq!(
         model.containers,

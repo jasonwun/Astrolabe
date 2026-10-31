@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::clock::Clock;
+use astrolabe::projection::{DetailModel, ResourceTable};
 use astrolabe::session::{
     ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
     ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
@@ -48,6 +49,17 @@ pub fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
 
 pub fn object(value: serde_json::Value) -> DynamicObject {
     serde_json::from_value(value).unwrap()
+}
+
+/// Lists `raws` through `kind`'s Registration, as the app does.
+pub fn list(kind: BuiltinKind, raws: Vec<serde_json::Value>, now: Timestamp) -> ResourceTable {
+    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
+    (kind.registration().list)(&objects.iter().collect::<Vec<_>>(), now)
+}
+
+/// Projects `raw` through `kind`'s Registration, as the app does.
+pub fn detail(kind: BuiltinKind, raw: serde_json::Value, now: Timestamp) -> DetailModel {
+    (kind.registration().detail)(&object(raw), now).unwrap()
 }
 
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
