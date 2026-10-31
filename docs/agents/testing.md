@@ -170,6 +170,19 @@ gh api repos/jasonwun/Astrolabe/rulesets/25450659 \
 Origin: #42 session (a ruleset with an emptied required list sat beside
 stale classic protection unnoticed).
 
+The ruleset also requires the branch to be up to date with `main`, so a
+PR behind `main` is refused at merge time even with every check green.
+Update the branch and queue the merge in one go; auto-merge is enabled and
+merges once the rerun checks pass:
+
+```sh
+gh pr update-branch <n>
+gh pr merge <n> --squash --auto
+```
+
+Origin: #118 session (merge refused as behind `main`; a second CI round was
+watched by hand).
+
 ## Cargo.lock sticky-pin conflicts
 
 When a pinned transitive dependency deadlocks resolution (e.g.
