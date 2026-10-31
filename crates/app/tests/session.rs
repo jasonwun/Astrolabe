@@ -9,7 +9,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use astrolabe::session::{ConnectionHealth, ResourceKind, Session, WatchError};
+use astrolabe::session::{ConnectionHealth, DEFAULT_NAMESPACE, ResourceKind, Session, WatchError};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -458,7 +458,7 @@ fn session_watch_error_forces_complete_namespace_relist(cx: &mut TestAppContext)
     logs.install();
     let server = ScriptedApiserver::spawn();
     let _kubeconfig = KubeconfigGuard::new(server.port);
-    let session = cx.update(|cx| cx.new(|cx| Session::new("scripted", cx)));
+    let session = cx.update(|cx| cx.new(|cx| Session::new("scripted", DEFAULT_NAMESPACE, cx)));
 
     // 1. Initial list/watch establishes a healthy snapshot.
     pump_until(cx, "initial snapshot", |cx| {

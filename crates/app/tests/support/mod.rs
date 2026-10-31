@@ -12,7 +12,7 @@ use astrolabe::session::{
     ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
     ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
-use astrolabe::workspace::WorkspaceView;
+use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -24,8 +24,12 @@ use gpui_kit::{TestAppContext, VisualTestContext};
 pub type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
 
 pub fn key(kind: BuiltinKind, namespace: &str) -> WatchKey {
+    key_on("kind-a", kind, namespace)
+}
+
+pub fn key_on(cluster: &str, kind: BuiltinKind, namespace: &str) -> WatchKey {
     WatchKey {
-        cluster: "kind-a".to_string(),
+        cluster: cluster.to_string(),
         kind: ResourceKind::Builtin(kind),
         namespace: Some(namespace.to_string()),
     }
@@ -134,7 +138,12 @@ pub fn open(
         cluster = cluster.watch(key, events);
     }
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(vec![("kind-a".to_string(), cluster)], window, cx)
+        WorkspaceView::from_clusters(
+            vec![("kind-a".to_string(), cluster)],
+            Preselection::default(),
+            window,
+            cx,
+        )
     });
     Ui {
         cx,

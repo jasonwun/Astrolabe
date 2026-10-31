@@ -30,8 +30,18 @@ leave evidence nobody can reproduce.
 ## 2. Launch
 
 ```sh
-cargo run -p astrolabe     # run_in_background + disable_timeout; process name: astrolabe
+# run_in_background + disable_timeout; process name: astrolabe
+ASTROLABE_CLUSTER=kind-astrolabe-dev ASTROLABE_NAMESPACE=$(dev/demo.sh apply) cargo run -p astrolabe
 ```
+
+Debug builds open `ASTROLABE_CLUSTER` in `ASTROLABE_NAMESPACE` at launch
+(#111); release builds ignore both. `dev/demo.sh apply` is idempotent and
+prints only the namespace on stdout (kubectl's output goes to stderr). A
+context that is not in the kubeconfig logs a `warn` and the app opens the
+first context in `default` instead, and a failed `dev/demo.sh apply` leaves
+`ASTROLABE_NAMESPACE` empty, so check the first screenshot shows
+`kind-astrolabe-dev` selected and `astrolabe-demo-<worktree>` as the
+namespace.
 
 ## 3. Look and drive, via Orca computer use
 
@@ -95,11 +105,11 @@ path of `<name>.png`, shrunk to one pixel per window point.
   check, state that it was not checked and why.
 - Every action already captures: pass it to `dev/shot.sh` and read the
   result rather than taking another snapshot.
-- Select `kind-astrolabe-dev` in the Clusters sidebar if it is not
-  already active, then this worktree's namespace in the namespace selector.
-  Capture the open selector before picking: it lists namespaces
-  alphabetically, so `astrolabe-demo-*` usually sits first, and a click at
-  a remembered position lands on another namespace once the list changes.
+- The launch's env vars already select `kind-astrolabe-dev` and this
+  worktree's namespace: no clicks before the first screenshot. When a check
+  must switch namespace by hand, capture the open selector before picking:
+  it lists namespaces alphabetically, and a click at a remembered position
+  lands on another namespace once the list changes (#95).
 
 ### A change that must leave the UI as it was
 

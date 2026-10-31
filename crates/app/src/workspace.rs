@@ -5,11 +5,22 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::kube_bridge::spawn_cluster;
-use crate::session::{ConnectionHealth, NamespaceWatchMessage, ScriptedCluster};
+use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, NamespaceWatchMessage, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
 
 pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
+
+/// What the launch opens instead of the first cluster in `default`; empty
+/// leaves the launch as it is. Debug builds fill it from
+/// `ASTROLABE_CLUSTER` and `ASTROLABE_NAMESPACE` (`main.rs`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Preselection {
+    /// Opened and selected at launch when it is a discovered cluster.
+    pub cluster: Option<String>,
+    /// The namespace the session opened at launch starts in.
+    pub namespace: Option<String>,
+}
 
 pub struct WorkspaceView {
     clusters: Vec<String>,
@@ -19,10 +30,12 @@ pub struct WorkspaceView {
     yaml: Entity<YamlEditorView>,
     show_yaml: bool,
     discovery_error: Option<String>,
+    /// Consumed by the launch selection; later sessions start in `default`.
+    preselection: Preselection,
 }
 
 impl WorkspaceView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(preselection: Preselection, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let yaml = cx.new(|cx| YamlEditorView::new(window, cx, String::new()));
         let mut workspace = Self {
             clusters: Vec::new(),
@@ -32,6 +45,7 @@ impl WorkspaceView {
             yaml,
             show_yaml: false,
             discovery_error: None,
+            preselection,
         };
         workspace.discover_contexts(window, cx);
         workspace
@@ -46,11 +60,12 @@ impl WorkspaceView {
             .into_iter()
             .map(|(cluster, receiver)| (cluster, ScriptedCluster::new(receiver)))
             .collect();
-        Self::from_clusters(clusters, window, cx)
+        Self::from_clusters(clusters, Preselection::default(), window, cx)
     }
 
     pub fn from_clusters(
         scripted: Vec<(String, ScriptedCluster)>,
+        preselection: Preselection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -71,10 +86,9 @@ impl WorkspaceView {
             yaml,
             show_yaml: false,
             discovery_error: None,
+            preselection,
         };
-        if let Some(cluster) = workspace.clusters.first().cloned() {
-            workspace.select_cluster(cluster, window, cx);
-        }
+        workspace.select_launch_cluster(window, cx);
         workspace
     }
 
@@ -102,24 +116,56 @@ impl WorkspaceView {
         for cluster in &self.clusters {
             self.sources.entry(cluster.clone()).or_insert(None);
         }
-        if self.selected_cluster.is_none()
-            && let Some(cluster) = self.clusters.first().cloned()
-        {
-            self.select_cluster(cluster, window, cx);
+        if self.selected_cluster.is_none() {
+            self.select_launch_cluster(window, cx);
+        }
+    }
+
+    /// Open the preselected cluster, or the first one, in the preselected
+    /// namespace. An undiscovered preselected cluster falls back to the
+    /// launch without preselection: the first cluster in `default`.
+    fn select_launch_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Preselection { cluster, namespace } = std::mem::take(&mut self.preselection);
+        let (cluster, namespace) = match cluster {
+            Some(cluster) if self.clusters.contains(&cluster) => (Some(cluster), namespace),
+            Some(cluster) => {
+                tracing::warn!(
+                    ASTROLABE_CLUSTER = %cluster,
+                    "preselected cluster is not a discovered context; opening the first one"
+                );
+                (self.clusters.first().cloned(), None)
+            }
+            None => (self.clusters.first().cloned(), namespace),
+        };
+        if let Some(cluster) = cluster {
+            self.open_cluster(cluster, namespace, window, cx);
         }
     }
 
     fn select_cluster(&mut self, cluster: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_cluster(cluster, None, window, cx);
+    }
+
+    /// Select `cluster`, opening its session in `namespace` (`default` when
+    /// `None`) unless it is open already.
+    fn open_cluster(
+        &mut self,
+        cluster: String,
+        namespace: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.sessions.contains_key(&cluster) {
+            let namespace = namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
             let session = match self
                 .sources
                 .get_mut(&cluster)
                 .and_then(|source| source.take())
             {
-                Some(scripted) => {
-                    cx.new(|cx| SessionView::scripted(cluster.clone(), scripted, window, cx))
-                }
-                None => cx.new(|cx| SessionView::new(cluster.clone(), window, cx)),
+                Some(scripted) => cx.new(|cx| {
+                    SessionView::scripted(cluster.clone(), namespace, scripted, window, cx)
+                }),
+                None => cx.new(|cx| SessionView::new(cluster.clone(), namespace, window, cx)),
             };
             cx.observe(&session, |_workspace, _session, cx| cx.notify())
                 .detach();

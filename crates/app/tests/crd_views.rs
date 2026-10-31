@@ -5,7 +5,7 @@ use std::time::Duration;
 use astrolabe::session::{
     ObjectRef, ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
-use astrolabe::workspace::WorkspaceView;
+use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -162,7 +162,12 @@ fn open(
         cluster = cluster.watch(key, events);
     }
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(vec![("kind-a".to_string(), cluster)], window, cx)
+        WorkspaceView::from_clusters(
+            vec![("kind-a".to_string(), cluster)],
+            Preselection::default(),
+            window,
+            cx,
+        )
     });
     Ui {
         cx,

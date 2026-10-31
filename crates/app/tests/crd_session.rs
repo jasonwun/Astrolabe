@@ -3,8 +3,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::session::{
-    ConnectionHealth, CustomKindId, ObjectWatchMessage, ResourceKind, ScriptedCluster, Session,
-    WatchError, WatchKey,
+    ConnectionHealth, CustomKindId, DEFAULT_NAMESPACE, ObjectWatchMessage, ResourceKind,
+    ScriptedCluster, Session, WatchError, WatchKey,
 };
 use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
@@ -113,7 +113,8 @@ fn harness(
     for (key, receiver) in custom {
         cluster = cluster.watch(key, receiver);
     }
-    let session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, cx)));
+    let session =
+        cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", DEFAULT_NAMESPACE, cluster, cx)));
     Harness {
         session,
         namespaces,
@@ -230,7 +231,8 @@ fn a_first_crd_snapshot_already_discovered_does_not_rediscover(cx: &mut TestAppC
                 )]))
             }
         });
-    let _session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", cluster, cx)));
+    let _session =
+        cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", DEFAULT_NAMESPACE, cluster, cx)));
     snapshot(
         &mut crds,
         vec![crd("stable.example.com", "CronTab", "Namespaced")],

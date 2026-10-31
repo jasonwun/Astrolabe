@@ -1,11 +1,12 @@
 //! Astrolabe desktop application: GPUI entry point.
 
-use astrolabe::workspace::WorkspaceView;
+use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe::{keymap, yaml_editor};
 use gpui_kit::*;
 
 fn main() {
     init_tracing();
+    let preselection = preselection();
     astrolabe::application().run(|cx| {
         gpui_kit::init(cx);
         yaml_editor::register_yaml_language(cx);
@@ -13,7 +14,7 @@ fn main() {
 
         // Not raw cx.open_window: the Root it adds paints the theme (#52).
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| WorkspaceView::new(window, cx))
+            cx.new(|cx| WorkspaceView::new(preselection, window, cx))
         })
         .expect("failed to open window");
 
@@ -33,4 +34,25 @@ fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+/// Debug builds open `ASTROLABE_CLUSTER` in `ASTROLABE_NAMESPACE` at
+/// launch, so the manual UI check needs no clicks to get there (#111).
+/// Release builds ignore both. Empty counts as unset.
+#[cfg(debug_assertions)]
+fn preselection() -> Preselection {
+    let var = |name| {
+        std::env::var(name)
+            .ok()
+            .filter(|value: &String| !value.is_empty())
+    };
+    Preselection {
+        cluster: var("ASTROLABE_CLUSTER"),
+        namespace: var("ASTROLABE_NAMESPACE"),
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn preselection() -> Preselection {
+    Preselection::default()
 }
