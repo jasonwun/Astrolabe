@@ -4,6 +4,8 @@ use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
+mod support;
+
 fn namespace(name: &str, phase: &str) -> Namespace {
     Namespace {
         metadata: ObjectMeta {
@@ -133,6 +135,8 @@ mod custom {
     use astrolabe_kube::k8s_openapi::jiff::{SignedDuration, Timestamp};
     use astrolabe_kube::kube::core::DynamicObject;
 
+    use crate::support::object;
+
     fn now() -> Timestamp {
         "2026-10-22T12:00:00Z".parse().unwrap()
     }
@@ -168,7 +172,7 @@ mod custom {
 
     /// Synthetic custom resource (plausible shape, not captured from a server).
     fn crontab(namespace: &str, name: &str) -> DynamicObject {
-        serde_json::from_value(serde_json::json!({
+        object(serde_json::json!({
             "apiVersion": "stable.example.com/v1",
             "kind": "CronTab",
             "metadata": {
@@ -185,7 +189,6 @@ mod custom {
                 "conditions": [{"type": "Ready", "status": "True", "reason": "Scheduled", "message": "ok"}]
             }
         }))
-        .unwrap()
     }
 
     #[test]

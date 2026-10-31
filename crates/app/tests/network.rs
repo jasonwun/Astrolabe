@@ -14,6 +14,9 @@ use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::api::networking::v1::Ingress;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use support::object;
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -62,7 +65,7 @@ fn cells(service: &Service) -> Vec<String> {
 
 /// Projects `raw` through the Services Registration, as the app does.
 fn detail(raw: serde_json::Value) -> DetailModel {
-    let object: DynamicObject = serde_json::from_value(raw).unwrap();
+    let object: DynamicObject = object(raw);
     (BuiltinKind::Services.registration().detail)(&object, now()).unwrap()
 }
 

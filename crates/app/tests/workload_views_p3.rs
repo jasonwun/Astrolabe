@@ -8,16 +8,15 @@ use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{key, open, open_detail, snapshot};
+use support::{key, object, open, open_detail, snapshot};
 
 /// Synthetic objects (plausible shapes, not captured from a server).
 fn pod() -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "pod-1"},
         "spec": {"containers": [{"name": "web", "image": "nginx"}]}
     }))
-    .unwrap()
 }
 
 fn event(name: &str, kind: &str, involved: &str) -> DynamicObject {
@@ -26,13 +25,12 @@ fn event(name: &str, kind: &str, involved: &str) -> DynamicObject {
         "Job" | "CronJob" => "batch/v1",
         _ => "apps/v1",
     };
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Event",
         "metadata": {"name": name, "namespace": "default"},
         "involvedObject": {"apiVersion": api_version, "kind": kind, "name": involved, "namespace": "default"},
         "type": "Normal", "reason": "Started", "message": format!("Started {involved}")
     }))
-    .unwrap()
 }
 
 #[gpui_kit::test]
@@ -180,12 +178,11 @@ fn workload(kind: &str, name: &str) -> DynamicObject {
         }
         _ => serde_json::json!({}),
     };
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": api_version, "kind": kind,
         "metadata": {"name": name, "namespace": "default", "uid": format!("{name}-uid")},
         "spec": spec, "status": status
     }))
-    .unwrap()
 }
 
 fn owned(kind: &str, name: &str, owner_kind: &str, owner: &str, uid: &str) -> DynamicObject {

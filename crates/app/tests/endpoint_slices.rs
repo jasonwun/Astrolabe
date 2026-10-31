@@ -8,7 +8,9 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::endpoint_slices::{endpoint_slice_detail, project_endpoint_slices};
 use astrolabe_kube::k8s_openapi::api::discovery::v1::EndpointSlice;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::core::DynamicObject;
+use support::object;
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -106,22 +108,18 @@ fn the_detail_shows_address_type_ports_and_endpoints() {
     );
 }
 
-fn dynamic(value: serde_json::Value) -> DynamicObject {
-    serde_json::from_value(value).unwrap()
-}
-
 #[test]
 fn a_service_selects_only_the_slices_it_owns() {
-    let service = dynamic(serde_json::json!({
+    let service = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Service",
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-web"},
         "spec": {}
     }));
-    let owned = dynamic(slice_json("web-abc", "web", serde_json::json!([])));
-    let other = dynamic(slice_json("api-xyz", "api", serde_json::json!([])));
+    let owned = object(slice_json("web-abc", "web", serde_json::json!([])));
+    let other = object(slice_json("api-xyz", "api", serde_json::json!([])));
     let mut stale_value = slice_json("web-old", "web", serde_json::json!([]));
     stale_value["metadata"]["ownerReferences"][0]["uid"] = "uid-gone".into();
-    let stale = dynamic(stale_value);
+    let stale = object(stale_value);
 
     let related = BuiltinKind::Services
         .registration()
@@ -169,17 +167,17 @@ fn only_the_service_hides_its_related_section_when_empty() {
 #[test]
 fn deleting_an_owned_slice_warns_it_comes_back() {
     let cascade = BuiltinKind::EndpointSlices.registration().cascade;
-    let owned = dynamic(slice_json("web-abc", "web", serde_json::json!([])));
+    let owned = object(slice_json("web-abc", "web", serde_json::json!([])));
     let mut bare_value = slice_json("manual", "web", serde_json::json!([]));
     bare_value["metadata"]
         .as_object_mut()
         .unwrap()
         .remove("ownerReferences");
-    let bare = dynamic(bare_value);
+    let bare = object(bare_value);
     // A hand-made slice pointing at its Service: no controller rebuilds it.
     let mut referencing_value = slice_json("manual", "web", serde_json::json!([]));
     referencing_value["metadata"]["ownerReferences"][0]["controller"] = false.into();
-    let referencing = dynamic(referencing_value);
+    let referencing = object(referencing_value);
     assert_eq!(
         cascade(&owned),
         "A controller that owns this EndpointSlice will recreate it."

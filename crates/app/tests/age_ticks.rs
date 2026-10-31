@@ -12,7 +12,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use support::{Sender, Ui, follow_test_clock, key, open, snapshot};
+use support::{Sender, Ui, follow_test_clock, key, object, open, snapshot};
 
 /// The HPA list's Age column.
 const AGE: &str = "cell-0-5";
@@ -22,7 +22,7 @@ fn start() -> Timestamp {
 }
 
 fn hpa(created: &str) -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-hpa",
             "creationTimestamp": created},
@@ -31,13 +31,12 @@ fn hpa(created: &str) -> DynamicObject {
             "minReplicas": 1, "maxReplicas": 3
         }
     }))
-    .unwrap()
 }
 
 /// A Pod created a quarter of an hour ago whose container restarted a
 /// minute ago.
 fn pod() -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod",
             "creationTimestamp": "2026-10-26T11:45:00Z"},
@@ -47,7 +46,6 @@ fn pod() -> DynamicObject {
             "state": {"running": {"startedAt": "2026-10-26T11:59:00Z"}}
         }]}
     }))
-    .unwrap()
 }
 
 /// Open `kind`'s list in `default` holding `object`.
