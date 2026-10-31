@@ -12,7 +12,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use support::{Sender, Ui, follow_test_clock, key, object, open, snapshot};
+use support::{Sender, Ui, follow_test_clock, key, object, open, open_list, snapshot};
 
 /// The HPA list's Age column.
 const AGE: &str = "cell-0-5";
@@ -48,8 +48,9 @@ fn pod() -> DynamicObject {
     }))
 }
 
-/// Open `kind`'s list in `default` holding `object`.
-fn open_list(
+/// Open `kind`'s list in `default` holding `object`, with ages on the
+/// test clock.
+fn open_clocked_list(
     cx: &mut TestAppContext,
     kind: BuiltinKind,
     object: DynamicObject,
@@ -57,12 +58,12 @@ fn open_list(
     follow_test_clock(cx, start());
     let (mut objects, events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(kind, "default"), events)]);
-    support::open_list(&mut ui, kind, &mut objects, vec![object]);
+    open_list(&mut ui, kind, &mut objects, vec![object]);
     (ui, objects)
 }
 
 fn open_hpas<'a>(cx: &'a mut TestAppContext, created: &str) -> (Ui<'a>, Sender<DynamicObject>) {
-    open_list(cx, BuiltinKind::HorizontalPodAutoscalers, hpa(created))
+    open_clocked_list(cx, BuiltinKind::HorizontalPodAutoscalers, hpa(created))
 }
 
 fn label(ui: &mut Ui<'_>, id: &'static str) -> String {
@@ -122,7 +123,7 @@ fn a_new_object_brings_back_per_second_ticks(cx: &mut TestAppContext) {
 fn a_detail_age_counts_while_it_is_open(cx: &mut TestAppContext) {
     // The list's youngest age is 15m, so only the detail's own tick moves
     // the container's minute-old start.
-    let (mut ui, _pods) = open_list(cx, BuiltinKind::Pods, pod());
+    let (mut ui, _pods) = open_clocked_list(cx, BuiltinKind::Pods, pod());
     ui.frame(|window, cx| window.click("row-default/web-1", cx));
     ui.cx.run_until_parked();
     // Read the last drawn frame: `Ui::frame` would render the detail
