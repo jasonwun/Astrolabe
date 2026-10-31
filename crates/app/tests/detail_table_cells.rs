@@ -9,7 +9,7 @@ use astrolabe::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, Window, px};
-use support::{key, object, open, snapshot};
+use support::{key, object, open, open_detail, snapshot};
 
 /// A cell's right padding (`pr_2`): the gap its text keeps from the next.
 const GUTTER: f32 = 8.;
@@ -40,18 +40,18 @@ fn a_summary_table_cell_stops_short_of_the_next_column(cx: &mut TestAppContext) 
         cx,
         vec![(key(BuiltinKind::ConfigMaps, "default"), config_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::ConfigMaps.nav_id(), cx));
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm"},
         "data": {LONG: "production"}
     }));
-    snapshot(&mut configs, vec![config]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/app", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::ConfigMaps,
+        &mut configs,
+        vec![config],
+        "app",
+    );
 
     ui.frame(|window, _| {
         let data = window.within("detail-table-Data");
@@ -72,18 +72,18 @@ fn summary_table_cell_ids_are_unique_within_the_table(cx: &mut TestAppContext) {
         cx,
         vec![(key(BuiltinKind::ConfigMaps, "default"), config_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::ConfigMaps.nav_id(), cx));
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "app", "namespace": "default", "uid": "uid-cm"},
         "data": {"first": "one", "second": "two"}
     }));
-    snapshot(&mut configs, vec![config]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/app", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::ConfigMaps,
+        &mut configs,
+        vec![config],
+        "app",
+    );
 
     ui.frame(|window, _| {
         let table = window.within("detail-table-Data");
@@ -123,18 +123,13 @@ fn a_pod_event_message_stops_short_of_the_count_column(cx: &mut TestAppContext) 
             (key(BuiltinKind::Events, "default"), event_events),
         ],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
     let pod = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "agent-1", "namespace": "default", "uid": "uid-pod"},
         "spec": {"containers": [{"name": "app", "image": "busybox"}]},
         "status": {"phase": "Running"}
     }));
-    snapshot(&mut pods, vec![pod]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/agent-1", cx));
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod], "agent-1");
     let event = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Event",
         "metadata": {"name": "agent-1.pulled", "namespace": "default"},

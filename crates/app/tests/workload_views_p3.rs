@@ -72,16 +72,13 @@ fn events_open_cluster_scoped_namespaces_without_a_namespace_key(cx: &mut TestAp
         cx,
         vec![(key(BuiltinKind::Events, "default"), event_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
-    snapshot(
+    open_detail(
+        &mut ui,
+        BuiltinKind::Events,
         &mut events,
         vec![event("namespace.active", "Namespace", "default")],
+        "namespace.active",
     );
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/namespace.active", cx));
-    ui.settle();
     ui.frame(|window, _| assert!(window.try_find_by_label("Namespace default").is_some()));
 }
 
@@ -92,13 +89,13 @@ fn an_unopenable_involved_object_reports_why(cx: &mut TestAppContext) {
         cx,
         vec![(key(BuiltinKind::Events, "default"), event_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
-    snapshot(&mut events, vec![event("node.started", "Node", "node-a")]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/node.started", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::Events,
+        &mut events,
+        vec![event("node.started", "Node", "node-a")],
+        "node.started",
+    );
     ui.frame(|window, _| {
         assert!(
             window
@@ -122,15 +119,15 @@ fn a_custom_kind_with_a_builtin_name_is_not_opened_as_builtin(cx: &mut TestAppCo
         cx,
         vec![(key(BuiltinKind::Events, "default"), event_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Events.nav_id(), cx));
     let mut custom = event("custom.job", "Job", "custom");
     custom.data["involvedObject"]["apiVersion"] = serde_json::json!("example.com/v1");
-    snapshot(&mut events, vec![custom]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/custom.job", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::Events,
+        &mut events,
+        vec![custom],
+        "custom.job",
+    );
     ui.frame(|window, _| {
         assert!(
             window

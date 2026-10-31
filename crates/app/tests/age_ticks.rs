@@ -57,11 +57,7 @@ fn open_list(
     follow_test_clock(cx, start());
     let (mut objects, events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(kind, "default"), events)]);
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(kind.nav_id(), cx));
-    snapshot(&mut objects, vec![object]);
-    ui.settle();
+    support::open_list(&mut ui, kind, &mut objects, vec![object]);
     (ui, objects)
 }
 
