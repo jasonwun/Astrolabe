@@ -4,13 +4,9 @@
 //! and issues no GET/watch of its own. Built-in kinds reuse this template
 //! through their registration (#17).
 
-use astrolabe_kube::crd::KindResource;
 use std::collections::BTreeSet;
 
-use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, ObjectReference};
-use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
-use astrolabe_kube::kube::discovery::ApiResource;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -20,16 +16,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use tokio::sync::oneshot;
 
-use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use crate::builtin::Action;
 use crate::clock;
+use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::projection::config::{HIDDEN, SecretKey};
-use crate::projection::{
-    DetailField, DetailItem, DetailModel, ReplicaCounts, ResourceTable, SummaryTable,
-    custom_resource_detail, definition_detail, namespace_detail, track_ages,
-};
+use crate::projection::{DetailField, DetailItem, ReplicaCounts, SummaryTable, track_ages};
 use crate::resource_list::OpenDetail;
-use crate::session::{CustomKindId, ExecRequest, LogRequest, ObjectRef, Session};
-use crate::store::ObjectKey;
+use crate::session::{ExecRequest, LogRequest, Session};
 
 mod editor_panel;
 mod pod_actions;
@@ -37,74 +30,6 @@ mod workload_actions;
 
 pub use editor_panel::EditorPanel;
 use pod_actions::{Picking, PodAction, forward_target};
-
-/// What a detail tab shows: one object, addressed in its list's store.
-/// Custom resources are version-free (#41): each resolve reads the watch at
-/// the kind's current preferred version, so a version change keeps the tab.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum DetailTarget {
-    Namespace { name: String },
-    Definition { name: String },
-    Builtin { kind: BuiltinKind, key: ObjectKey },
-    Custom { id: CustomKindId, key: ObjectKey },
-}
-
-impl DetailTarget {
-    /// The object `reference` names (an Event's involved object): a
-    /// built-in kind, a Namespace, a CRD or a custom kind. A namespaced
-    /// object without a namespace of its own is in `namespace`.
-    pub fn by_reference(
-        reference: ObjectReference,
-        namespace: Option<String>,
-        session: &Session,
-    ) -> Result<Self, String> {
-        let kind = reference.kind.unwrap_or_default();
-        let name = reference.name.unwrap_or_default();
-        let target = format!("{kind}/{name}");
-        if name.is_empty() {
-            return Err(format!(
-                "Cannot open involved object {target}: name is missing"
-            ));
-        }
-        let namespaced_key =
-            || ObjectKey::new(reference.namespace.clone().or(namespace), name.clone());
-        let api_version = reference.api_version.clone();
-        if let Some(kind) = BuiltinKind::from_kind(&kind)
-            && api_version
-                .as_ref()
-                .is_none_or(|version| *version == (kind.registration().resource)().api_version)
-        {
-            return Ok(Self::Builtin {
-                kind,
-                key: namespaced_key(),
-            });
-        }
-        match (kind.as_str(), api_version.as_deref()) {
-            ("Namespace", None | Some("v1")) => Ok(Self::Namespace { name }),
-            ("CustomResourceDefinition", None | Some("apiextensions.k8s.io/v1")) => {
-                Ok(Self::Definition { name })
-            }
-            _ => {
-                let group = api_version
-                    .and_then(|version| version.split_once('/').map(|(group, _)| group.to_string()))
-                    .unwrap_or_default();
-                let id = CustomKindId { group, kind };
-                if let Some(custom) = session.custom_kind(&id) {
-                    let key = if custom.namespaced {
-                        namespaced_key()
-                    } else {
-                        ObjectKey::cluster_scoped(name)
-                    };
-                    Ok(Self::Custom { id, key })
-                } else {
-                    Err(format!(
-                        "Cannot open involved object {target}: kind is not registered"
-                    ))
-                }
-            }
-        }
-    }
-}
 
 /// Logs was pressed: open a Logs tab following this container.
 pub struct OpenLogs {
@@ -143,35 +68,14 @@ pub struct ResourceDetailPanel {
     focus_handle: FocusHandle,
 }
 
-/// The object as of this render, with what its actions need.
-struct Resolved {
-    model: DetailModel,
-    object: ObjectRef,
-    cascade: String,
-    actions: &'static [Action],
-    related: Option<RelatedRows>,
-}
-
-/// A related section as of this render.
-struct RelatedRows {
-    title: &'static str,
-    kind: BuiltinKind,
-    table: ResourceTable,
-    forbidden: bool,
-}
-
 impl ResourceDetailPanel {
     pub fn new(session: Entity<Session>, target: DetailTarget, cx: &mut Context<Self>) -> Self {
-        if let DetailTarget::Builtin { kind, key } = &target
-            && let Some(namespace) = &key.namespace
-        {
-            session.update(cx, |session, cx| {
+        let needed = watches(&target);
+        session.update(cx, |session, cx| {
+            for (kind, namespace) in &needed {
                 session.watch_builtin(*kind, namespace, cx);
-                if let Some(related) = &kind.registration().related {
-                    session.watch_builtin(related.kind, namespace, cx);
-                }
-            });
-        }
+            }
+        });
         cx.observe(&session, |panel, session, cx| {
             // A preferred version change needs the new version's watch, even
             // with the kind's list closed.
@@ -202,92 +106,7 @@ impl ResourceDetailPanel {
 
     /// [`Self::resolve`] with ages projected from `now`.
     fn resolve_at(&self, now: Timestamp, cx: &App) -> Option<Resolved> {
-        let session = self.session.read(cx);
-        match &self.target {
-            DetailTarget::Namespace { name } => {
-                let namespace = session.namespace_object(name)?;
-                Some(Resolved {
-                    model: namespace_detail(namespace, now),
-                    object: ObjectRef {
-                        resource: ApiResource::erase::<Namespace>(&()),
-                        key: ObjectKey::cluster_scoped(name.clone()),
-                    },
-                    cascade: "Deleting a Namespace deletes every object in it.".to_string(),
-                    actions: DEFAULT_ACTIONS,
-                    related: None,
-                })
-            }
-            DetailTarget::Definition { name } => {
-                let crd = session.crds().get(None, name)?;
-                Some(Resolved {
-                    model: definition_detail(crd, now),
-                    object: ObjectRef {
-                        resource: ApiResource::erase::<CustomResourceDefinition>(&()),
-                        key: ObjectKey::cluster_scoped(name.clone()),
-                    },
-                    cascade: format!(
-                        "Deleting a CustomResourceDefinition also deletes every {} object in the cluster.",
-                        crd.spec.names.kind
-                    ),
-                    actions: DEFAULT_ACTIONS,
-                    related: None,
-                })
-            }
-            DetailTarget::Builtin { kind, key } => {
-                let registration = kind.registration();
-                let namespace = key.namespace.as_deref()?;
-                let watch = session.builtin_watch_key(*kind, namespace);
-                let object = session
-                    .object_watch(&watch)?
-                    .get(Some(namespace), &key.name)?;
-                let related = registration.related.as_ref().and_then(|related| {
-                    let watch =
-                        session.object_watch(&session.builtin_watch_key(related.kind, namespace));
-                    let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
-                    let selected = (related.select)(object, &candidates);
-                    let forbidden = watch.is_some_and(|watch| watch.forbidden());
-                    if related.hide_when_empty && selected.is_empty() && !forbidden {
-                        return None;
-                    }
-                    Some(RelatedRows {
-                        title: related.title,
-                        kind: related.kind,
-                        table: (related.kind.registration().list)(&selected, now),
-                        forbidden,
-                    })
-                });
-                Some(Resolved {
-                    model: (registration.detail)(object, now)?,
-                    object: ObjectRef {
-                        resource: (registration.resource)(),
-                        key: key.clone(),
-                    },
-                    cascade: (registration.cascade)(object).to_string(),
-                    actions: registration.actions,
-                    related,
-                })
-            }
-            DetailTarget::Custom { id, key } => {
-                let kind = session.custom_kind(id)?;
-                let KindResource::Served(resource) = &kind.resource else {
-                    return None;
-                };
-                let namespace = key.namespace.as_deref();
-                let watch = session.custom_object_watch_key(kind, namespace);
-                let object = session.object_watch(&watch)?.get(namespace, &key.name)?;
-                Some(Resolved {
-                    model: custom_resource_detail(kind, object, now),
-                    object: ObjectRef {
-                        resource: resource.clone(),
-                        key: key.clone(),
-                    },
-                    cascade: "Objects that list it in ownerReferences will be garbage-collected."
-                        .to_string(),
-                    actions: DEFAULT_ACTIONS,
-                    related: None,
-                })
-            }
-        }
+        detail::resolve(&self.target, self.session.read(cx), now)
     }
 
     fn display_name(&self) -> String {
@@ -484,14 +303,6 @@ impl ResourceDetailPanel {
         let cell = |id: SharedString, text: String, first: bool| {
             table_cell(id, text, if first { 240. } else { 140. })
         };
-        let lowercase = related.title.to_lowercase();
-        let empty = if related.forbidden {
-            Some(format!("No permission to list {lowercase} here"))
-        } else if related.table.rows.is_empty() {
-            Some(format!("No {lowercase}"))
-        } else {
-            None
-        };
         let mut children = vec![
             div()
                 .id("related-title")
@@ -502,8 +313,8 @@ impl ResourceDetailPanel {
                 .child(related.title)
                 .into_any_element(),
         ];
-        match empty {
-            Some(text) => children.push(
+        match related.outcome {
+            RelatedOutcome::Forbidden(text) | RelatedOutcome::Empty(text) => children.push(
                 div()
                     .id("related-empty")
                     .aria_label(text.clone())
@@ -513,24 +324,22 @@ impl ResourceDetailPanel {
                     .child(text)
                     .into_any_element(),
             ),
-            None => {
+            RelatedOutcome::Rows(table) => {
                 children.push(
                     h_flex()
                         .id("related-head")
                         .text_sm()
                         .text_color(muted)
-                        .children(related.table.columns.iter().enumerate().map(
-                            |(index, column)| {
-                                cell(
-                                    SharedString::from(format!("related-column-{index}")),
-                                    column.header.clone(),
-                                    index == 0,
-                                )
-                            },
-                        ))
+                        .children(table.columns.iter().enumerate().map(|(index, column)| {
+                            cell(
+                                SharedString::from(format!("related-column-{index}")),
+                                column.header.clone(),
+                                index == 0,
+                            )
+                        }))
                         .into_any_element(),
                 );
-                for (row_index, row) in related.table.rows.into_iter().enumerate() {
+                for (row_index, row) in table.rows.into_iter().enumerate() {
                     let target = DetailTarget::Builtin {
                         kind: related.kind,
                         key: row.key.clone(),

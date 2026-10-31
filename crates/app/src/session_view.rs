@@ -8,11 +8,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::builtin::BuiltinKind;
+use crate::detail::DetailTarget;
 use crate::exec::ExecPanel;
 use crate::logs::LogsPanel;
-use crate::resource_detail::{
-    DetailTarget, EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel,
-};
+use crate::resource_detail::{EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel};
 use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
 use crate::session::{
     ConnectionHealth, CustomKindId, ExecRequest, LogRequest, ScriptedCluster, Session,
