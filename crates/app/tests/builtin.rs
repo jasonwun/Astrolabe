@@ -5,6 +5,9 @@ use astrolabe::builtin::{Action, BuiltinKind};
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use support::object;
+
+mod support;
 
 struct Contract {
     kind: BuiltinKind,
@@ -207,14 +210,13 @@ fn every_builtin_registration_matches_its_contract() {
 
 #[test]
 fn events_use_generic_three_section_details_without_special_status() {
-    let event: DynamicObject = serde_json::from_value(serde_json::json!({
+    let event: DynamicObject = object(serde_json::json!({
         "apiVersion": "v1",
         "kind": "Event",
         "metadata": {"name": "web.started", "namespace": "default"},
         "involvedObject": {"kind": "Pod", "name": "web", "namespace": "default"},
         "reason": "Started"
-    }))
-    .unwrap();
+    }));
 
     let detail =
         (BuiltinKind::Events.registration().detail)(&event, Timestamp::UNIX_EPOCH).unwrap();
@@ -229,14 +231,13 @@ fn events_use_generic_three_section_details_without_special_status() {
 
 #[test]
 fn an_events_row_opens_its_involved_object_from_any_cell() {
-    let event: DynamicObject = serde_json::from_value(serde_json::json!({
+    let event: DynamicObject = object(serde_json::json!({
         "apiVersion": "v1",
         "kind": "Event",
         "metadata": {"name": "web.started", "namespace": "default"},
         "involvedObject": {"apiVersion": "v1", "kind": "Pod", "name": "web", "namespace": "default", "uid": "uid-web"},
         "reason": "Started"
-    }))
-    .unwrap();
+    }));
     let registration = BuiltinKind::Events.registration();
 
     let row_target = registration.row_target.expect("Events open another object");

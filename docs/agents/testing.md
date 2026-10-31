@@ -132,6 +132,18 @@ tests with `tokio::time::timeout`.
 
 CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff.
 
+CI leaves the app crate out, so its `mutants` check passes on any
+app-only PR. After changing app logic (state, selection, branching; not
+layout), run the changed files and kill or justify, in the PR, every
+missed mutant:
+
+```sh
+dev/mutants.sh -p astrolabe -f crates/app/src/workspace.rs -j 4   # ~4 min
+```
+
+Paths a scripted test cannot reach stay missed: kubeconfig discovery
+(`discover_contexts`) and styling such as the selected row's colours.
+
 ## Scripted apiserver tests (gpui + real I/O)
 
 Tests that drive real network I/O (e.g. `Session::new` against a scripted

@@ -13,11 +13,11 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Ui, key, open, open_detail, snapshot};
+use support::{Ui, key, object, open, open_detail, snapshot};
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": namespace, "uid": "uid-pod",
                      "creationTimestamp": "2026-10-22T11:00:00Z",
@@ -32,12 +32,11 @@ fn crashing_pod(namespace: &str) -> DynamicObject {
             }]
         }
     }))
-    .unwrap()
 }
 
 /// Synthetic Deployment (plausible shape, not captured from a server).
 fn web_deployment() -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-deploy",
                      "creationTimestamp": "2026-10-20T12:00:00Z"},
@@ -50,7 +49,6 @@ fn web_deployment() -> DynamicObject {
         "status": {"updatedReplicas": 2, "readyReplicas": 2, "availableReplicas": 2,
                    "unavailableReplicas": 1}
     }))
-    .unwrap()
 }
 
 #[gpui_kit::test]
@@ -323,26 +321,24 @@ fn deleting_a_bare_pod_warns_of_nothing_else(cx: &mut TestAppContext) {
 
 /// Synthetic Event (plausible shape, not captured from a server).
 fn pod_event(name: &str, reason: &str, pod: &str, uid: &str) -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Event",
         "metadata": {"name": name, "namespace": "default"},
         "involvedObject": {"kind": "Pod", "name": pod, "namespace": "default", "uid": uid},
         "type": "Warning", "reason": reason, "message": format!("{reason} on {pod}"),
         "lastTimestamp": "2026-10-22T11:58:00Z",
     }))
-    .unwrap()
 }
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn labeled_pod(name: &str, app: &str) -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": name, "namespace": "default", "uid": format!("uid-{name}"),
                      "labels": {"app": app}},
         "spec": {"containers": [{"name": "app", "image": "nginx"}]},
         "status": {"phase": "Running"}
     }))
-    .unwrap()
 }
 
 #[gpui_kit::test]
@@ -458,7 +454,7 @@ fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn sidecar_pod() -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
         "spec": {
@@ -467,7 +463,6 @@ fn sidecar_pod() -> DynamicObject {
         },
         "status": {"phase": "Running"}
     }))
-    .unwrap()
 }
 
 #[gpui_kit::test]
@@ -636,7 +631,7 @@ fn a_single_container_pod_asks_only_for_the_shell(cx: &mut TestAppContext) {
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn serving_pod() -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
         "spec": {"containers": [
@@ -645,7 +640,6 @@ fn serving_pod() -> DynamicObject {
         ]},
         "status": {"phase": "Running"}
     }))
-    .unwrap()
 }
 
 fn forward(ui: &mut Ui<'_>, port: u16) {

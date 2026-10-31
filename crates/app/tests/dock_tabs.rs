@@ -9,7 +9,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Modifiers, MouseButton, Pixels, TestAppContext};
-use support::{Ui, key, open, snapshot};
+use support::{Ui, key, object, open, snapshot};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
@@ -118,13 +118,12 @@ fn a_closed_detail_reopens_as_a_fresh_selected_tab(cx: &mut TestAppContext) {
 /// Synthetic single-container Pod (plausible shape, not captured from a
 /// server).
 fn pod() -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
         "spec": {"containers": [{"name": "app", "image": "nginx"}]},
         "status": {"phase": "Running"}
     }))
-    .unwrap()
 }
 
 /// Open `web-1`'s detail, then the tab `open_child` opens from it, and

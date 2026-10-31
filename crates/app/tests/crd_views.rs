@@ -14,6 +14,9 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{TestAppContext, VisualTestContext};
+use support::object;
+
+mod support;
 
 type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
 
@@ -74,25 +77,23 @@ fn crontab_resource_at(version: &str) -> ApiResource {
 
 /// Synthetic custom resource (plausible shape, not captured from a server).
 fn crontab(name: &str, schedule: &str) -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": "stable.example.com/v1", "kind": "CronTab",
         "metadata": {"name": name, "namespace": "default", "uid": "uid-1",
                      "creationTimestamp": "2026-01-01T00:00:00Z"},
         "spec": {"cronSpec": schedule}
     }))
-    .unwrap()
 }
 
 /// Synthetic custom resource at `version` (plausible shape, not captured
 /// from a server).
 fn crontab_at(version: &str, namespace: &str, spec: serde_json::Value) -> DynamicObject {
-    serde_json::from_value(serde_json::json!({
+    object(serde_json::json!({
         "apiVersion": format!("stable.example.com/{version}"), "kind": "CronTab",
         "metadata": {"name": "nightly", "namespace": namespace, "uid": "uid-1",
                      "creationTimestamp": "2026-01-01T00:00:00Z"},
         "spec": spec
     }))
-    .unwrap()
 }
 
 fn default_key() -> WatchKey {
