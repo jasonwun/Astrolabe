@@ -117,7 +117,7 @@ impl SessionView {
             }
         }
         let session = self.session.clone();
-        let panel = cx.new(|cx| ResourceDetailPanel::new(session, target.clone(), cx));
+        let panel = cx.new(|cx| ResourceDetailPanel::new(session, target.clone(), window, cx));
         cx.subscribe_in(&panel, window, |this, _, event: &OpenEditor, window, cx| {
             this.open_editor(event.title.clone(), event.yaml.clone(), window, cx);
         })

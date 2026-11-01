@@ -10,7 +10,8 @@ use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::table::TableState;
+use gpui_kit::component::{Size, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use tokio::sync::oneshot;
@@ -20,8 +21,9 @@ use crate::clock;
 use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::projection::config::{HIDDEN, SecretKey};
 use crate::projection::{DetailField, DetailItem, ReplicaCounts, SummaryTable, track_ages};
-use crate::resource_list::OpenDetail;
+use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::{ExecRequest, LogRequest, Session};
+use crate::store::ObjectKey;
 
 mod editor_panel;
 mod pod_actions;
@@ -61,6 +63,8 @@ pub struct ResourceDetailPanel {
     /// masked.
     revealed: BTreeSet<String>,
     notice: Option<String>,
+    /// The Related section's table; empty when the target's kind has none.
+    related_table: Entity<TableState<RowsTable>>,
     /// Re-renders when the youngest shown age next changes (#70); replaced
     /// on every render, and dropped with the panel.
     tick: Task<()>,
@@ -68,7 +72,12 @@ pub struct ResourceDetailPanel {
 }
 
 impl ResourceDetailPanel {
-    pub fn new(session: Entity<Session>, target: DetailTarget, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        session: Entity<Session>,
+        target: DetailTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let needed = watches(&target);
         session.update(cx, |session, cx| {
             for watch in &needed {
@@ -86,6 +95,8 @@ impl ResourceDetailPanel {
             cx.notify();
         })
         .detach();
+        let open_row = open_row_with(cx, Self::open_related);
+        let related_table = cx.new(|cx| rows_table_state(RowsTable::related(open_row), window, cx));
         Self {
             session,
             target,
@@ -94,8 +105,22 @@ impl ResourceDetailPanel {
             picking: None,
             revealed: BTreeSet::new(),
             notice: None,
+            related_table,
             tick: Task::ready(()),
             focus_handle: cx.focus_handle(),
+        }
+    }
+
+    /// A Related row's first cell was clicked: open that object's detail.
+    fn open_related(&mut self, key: &ObjectKey, cx: &mut Context<Self>) {
+        let DetailTarget::Builtin { kind, .. } = &self.target else {
+            return;
+        };
+        if let Some(related) = &kind.registration().related {
+            cx.emit(OpenDetail(DetailTarget::Builtin {
+                kind: related.kind,
+                key: key.clone(),
+            }));
         }
     }
 
@@ -289,87 +314,54 @@ impl ResourceDetailPanel {
             })
     }
 
-    /// The related kind's list columns over the selected objects; a row's
-    /// first cell opens its detail.
+    /// The related kind's list columns over the selected objects, fitted to
+    /// the section's width by that kind's weights; a row's first cell opens
+    /// its detail.
     fn render_related(&self, related: RelatedRows, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        let muted = theme.muted_foreground;
-        let cell = |id: SharedString, text: String, first: bool| {
-            table_cell(id, text, if first { 240. } else { 140. })
-        };
-        let mut children = vec![
-            div()
-                .id("related-title")
-                .aria_label(related.title)
+        let muted = cx.theme().muted_foreground;
+        let content = match related.outcome {
+            RelatedOutcome::Forbidden(text) | RelatedOutcome::Empty(text) => div()
+                .id("related-empty")
+                .aria_label(text.clone())
                 .test_support()
-                .text_xs()
+                .text_sm()
                 .text_color(muted)
-                .child(related.title)
+                .child(text)
                 .into_any_element(),
-        ];
-        match related.outcome {
-            RelatedOutcome::Forbidden(text) | RelatedOutcome::Empty(text) => children.push(
-                div()
-                    .id("related-empty")
-                    .aria_label(text.clone())
-                    .test_support()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(text)
-                    .into_any_element(),
-            ),
             RelatedOutcome::Rows(table) => {
-                children.push(
-                    h_flex()
-                        .id("related-head")
-                        .text_sm()
-                        .text_color(muted)
-                        .children(table.columns.iter().enumerate().map(|(index, column)| {
-                            cell(
-                                SharedString::from(format!("related-column-{index}")),
-                                column.header.clone(),
-                                index == 0,
-                            )
-                        }))
-                        .into_any_element(),
-                );
-                for (row_index, row) in table.rows.into_iter().enumerate() {
-                    let target = DetailTarget::Builtin {
-                        kind: related.kind,
-                        key: row.key.clone(),
-                    };
-                    let mut cells = row.cells.into_iter().enumerate().map(|(index, text)| {
-                        cell(
-                            SharedString::from(format!("related-cell-{row_index}-{index}")),
-                            text,
-                            index == 0,
-                        )
-                    });
-                    let first = cells.next().map(|first| {
-                        first
-                            .id(SharedString::from(format!("related-row-{}", row.key)))
-                            .cursor_pointer()
-                            .text_color(theme.link)
-                            .on_click(
-                                cx.listener(move |_, _, _, cx| cx.emit(OpenDetail(target.clone()))),
-                            )
-                    });
-                    children.push(
-                        h_flex()
-                            .text_sm()
-                            .children(first)
-                            .children(cells)
-                            .into_any_element(),
-                    );
-                }
+                // Header plus rows, inside the table's 1px borders: the
+                // detail body scrolls, the table never does vertically.
+                // `DataTable` draws both at its default size's row height.
+                let height =
+                    Size::default().table_row_height() * (table.rows.len() + 1) as f32 + px(2.);
+                self.related_table.update(cx, |state, cx| {
+                    // Rebuilt only when the rows change, not on every frame.
+                    if state.delegate().table() != &table {
+                        state.delegate_mut().set_table(table);
+                        state.refresh(cx);
+                    }
+                });
+                fitted_table(&self.related_table, "related-table")
+                    .w_full()
+                    .h(height)
+                    .into_any_element()
             }
-        }
+        };
         v_flex()
             .id("detail-related")
             .test_support()
             .gap_1()
             .p_2()
-            .children(children)
+            .child(
+                div()
+                    .id("related-title")
+                    .aria_label(related.title)
+                    .test_support()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(related.title),
+            )
+            .child(content)
             .into_any_element()
     }
 

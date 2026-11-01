@@ -1,6 +1,6 @@
 //! Detail tables end an overlong cell in an ellipsis inside its column,
 //! clear of the gutter before the next one (#75), and every summary-table
-//! cell id is unique within its table (#89). Synthetic objects
+//! and Related cell id is unique within its table (#89). Synthetic objects
 //! (plausible shapes, never captured from a real apiserver).
 
 mod support;
@@ -11,7 +11,8 @@ use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, Window, px};
 use support::{key, object, open, open_detail, snapshot};
 
-/// A cell's right padding (`pr_2`): the gap its text keeps from the next.
+/// A cell's right padding (`pr_2` in a summary table, the table's own cell
+/// padding in a Related table): the gap its text keeps from the next.
 const GUTTER: f32 = 8.;
 
 const LONG: &str = "Container image \"busybox:1.36.1-musl-with-a-much-longer-tag\" \
@@ -144,12 +145,68 @@ fn a_pod_event_message_stops_short_of_the_count_column(cx: &mut TestAppContext) 
     ui.frame(|window, _| {
         let related = window.within("detail-related");
         assert!(related.try_find_by_label(LONG).is_some());
-        // Message is column 3, Count column 4.
+        // Message is column 3, Count column 4. The Related table is the
+        // list's table: the text is the cell's content and the next column
+        // starts at the table's own cell for it (#98).
         assert_clear_of(
             window,
             "detail-related",
-            "related-cell-0-3-text".into(),
-            "related-cell-0-4".into(),
+            "related-cell-0-3".into(),
+            "table-cell-0:4".into(),
         );
+    });
+}
+
+#[gpui_kit::test]
+fn related_cell_ids_are_unique_within_the_table(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let (mut events, event_events) = mpsc::channel(32);
+    let mut ui = open(
+        cx,
+        vec![
+            (key(BuiltinKind::Pods, "default"), pod_events),
+            (key(BuiltinKind::Events, "default"), event_events),
+        ],
+    );
+    let pod = object(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "agent-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {"containers": [{"name": "app", "image": "busybox"}]},
+        "status": {"phase": "Running"}
+    }));
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod], "agent-1");
+    let event = |name: &str, reason: &str| {
+        object(serde_json::json!({
+            "apiVersion": "v1", "kind": "Event",
+            "metadata": {"name": name, "namespace": "default"},
+            "involvedObject": {"kind": "Pod", "name": "agent-1", "namespace": "default",
+                               "uid": "uid-pod"},
+            "type": "Normal", "reason": reason, "message": "m", "count": 1,
+            "lastTimestamp": "2026-10-22T11:58:00Z",
+        }))
+    };
+    snapshot(
+        &mut events,
+        vec![
+            event("agent-1.pulled", "Pulled"),
+            event("agent-1.started", "Started"),
+        ],
+    );
+    ui.settle();
+
+    ui.frame(|window, _| {
+        let related = window.within("detail-related");
+        let mut ids = vec![
+            "related-row-default/agent-1.pulled".to_owned(),
+            "related-row-default/agent-1.started".to_owned(),
+        ];
+        for row in 0..2 {
+            for col in 1..3 {
+                ids.push(format!("related-cell-{row}-{col}"));
+            }
+        }
+        for id in ids {
+            assert_eq!(related.find_all(id.clone()).len(), 1, "{id}");
+        }
     });
 }

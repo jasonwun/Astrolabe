@@ -345,10 +345,10 @@ fn a_service_lists_its_endpoint_slices_live_and_opens_one(cx: &mut TestAppContex
     ui.frame(|window, _| {
         let related = window.within("detail-related");
         assert!(related.try_find_by_label("Endpoint Slices").is_some());
-        let columns: Vec<String> = (0..4)
+        let columns: Vec<String> = (0..4usize)
             .map(|index| {
                 related
-                    .try_find(format!("related-column-{index}"))
+                    .try_find(("col-header", index))
                     .and_then(|column| column.label().map(|label| label.to_string()))
                     .unwrap_or_default()
             })
