@@ -1,5 +1,5 @@
 //! The session's one I/O seam: every scripted-vs-live decision lives here,
-//! so `Session` starts watches, discovers, deletes and hands out its client
+//! so `Session` starts watches, discovers, operates and hands out its client
 //! without knowing which kind of cluster it talks to. A concrete enum, not
 //! a trait (workspace decision: main-thread GPUI entities, no trait
 //! boundary).
@@ -18,14 +18,13 @@ use tokio::sync::oneshot;
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
     CrdWatchMessage, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, NamespaceWatchMessage,
-    ObjectRef, ObjectWatchMessage, Operation, WatchError, WatchKey, WatchMessage,
+    ObjectWatchMessage, Operation, WatchError, WatchKey, WatchMessage,
 };
 
 /// Retry interval for a watch the apiserver refused with 403.
 const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, String>>;
-type DeleteFn = Box<dyn FnMut(&ObjectRef) -> Result<(), String>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
 type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
@@ -125,14 +124,13 @@ impl Drop for PortForward {
 }
 
 /// Hand-fed cluster I/O for tests and demos: watch events come from
-/// channels, discovery, delete, operations, log chunks, exec output and
+/// channels, discovery, operations, log chunks, exec output and
 /// port-forward reports from closures.
 pub struct ScriptedCluster {
     pub(crate) namespaces: Option<mpsc::Receiver<NamespaceWatchMessage>>,
     pub(crate) crds: Option<mpsc::Receiver<CrdWatchMessage>>,
     pub(crate) watches: HashMap<WatchKey, mpsc::Receiver<ObjectWatchMessage>>,
     discover: DiscoverFn,
-    delete: DeleteFn,
     operate: OperateFn,
     logs: LogsFn,
     exec: ExecFn,
@@ -148,7 +146,6 @@ impl ScriptedCluster {
             crds: None,
             watches: HashMap::new(),
             discover: Box::new(|| Ok(ServedResources::default())),
-            delete: Box::new(|_| Ok(())),
             operate: Box::new(|_| Ok(())),
             logs: Box::new(|_| Vec::new()),
             exec: Box::new(|_, _| Vec::new()),
@@ -173,14 +170,6 @@ impl ScriptedCluster {
         discover: impl FnMut() -> Result<ServedResources, String> + 'static,
     ) -> Self {
         self.discover = Box::new(discover);
-        self
-    }
-
-    pub fn delete(
-        mut self,
-        delete: impl FnMut(&ObjectRef) -> Result<(), String> + 'static,
-    ) -> Self {
-        self.delete = Box::new(delete);
         self
     }
 
@@ -300,27 +289,7 @@ impl ClusterIo {
         }
     }
 
-    pub(crate) fn delete(&mut self, object: ObjectRef) -> oneshot::Receiver<Result<(), String>> {
-        match self {
-            Self::Scripted(cluster) => answered((cluster.delete)(&object)),
-            Self::Live { client, .. } => {
-                let client = client.clone();
-                spawn_cluster(async move {
-                    let client = client.await?;
-                    astrolabe_kube::resource::delete(
-                        &client,
-                        &object.resource,
-                        object.key.namespace.as_deref(),
-                        &object.key.name,
-                    )
-                    .await
-                    .map_err(|error| error.to_string())
-                })
-            }
-        }
-    }
-
-    /// Run a registered workload operation.
+    /// Run one operation on one object.
     pub(crate) fn operate(
         &mut self,
         operation: Operation,
@@ -368,6 +337,15 @@ impl ClusterIo {
                             astrolabe_kube::resource::trigger_cron_job(
                                 &client,
                                 object.key.namespace.as_deref().unwrap_or_default(),
+                                &object.key.name,
+                            )
+                            .await
+                        }
+                        Operation::Delete { object } => {
+                            astrolabe_kube::resource::delete(
+                                &client,
+                                &object.resource,
+                                object.key.namespace.as_deref(),
                                 &object.key.name,
                             )
                             .await

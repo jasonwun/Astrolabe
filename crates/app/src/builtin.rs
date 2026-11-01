@@ -105,6 +105,25 @@ pub enum Action {
     Delete,
 }
 
+impl Action {
+    /// The toolbar text for `model`'s detail: Suspend reads Resume while
+    /// the object is suspended.
+    pub fn label(self, model: &DetailModel) -> &'static str {
+        match self {
+            Self::Logs => "Logs",
+            Self::Exec => "Exec",
+            Self::PortForward => "Port Forward",
+            Self::Scale => "Scale",
+            Self::RolloutRestart => "Rollout Restart",
+            Self::Suspend if model.suspended == Some(true) => "Resume",
+            Self::Suspend => "Suspend",
+            Self::Trigger => "Trigger",
+            Self::Edit => "Edit YAML",
+            Self::Delete => "Delete",
+        }
+    }
+}
+
 /// The generic detail's actions: what every kind without its own set gets.
 pub const DEFAULT_ACTIONS: &[Action] = &[Action::Edit, Action::Delete];
 

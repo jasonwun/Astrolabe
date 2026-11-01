@@ -1,16 +1,19 @@
 //! Detail resolution over a `Session` (#97): the watches a detail tab needs
-//! and the Related section's rule, with no view and no clicks. Synthetic
+//! and the Related section's rule, and the object a tab's operations
+//! address (#96), with no view and no clicks. Synthetic
 //! objects (plausible shapes, never captured from a real apiserver).
 
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::detail::{DetailTarget, NeededWatch, RelatedOutcome, Resolved, resolve, watches};
-use astrolabe::session::{ScriptedCluster, Session, WatchError};
+use astrolabe::session::{ObjectRef, ScriptedCluster, Session, WatchError};
 use astrolabe::store::ObjectKey;
+use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_kube::kube::discovery::ApiResource;
 use futures::channel::mpsc;
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
 use support::{Sender, key, object, snapshot};
@@ -223,4 +226,33 @@ fn an_involved_definition_opens_as_a_definition(cx: &mut TestAppContext) {
             name: "widgets.example.com".to_string()
         })
     );
+}
+
+/// The object a detail tab's operations address, as of `session`'s
+/// watches.
+fn object_ref(
+    target: &DetailTarget,
+    session: &Entity<Session>,
+    cx: &mut TestAppContext,
+) -> Option<ObjectRef> {
+    cx.run_until_parked();
+    cx.read(|cx| target.object(session.read(cx)))
+}
+
+#[gpui_kit::test]
+fn an_operation_addresses_the_shown_object_until_it_leaves_its_watch(cx: &mut TestAppContext) {
+    let target = target(BuiltinKind::Deployments, "web");
+    let (session, mut deployments, _pods) = session(&target, cx);
+    snapshot(&mut deployments, vec![web_deployment()]);
+    assert_eq!(
+        object_ref(&target, &session, cx),
+        Some(ObjectRef {
+            resource: ApiResource::erase::<Deployment>(&()),
+            key: ObjectKey::new(Some("default".to_string()), "web"),
+        })
+    );
+
+    // Gone from the watch: Delete, Scale and the rest send nothing.
+    snapshot(&mut deployments, vec![]);
+    assert_eq!(object_ref(&target, &session, cx), None);
 }

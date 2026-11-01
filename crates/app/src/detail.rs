@@ -5,10 +5,11 @@
 //! the panel renders the answer. The watches a target reads are named here
 //! too, so the panel starts exactly those.
 
-use astrolabe_kube::crd::KindResource;
+use astrolabe_kube::crd::{CustomKind, KindResource};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, ObjectReference};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 
 use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
@@ -86,6 +87,65 @@ impl DetailTarget {
     }
 }
 
+impl DetailTarget {
+    /// The object an operation on this target addresses, while it is still
+    /// in its watch; `None` once it is gone. Looks the object up without
+    /// projecting it.
+    pub fn object(&self, session: &Session) -> Option<ObjectRef> {
+        let (resource, key) = match self {
+            Self::Namespace { name } => {
+                session.namespace_object(name)?;
+                (
+                    ApiResource::erase::<Namespace>(&()),
+                    ObjectKey::cluster_scoped(name.clone()),
+                )
+            }
+            Self::Definition { name } => {
+                session.crds().get(None, name)?;
+                (
+                    ApiResource::erase::<CustomResourceDefinition>(&()),
+                    ObjectKey::cluster_scoped(name.clone()),
+                )
+            }
+            Self::Builtin { kind, key } => {
+                session.builtin_object(*kind, key.namespace.as_deref()?, &key.name)?;
+                ((kind.registration().resource)(), key.clone())
+            }
+            Self::Custom { id, key } => {
+                let (kind, resource) = served_kind(session, id)?;
+                custom_object(session, kind, key)?;
+                (resource.clone(), key.clone())
+            }
+        };
+        Some(ObjectRef { resource, key })
+    }
+}
+
+/// Custom kind `id` and the resource it is served at; `None` while it is
+/// unknown or not served.
+fn served_kind<'a>(
+    session: &'a Session,
+    id: &CustomKindId,
+) -> Option<(&'a CustomKind, &'a ApiResource)> {
+    let kind = session.custom_kind(id)?;
+    let KindResource::Served(resource) = &kind.resource else {
+        return None;
+    };
+    Some((kind, resource))
+}
+
+/// `key`'s object of custom kind `kind`, from the watch at its preferred
+/// version.
+fn custom_object<'a>(
+    session: &'a Session,
+    kind: &CustomKind,
+    key: &ObjectKey,
+) -> Option<&'a DynamicObject> {
+    let namespace = key.namespace.as_deref();
+    let watch = session.custom_object_watch_key(kind, namespace);
+    session.object_watch(&watch)?.get(namespace, &key.name)
+}
+
 /// The object as of `now`, with what its actions need.
 #[derive(Debug)]
 pub struct Resolved {
@@ -153,15 +213,13 @@ pub fn watches(target: &DetailTarget) -> Vec<NeededWatch> {
 
 /// `target` as of `now`, or `None` once it no longer exists.
 pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Option<Resolved> {
+    let object = target.object(session)?;
     match target {
         DetailTarget::Namespace { name } => {
             let namespace = session.namespace_object(name)?;
             Some(Resolved {
                 model: namespace_detail(namespace, now),
-                object: ObjectRef {
-                    resource: ApiResource::erase::<Namespace>(&()),
-                    key: ObjectKey::cluster_scoped(name.clone()),
-                },
+                object,
                 cascade: "Deleting a Namespace deletes every object in it.".to_string(),
                 actions: DEFAULT_ACTIONS,
                 related: None,
@@ -171,10 +229,7 @@ pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Opti
             let crd = session.crds().get(None, name)?;
             Some(Resolved {
                 model: definition_detail(crd, now),
-                object: ObjectRef {
-                    resource: ApiResource::erase::<CustomResourceDefinition>(&()),
-                    key: ObjectKey::cluster_scoped(name.clone()),
-                },
+                object,
                 cascade: format!(
                     "Deleting a CustomResourceDefinition also deletes every {} object in the cluster.",
                     crd.spec.names.kind
@@ -186,11 +241,11 @@ pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Opti
         DetailTarget::Builtin { kind, key } => {
             let registration = kind.registration();
             let namespace = key.namespace.as_deref()?;
-            let object = session.builtin_object(*kind, namespace, &key.name)?;
+            let shown = session.builtin_object(*kind, namespace, &key.name)?;
             let related = registration.related.as_ref().and_then(|related| {
                 let watch = session.builtin_watch(related.kind, namespace);
                 let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
-                let selected = (related.select)(object, &candidates);
+                let selected = (related.select)(shown, &candidates);
                 let outcome = if watch.is_some_and(|watch| watch.forbidden()) {
                     RelatedOutcome::Forbidden(forbidden_message(related.title))
                 } else if related.hide_when_empty && selected.is_empty() {
@@ -209,30 +264,18 @@ pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Opti
                 })
             });
             Some(Resolved {
-                model: (registration.detail)(object, now)?,
-                object: ObjectRef {
-                    resource: (registration.resource)(),
-                    key: key.clone(),
-                },
-                cascade: (registration.cascade)(object).to_string(),
+                model: (registration.detail)(shown, now)?,
+                object,
+                cascade: (registration.cascade)(shown).to_string(),
                 actions: registration.actions,
                 related,
             })
         }
         DetailTarget::Custom { id, key } => {
-            let kind = session.custom_kind(id)?;
-            let KindResource::Served(resource) = &kind.resource else {
-                return None;
-            };
-            let namespace = key.namespace.as_deref();
-            let watch = session.custom_object_watch_key(kind, namespace);
-            let object = session.object_watch(&watch)?.get(namespace, &key.name)?;
+            let (kind, _) = served_kind(session, id)?;
             Some(Resolved {
-                model: custom_resource_detail(kind, object, now),
-                object: ObjectRef {
-                    resource: resource.clone(),
-                    key: key.clone(),
-                },
+                model: custom_resource_detail(kind, custom_object(session, kind, key)?, now),
+                object,
                 cascade: "Objects that list it in ownerReferences will be garbage-collected."
                     .to_string(),
                 actions: DEFAULT_ACTIONS,

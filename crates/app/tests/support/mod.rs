@@ -12,7 +12,7 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe::clock::Clock;
 use astrolabe::projection::{DetailModel, ResourceTable};
 use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
     ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::{Preselection, WorkspaceView};
@@ -93,21 +93,19 @@ pub fn open(
     let execed: Execed = Rc::default();
     let forwarded: Forwarded = Rc::default();
     let mut cluster = ScriptedCluster::new(namespace_events)
-        .delete({
-            let deleted = deleted.clone();
-            move |object: &ObjectRef| {
-                let resource = &object.resource;
-                deleted.borrow_mut().push((
-                    format!("{}/{}", resource.api_version, resource.kind),
-                    object.key.namespace.clone(),
-                    object.key.name.clone(),
-                ));
-                Ok(())
-            }
-        })
         .operate({
+            let deleted = deleted.clone();
             let operated = operated.clone();
             move |operation: &Operation| {
+                if let Operation::Delete { object } = operation {
+                    let resource = &object.resource;
+                    deleted.borrow_mut().push((
+                        format!("{}/{}", resource.api_version, resource.kind),
+                        object.key.namespace.clone(),
+                        object.key.name.clone(),
+                    ));
+                    return Ok(());
+                }
                 operated.borrow_mut().push(operation.clone());
                 match operation {
                     Operation::Scale { replicas: 0, .. } => Err("scale refused".to_string()),

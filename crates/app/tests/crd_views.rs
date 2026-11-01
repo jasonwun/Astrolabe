@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::session::{
-    ObjectRef, ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
@@ -147,9 +147,12 @@ fn open(
                 }
             })))
         })
-        .delete({
+        .operate({
             let deleted = deleted.clone();
-            move |object: &ObjectRef| {
+            move |operation: &Operation| {
+                let Operation::Delete { object } = operation else {
+                    panic!("unexpected operation {operation:?}");
+                };
                 let resource = &object.resource;
                 deleted.borrow_mut().push((
                     format!("{}/{}", resource.api_version, resource.kind),
