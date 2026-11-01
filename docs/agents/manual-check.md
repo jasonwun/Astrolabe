@@ -137,13 +137,29 @@ of context.
    `dev/shot.sh` finds it. Run one app at a time: with two, `dev/shot.sh`
    refuses.
 3. For each view the change touches, capture with `--crop` a region
-   that holds no ages: the header row and column boundaries. Capture into
-   `before/`, kill the baseline, launch this branch and repeat the same
-   actions into `after/`, then:
+   that holds no ages: the header row and column boundaries. Once the
+   baseline's clicks and crops are found, write them to a script that
+   takes the output directory, and run it for both captures:
+
+   ```sh
+   # $SCRATCH/actions.sh
+   set -euo pipefail
+   D=$1
+   dev/shot.sh "$D" pods click --x 263 --y 204 >/dev/null; sleep 1
+   dev/shot.sh "$D" pods --crop 240,120,640,300 >/dev/null
+   ```
+
+   Run `bash "$SCRATCH/actions.sh" "$SCRATCH/before"`, kill the baseline,
+   launch this branch, run `bash "$SCRATCH/actions.sh" "$SCRATCH/after"`,
+   then:
 
    ```sh
    dev/shot-same.sh "$SCRATCH/before" "$SCRATCH/after" pods hpa related
    ```
+
+   The script is what makes the runs the same: #97's context was
+   compacted between the two runs, the clicks were gone, and only the
+   session transcript had them.
 
    Open the same tabs in both runs: an extra tab moves the table down
    10pt and every crop reads `DIFF`.
