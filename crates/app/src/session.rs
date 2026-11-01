@@ -565,6 +565,26 @@ impl Session {
         }
     }
 
+    /// The watch holding `kind`'s objects in `namespace`, once started.
+    pub fn builtin_watch(
+        &self,
+        kind: BuiltinKind,
+        namespace: &str,
+    ) -> Option<&Watched<DynamicObject>> {
+        self.object_watch(&self.builtin_watch_key(kind, namespace))
+    }
+
+    /// The object `name` in `namespace` of `kind`, from its watch.
+    pub fn builtin_object(
+        &self,
+        kind: BuiltinKind,
+        namespace: &str,
+        name: &str,
+    ) -> Option<&DynamicObject> {
+        self.builtin_watch(kind, namespace)?
+            .get(Some(namespace), name)
+    }
+
     /// Ensure the watch an object of kind `id` in `namespace` (`None` when
     /// cluster-scoped) is read from, at the kind's current preferred
     /// version, whatever the namespace selection (#41). Shares the list's

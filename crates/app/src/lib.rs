@@ -6,6 +6,7 @@
 pub mod builtin;
 pub mod clock;
 mod cluster_io;
+pub mod detail;
 pub mod exec;
 pub mod jsonpath;
 pub mod keymap;
