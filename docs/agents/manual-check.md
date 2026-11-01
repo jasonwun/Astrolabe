@@ -77,14 +77,17 @@ path of `<name>.png`, shrunk to one pixel per window point.
   matters, pass `--crop` with the rectangle read off an earlier shrunk
   copy: a whole window still reads at 120-170KB, a cropped table at about
   16KB (#68).
-- Resize the window with System Events:
+- Resize the window, and bring it to the front, with:
 
   ```sh
-  osascript -e 'tell application "System Events" to tell process "astrolabe" to set size of window 1 to {900, 800}'
+  dev/resize.sh 900 800
   ```
 
-  Right after launch it fails with `-10006` until the window exists;
-  retry once a screenshot shows the window (#99).
+  It finds this worktree's app by pid. Do not tell System Events
+  `process "astrolabe"`: with another worktree's app running, that
+  resizes theirs, and its window then covers this one (#98). Right after
+  launch it fails with `-10006` until the window exists; retry once a
+  screenshot shows the window (#99).
 - `orca computer scroll` moves no GPUI scroll view. Scroll a view
   vertically (a detail pane, a long list) with real wheel events, then
   capture (#99):
