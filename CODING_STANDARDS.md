@@ -209,8 +209,16 @@ helper or an inline run that repeats `open_list`'s or `open_detail`'s steps
 (select the namespace, click the nav item, send the snapshot, click the
 row) is a finding, whatever its name.
 
+A PR that moves steps tests repeat into a `support` helper names the
+helper in a rule here, and a UI-test helper also in
+`docs/agents/gpui-kit.md`'s UI tests list. A new helper missing from
+either is a finding.
+
 Origin: #101 shared these helpers after four files had copied them; a
 fifth copy, `workload_views`' `open_pod_detail`, was missed because it
 had another name, and only the review found it (#101 retro).
 `LogCapture` lived in `session.rs` until #111's test rebuilt it and
-neither reviewer noticed (#111 retro).
+neither reviewer noticed (#111 retro). #136 added `support::list` /
+`support::detail` and no doc named them until its retro (#137); #117
+added `open_list` and named it in neither file until the Standards
+review asked (#117 retro).
