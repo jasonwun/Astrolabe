@@ -8,7 +8,7 @@ use astrolabe::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{key, object, open, open_detail, snapshot};
+use support::{key, object, open, open_detail, open_list};
 
 /// How far down the detail each id renders, panicking on one that does
 /// not.
@@ -205,10 +205,9 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
     );
     ui.cx
         .simulate_resize(gpui_kit::size(gpui_kit::px(1300.), gpui_kit::px(800.)));
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::HorizontalPodAutoscalers.nav_id(), cx));
-    snapshot(
+    open_list(
+        &mut ui,
+        BuiltinKind::HorizontalPodAutoscalers,
         &mut hpas,
         vec![object(serde_json::json!({
             "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
@@ -219,7 +218,6 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
             }
         }))],
     );
-    ui.settle();
 
     ui.frame(|window, _| {
         let table = window.try_find("list-table").unwrap().bounds();
@@ -276,10 +274,9 @@ fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut Tes
     );
     ui.cx
         .simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(800.)));
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::HorizontalPodAutoscalers.nav_id(), cx));
-    snapshot(
+    open_list(
+        &mut ui,
+        BuiltinKind::HorizontalPodAutoscalers,
         &mut hpas,
         vec![object(serde_json::json!({
             "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
@@ -290,7 +287,6 @@ fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut Tes
             }
         }))],
     );
-    ui.settle();
 
     let table = ui.frame(|window, _| window.try_find("list-table").unwrap().bounds());
     assert!(table.size.width < gpui_kit::px(7. * 80.), "{table:?}");

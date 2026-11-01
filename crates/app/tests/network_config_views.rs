@@ -12,7 +12,7 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Sender, Ui, key, object, open, open_detail, snapshot};
+use support::{Sender, Ui, key, object, open, open_detail, open_list, snapshot};
 
 fn web_service(selector: Option<serde_json::Value>) -> DynamicObject {
     let mut spec = serde_json::json!({
@@ -495,11 +495,12 @@ fn a_secret_value_shows_only_once_revealed(cx: &mut TestAppContext) {
         cx,
         vec![(key(BuiltinKind::Secrets, "default"), secret_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Secrets.nav_id(), cx));
-    snapshot(&mut secrets, vec![db_secret()]);
-    ui.settle();
+    open_list(
+        &mut ui,
+        BuiltinKind::Secrets,
+        &mut secrets,
+        vec![db_secret()],
+    );
     ui.frame(|window, cx| {
         assert!(
             window.try_find_by_label("password").is_some(),

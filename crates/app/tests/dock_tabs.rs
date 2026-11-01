@@ -9,7 +9,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Modifiers, MouseButton, Pixels, TestAppContext};
-use support::{Ui, key, object, open, snapshot};
+use support::{Ui, key, object, open, open_detail};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
@@ -131,13 +131,7 @@ fn pod() -> DynamicObject {
 fn closes_a_child_tab(cx: &mut TestAppContext, open_child: impl FnOnce(&mut Ui<'_>), label: &str) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
-    snapshot(&mut pods, vec![pod()]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web-1", cx));
-    ui.settle();
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     open_child(&mut ui);
     ui.settle();
     ui.frame(|window, _| assert!(window.try_find_by_label(label).is_some()));

@@ -13,7 +13,7 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Ui, key, object, open, open_detail, snapshot};
+use support::{Ui, key, object, open, open_detail, open_list, snapshot};
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
@@ -55,17 +55,15 @@ fn web_deployment() -> DynamicObject {
 fn pods_list_and_detail_use_the_generic_pipeline(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    ui.namespaces(&["default"]);
-    ui.settle();
-
+    open_list(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+    );
     ui.frame(|window, cx| {
         assert!(window.try_find_by_label("Workloads").is_some());
         assert!(window.try_find(BuiltinKind::Deployments.nav_id()).is_some());
-        window.click(BuiltinKind::Pods.nav_id(), cx);
-    });
-    snapshot(&mut pods, vec![crashing_pod("default")]);
-    ui.settle();
-    ui.frame(|window, cx| {
         assert!(window.try_find_by_label("Restarts").is_some());
         assert!(window.try_find_by_label("CrashLoopBackOff").is_some());
         assert!(window.try_find_by_label("node-a").is_some());
@@ -126,12 +124,12 @@ fn deployments_show_a_replica_bar(cx: &mut TestAppContext) {
         cx,
         vec![(key(BuiltinKind::Deployments, "default"), deployment_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-
-    ui.frame(|window, cx| window.click(BuiltinKind::Deployments.nav_id(), cx));
-    snapshot(&mut deployments, vec![web_deployment()]);
-    ui.settle();
+    open_list(
+        &mut ui,
+        BuiltinKind::Deployments,
+        &mut deployments,
+        vec![web_deployment()],
+    );
     ui.frame(|window, cx| {
         assert!(window.try_find_by_label("Up-to-date").is_some());
         assert!(window.try_find_by_label("2/3").is_some());
@@ -192,13 +190,13 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
         cx,
         vec![(key(BuiltinKind::Deployments, "default"), deployment_events)],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Deployments.nav_id(), cx));
-    snapshot(&mut deployments, vec![web_deployment()]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::Deployments,
+        &mut deployments,
+        vec![web_deployment()],
+        "web",
+    );
     let web = ObjectKey::new(Some("default".into()), "web");
 
     // Scale: a numeric field with the current desired count as its hint.
@@ -277,13 +275,13 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
 fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
-    snapshot(&mut pods, vec![crashing_pod("default")]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web-1", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+        "web-1",
+    );
 
     ui.frame(|window, _| {
         assert!(window.try_find("detail-edit").is_some());
@@ -296,13 +294,13 @@ fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
 fn deleting_a_bare_pod_warns_of_nothing_else(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
-    snapshot(&mut pods, vec![labeled_pod("debug", "tools")]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/debug", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![labeled_pod("debug", "tools")],
+        "debug",
+    );
 
     ui.frame(|window, cx| window.click("detail-delete", cx));
     ui.frame(|window, _| {
@@ -352,12 +350,13 @@ fn a_pod_detail_lists_its_events(cx: &mut TestAppContext) {
             (key(BuiltinKind::Events, "default"), event_events),
         ],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Pods.nav_id(), cx));
-    snapshot(&mut pods, vec![crashing_pod("default")]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+        "web-1",
+    );
     snapshot(&mut events, Vec::new());
     ui.settle();
     ui.frame(|window, _| {
@@ -420,13 +419,13 @@ fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
     );
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(BuiltinKind::Deployments.nav_id(), cx));
-    snapshot(&mut deployments, vec![web_deployment()]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web", cx));
-    ui.settle();
+    open_detail(
+        &mut ui,
+        BuiltinKind::Deployments,
+        &mut deployments,
+        vec![web_deployment()],
+        "web",
+    );
     ui.frame(|window, _| {
         assert!(
             window

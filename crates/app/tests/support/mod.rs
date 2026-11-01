@@ -171,6 +171,21 @@ pub fn open(
     }
 }
 
+/// Open `kind`'s list in the `default` namespace from the navigation with
+/// `objects` in it.
+pub fn open_list(
+    ui: &mut Ui<'_>,
+    kind: BuiltinKind,
+    watch: &mut Sender<DynamicObject>,
+    objects: Vec<DynamicObject>,
+) {
+    ui.namespaces(&["default"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click(kind.nav_id(), cx));
+    snapshot(watch, objects);
+    ui.settle();
+}
+
 /// Open `kind`'s list from the navigation with `objects` in it, then the
 /// detail of `name` in the `default` namespace.
 pub fn open_detail(
@@ -180,11 +195,7 @@ pub fn open_detail(
     objects: Vec<DynamicObject>,
     name: &str,
 ) {
-    ui.namespaces(&["default"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click(kind.nav_id(), cx));
-    snapshot(watch, objects);
-    ui.settle();
+    open_list(ui, kind, watch, objects);
     ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));
     ui.settle();
 }
