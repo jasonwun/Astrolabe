@@ -92,58 +92,51 @@ impl DetailTarget {
     /// in its watch; `None` once it is gone. Looks the object up without
     /// projecting it.
     pub fn object(&self, session: &Session) -> Option<ObjectRef> {
-        let (resource, key) = match self {
-            Self::Namespace { name } => {
-                session.namespace_object(name)?;
-                (
-                    ApiResource::erase::<Namespace>(&()),
-                    ObjectKey::cluster_scoped(name.clone()),
-                )
-            }
-            Self::Definition { name } => {
-                session.crds().get(None, name)?;
-                (
-                    ApiResource::erase::<CustomResourceDefinition>(&()),
-                    ObjectKey::cluster_scoped(name.clone()),
-                )
-            }
+        self.find(session).map(|(object, _)| object)
+    }
+
+    /// The object in its watch and what addresses it.
+    fn find<'a>(&self, session: &'a Session) -> Option<(ObjectRef, Shown<'a>)> {
+        let (resource, key, shown) = match self {
+            Self::Namespace { name } => (
+                ApiResource::erase::<Namespace>(&()),
+                ObjectKey::cluster_scoped(name.clone()),
+                Shown::Namespace(session.namespace_object(name)?),
+            ),
+            Self::Definition { name } => (
+                ApiResource::erase::<CustomResourceDefinition>(&()),
+                ObjectKey::cluster_scoped(name.clone()),
+                Shown::Definition(session.crds().get(None, name)?),
+            ),
             Self::Builtin { kind, key } => {
-                session.builtin_object(*kind, key.namespace.as_deref()?, &key.name)?;
-                ((kind.registration().resource)(), key.clone())
+                let object = session.builtin_object(*kind, key.namespace.as_deref()?, &key.name)?;
+                (
+                    (kind.registration().resource)(),
+                    key.clone(),
+                    Shown::Builtin(*kind, object),
+                )
             }
             Self::Custom { id, key } => {
-                let (kind, resource) = served_kind(session, id)?;
-                custom_object(session, kind, key)?;
-                (resource.clone(), key.clone())
+                let kind = session.custom_kind(id)?;
+                let KindResource::Served(resource) = &kind.resource else {
+                    return None;
+                };
+                let namespace = key.namespace.as_deref();
+                let watch = session.custom_object_watch_key(kind, namespace);
+                let object = session.object_watch(&watch)?.get(namespace, &key.name)?;
+                (resource.clone(), key.clone(), Shown::Custom(kind, object))
             }
         };
-        Some(ObjectRef { resource, key })
+        Some((ObjectRef { resource, key }, shown))
     }
 }
 
-/// Custom kind `id` and the resource it is served at; `None` while it is
-/// unknown or not served.
-fn served_kind<'a>(
-    session: &'a Session,
-    id: &CustomKindId,
-) -> Option<(&'a CustomKind, &'a ApiResource)> {
-    let kind = session.custom_kind(id)?;
-    let KindResource::Served(resource) = &kind.resource else {
-        return None;
-    };
-    Some((kind, resource))
-}
-
-/// `key`'s object of custom kind `kind`, from the watch at its preferred
-/// version.
-fn custom_object<'a>(
-    session: &'a Session,
-    kind: &CustomKind,
-    key: &ObjectKey,
-) -> Option<&'a DynamicObject> {
-    let namespace = key.namespace.as_deref();
-    let watch = session.custom_object_watch_key(kind, namespace);
-    session.object_watch(&watch)?.get(namespace, &key.name)
+/// A target's object as its watch holds it.
+enum Shown<'a> {
+    Namespace(&'a Namespace),
+    Definition(&'a CustomResourceDefinition),
+    Builtin(BuiltinKind, &'a DynamicObject),
+    Custom(&'a CustomKind, &'a DynamicObject),
 }
 
 /// The object as of `now`, with what its actions need.
@@ -213,35 +206,29 @@ pub fn watches(target: &DetailTarget) -> Vec<NeededWatch> {
 
 /// `target` as of `now`, or `None` once it no longer exists.
 pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Option<Resolved> {
-    let object = target.object(session)?;
-    match target {
-        DetailTarget::Namespace { name } => {
-            let namespace = session.namespace_object(name)?;
-            Some(Resolved {
-                model: namespace_detail(namespace, now),
-                object,
-                cascade: "Deleting a Namespace deletes every object in it.".to_string(),
-                actions: DEFAULT_ACTIONS,
-                related: None,
-            })
-        }
-        DetailTarget::Definition { name } => {
-            let crd = session.crds().get(None, name)?;
-            Some(Resolved {
-                model: definition_detail(crd, now),
-                object,
-                cascade: format!(
-                    "Deleting a CustomResourceDefinition also deletes every {} object in the cluster.",
-                    crd.spec.names.kind
-                ),
-                actions: DEFAULT_ACTIONS,
-                related: None,
-            })
-        }
-        DetailTarget::Builtin { kind, key } => {
+    let (object, shown) = target.find(session)?;
+    match shown {
+        Shown::Namespace(namespace) => Some(Resolved {
+            model: namespace_detail(namespace, now),
+            object,
+            cascade: "Deleting a Namespace deletes every object in it.".to_string(),
+            actions: DEFAULT_ACTIONS,
+            related: None,
+        }),
+        Shown::Definition(crd) => Some(Resolved {
+            model: definition_detail(crd, now),
+            object,
+            cascade: format!(
+                "Deleting a CustomResourceDefinition also deletes every {} object in the cluster.",
+                crd.spec.names.kind
+            ),
+            actions: DEFAULT_ACTIONS,
+            related: None,
+        }),
+        Shown::Builtin(kind, shown) => {
             let registration = kind.registration();
-            let namespace = key.namespace.as_deref()?;
-            let shown = session.builtin_object(*kind, namespace, &key.name)?;
+            let namespace = object.key.namespace.clone()?;
+            let namespace = namespace.as_str();
             let related = registration.related.as_ref().and_then(|related| {
                 let watch = session.builtin_watch(related.kind, namespace);
                 let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
@@ -271,16 +258,13 @@ pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Opti
                 related,
             })
         }
-        DetailTarget::Custom { id, key } => {
-            let (kind, _) = served_kind(session, id)?;
-            Some(Resolved {
-                model: custom_resource_detail(kind, custom_object(session, kind, key)?, now),
-                object,
-                cascade: "Objects that list it in ownerReferences will be garbage-collected."
-                    .to_string(),
-                actions: DEFAULT_ACTIONS,
-                related: None,
-            })
-        }
+        Shown::Custom(kind, shown) => Some(Resolved {
+            model: custom_resource_detail(kind, shown, now),
+            object,
+            cascade: "Objects that list it in ownerReferences will be garbage-collected."
+                .to_string(),
+            actions: DEFAULT_ACTIONS,
+            related: None,
+        }),
     }
 }

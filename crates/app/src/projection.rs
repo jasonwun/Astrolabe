@@ -409,6 +409,13 @@ pub struct DetailModel {
     pub edit_yaml: Option<String>,
 }
 
+impl DetailModel {
+    /// Suspend/Resume's state: a CronJob with `suspend` set.
+    pub fn is_suspended(&self) -> bool {
+        self.suspended == Some(true)
+    }
+}
+
 /// Status summary = the priority > 0 printer columns + `status.conditions`.
 pub fn custom_resource_detail(
     kind: &CustomKind,

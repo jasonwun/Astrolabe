@@ -257,7 +257,7 @@ impl ResourceDetailPanel {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let border = theme.border;
-        let suspended = model.suspended.unwrap_or(false);
+        let suspended = model.is_suspended();
         h_flex()
             .gap_2()
             .p_2()

@@ -20,39 +20,38 @@ fn web() -> ObjectRef {
 
 #[test]
 fn each_operation_names_its_pending_done_and_failure_text() {
-    let object = web;
     let cases = [
         (
             Operation::Scale {
-                object: object(),
+                object: web(),
                 replicas: 3,
             },
             ("Scaling…", "Scaled to 3", "Scale"),
         ),
         (
-            Operation::RolloutRestart { object: object() },
+            Operation::RolloutRestart { object: web() },
             ("Restarting…", "Restart requested", "Restart"),
         ),
         (
             Operation::SetSuspend {
-                object: object(),
+                object: web(),
                 suspend: true,
             },
             ("Suspending…", "Suspended", "Suspend"),
         ),
         (
             Operation::SetSuspend {
-                object: object(),
+                object: web(),
                 suspend: false,
             },
             ("Resuming…", "Resumed", "Resume"),
         ),
         (
-            Operation::TriggerCronJob { object: object() },
+            Operation::TriggerCronJob { object: web() },
             ("Triggering…", "Job creation requested", "Trigger"),
         ),
         (
-            Operation::Delete { object: object() },
+            Operation::Delete { object: web() },
             ("Deleting…", "Deletion requested", "Delete"),
         ),
     ];

@@ -115,7 +115,7 @@ impl Action {
             Self::PortForward => "Port Forward",
             Self::Scale => "Scale",
             Self::RolloutRestart => "Rollout Restart",
-            Self::Suspend if model.suspended == Some(true) => "Resume",
+            Self::Suspend if model.is_suspended() => "Resume",
             Self::Suspend => "Suspend",
             Self::Trigger => "Trigger",
             Self::Edit => "Edit YAML",

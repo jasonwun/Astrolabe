@@ -12,7 +12,7 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe::clock::Clock;
 use astrolabe::projection::{DetailModel, ResourceTable};
 use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
     ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::{Preselection, WorkspaceView};
@@ -63,6 +63,16 @@ pub fn detail(kind: BuiltinKind, raw: serde_json::Value, now: Timestamp) -> Deta
 }
 
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
+
+/// What `Deleted` records of a Delete: `apiVersion/Kind`, namespace, name.
+pub fn deletion(object: &ObjectRef) -> (String, Option<String>, String) {
+    let resource = &object.resource;
+    (
+        format!("{}/{}", resource.api_version, resource.kind),
+        object.key.namespace.clone(),
+        object.key.name.clone(),
+    )
+}
 pub type Operated = Rc<RefCell<Vec<Operation>>>;
 pub type Logged = Rc<RefCell<Vec<LogRequest>>>;
 pub type Forwarded = Rc<RefCell<Vec<ForwardRequest>>>;
@@ -98,12 +108,7 @@ pub fn open(
             let operated = operated.clone();
             move |operation: &Operation| {
                 if let Operation::Delete { object } = operation {
-                    let resource = &object.resource;
-                    deleted.borrow_mut().push((
-                        format!("{}/{}", resource.api_version, resource.kind),
-                        object.key.namespace.clone(),
-                        object.key.name.clone(),
-                    ));
+                    deleted.borrow_mut().push(deletion(object));
                     return Ok(());
                 }
                 operated.borrow_mut().push(operation.clone());
