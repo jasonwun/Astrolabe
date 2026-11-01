@@ -118,11 +118,16 @@ Reference: `crates/app/src/resource_list.rs`.
   rows are `table-<title>-head` and `table-<title>-row-<n>`, its header
   cells `table-<title>-head-<col>`, and its body cells
   `table-<title>-cell-<row>-<col>`, unique within the table (#89).
+  A summary table builds cells with `table_cell`, whose text element is
+  `<cell id>-text` (#75).
   The related objects under a detail (a Pod's Events, a Deployment's
-  Pods) are `detail-related`, drawn by `render_related`, not
-  `summary_table`: cells `related-cell-<row>-<col>`, each row's first
-  cell `related-row-<key>`. Both tables build cells with `table_cell`,
-  whose text element is `<cell id>-text` (#75).
+  Pods) are `detail-related`, drawn by `render_related` with the list's
+  `RowsTable` in `related-table`: body cells `related-cell-<row>-<col>`,
+  each row's first cell `related-row-<key>`, header cells the table's own
+  `("col-header", <col>)`, and the table's cell around a body cell
+  `table-cell-<row>:<col>`. A new table fits its columns one frame after
+  it first paints, so a test renders one more `ui.frame` before measuring
+  it (#98).
 
 - `use gpui_kit::*` exports gpui's `test` attribute macro. A `#[test]`
   in a module that glob-imports it (directly or through `use super::*`)

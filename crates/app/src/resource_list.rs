@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
 use gpui_kit::base::ElementExt as _;
+use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::component::table::{Column, DataTable, TableDelegate, TableState};
@@ -76,26 +77,7 @@ impl ResourceListPanel {
                 panel.update(cx, |panel, cx| panel.open_row(key, cx)).ok();
             })
         };
-        let table = cx.new(|cx| {
-            TableState::new(
-                RowsTable {
-                    table: ResourceTable::default(),
-                    measured_width: 0.,
-                    widths: Vec::new(),
-                    open_row: None,
-                    open_all_cells: false,
-                },
-                window,
-                cx,
-            )
-            .row_selectable(false)
-            .col_selectable(false)
-            .sortable(false)
-            .col_movable(false)
-        });
-        table.update(cx, |table, _| {
-            table.delegate_mut().open_row = Some(open_row)
-        });
+        let table = cx.new(|cx| rows_table_state(RowsTable::list(open_row), window, cx));
         cx.observe(&session, |panel, _, cx| panel.refresh(cx))
             .detach();
         let mut panel = Self {
@@ -280,9 +262,8 @@ impl ResourceListPanel {
             .is_some_and(|registration| registration.open_all_cells);
         self.table.update(cx, |state, cx| {
             let rows = state.delegate_mut();
-            rows.table = table;
             rows.open_all_cells = open_all_cells;
-            rows.fit_columns();
+            rows.set_table(table);
             state.refresh(cx);
         });
         cx.notify();
@@ -417,33 +398,52 @@ impl Render for ResourceListPanel {
                         .text_color(color)
                         .child(text),
                 ),
-                None => this.child(
-                    div()
-                        .id("list-table")
-                        .flex_1()
-                        .min_h_0()
-                        .child(DataTable::new(&self.table).stripe(true))
-                        // Refit the columns whenever the panel's width changes.
-                        .on_prepaint({
-                            let table = self.table.clone();
-                            move |bounds, _, cx| {
-                                table.update(cx, |state, cx| {
-                                    // The table's 1px border on each side.
-                                    let inner = f32::from(bounds.size.width) - 2.;
-                                    if state.delegate_mut().set_width(inner) {
-                                        state.refresh(cx);
-                                        cx.notify();
-                                    }
-                                })
-                            }
-                        })
-                        .test_support(),
-                ),
+                None => this.child(fitted_table(&self.table, "list-table").flex_1().min_h_0()),
             })
     }
 }
 
-type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
+/// Opens the object a row names.
+pub(crate) type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
+
+/// A [`TableState`] over `rows`, with selection, sorting and column moves
+/// off.
+pub(crate) fn rows_table_state(
+    rows: RowsTable,
+    window: &mut Window,
+    cx: &mut Context<TableState<RowsTable>>,
+) -> TableState<RowsTable> {
+    TableState::new(rows, window, cx)
+        .row_selectable(false)
+        .col_selectable(false)
+        .sortable(false)
+        .col_movable(false)
+}
+
+/// `table` drawn in an element `id` that refits its columns whenever its
+/// width changes. The caller sizes the element; the table fills it.
+pub(crate) fn fitted_table(
+    table: &Entity<TableState<RowsTable>>,
+    id: &'static str,
+) -> Observed<Stateful<Div>> {
+    div()
+        .id(id)
+        .child(DataTable::new(table).stripe(true))
+        .on_prepaint({
+            let table = table.clone();
+            move |bounds, _, cx| {
+                table.update(cx, |state, cx| {
+                    // The table's 1px border on each side.
+                    let inner = f32::from(bounds.size.width) - 2.;
+                    if state.delegate_mut().set_width(inner) {
+                        state.refresh(cx);
+                        cx.notify();
+                    }
+                })
+            }
+        })
+        .test_support()
+}
 
 /// Table delegate over a projected [`ResourceTable`]; the first cell opens
 /// details, or every cell when the kind's registration says so. The
@@ -454,13 +454,46 @@ pub(crate) struct RowsTable {
     measured_width: f32,
     /// The table's column weights fitted to `measured_width`.
     widths: Vec<f32>,
-    open_row: Option<OpenRow>,
+    open_row: OpenRow,
     open_all_cells: bool,
+    /// Prefixes every row, cell and header id, so two tables' ids differ.
+    id_prefix: &'static str,
+    /// Draws the cells that open a row as links.
+    link_rows: bool,
 }
 
 impl RowsTable {
+    /// The list tab's table: plain ids, plain text.
+    fn list(open_row: OpenRow) -> Self {
+        Self::new(open_row, "", false)
+    }
+
+    /// A detail tab's Related table: `related-` ids, the first cell a link.
+    pub(crate) fn related(open_row: OpenRow) -> Self {
+        Self::new(open_row, "related-", true)
+    }
+
+    fn new(open_row: OpenRow, id_prefix: &'static str, link_rows: bool) -> Self {
+        Self {
+            table: ResourceTable::default(),
+            measured_width: 0.,
+            widths: Vec::new(),
+            open_row,
+            open_all_cells: false,
+            id_prefix,
+            link_rows,
+        }
+    }
+
     fn row(&self, row_ix: usize) -> &ResourceRow {
         &self.table.rows[row_ix]
+    }
+
+    /// Shows `table`, its columns fitted to the last measured width. The
+    /// caller refreshes the [`TableState`].
+    pub(crate) fn set_table(&mut self, table: ResourceTable) {
+        self.table = table;
+        self.fit_columns();
     }
 
     fn fit_columns(&mut self) {
@@ -504,7 +537,10 @@ impl TableDelegate for RowsTable {
         // column name, so the header text carries no label of its own.
         let name = self.table.columns[col_ix].header.clone();
         div()
-            .id(SharedString::from(format!("column-{col_ix}")))
+            .id(SharedString::from(format!(
+                "{}column-{col_ix}",
+                self.id_prefix
+            )))
             .w_full()
             .text_ellipsis()
             .child(name)
@@ -516,26 +552,28 @@ impl TableDelegate for RowsTable {
         row_ix: usize,
         col_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let prefix = self.id_prefix;
+        let link = cx.theme().link;
         let row = self.row(row_ix);
         let cell = row.cells[col_ix].clone();
-        if (col_ix == 0 || self.open_all_cells)
-            && let Some(open_row) = self.open_row.clone()
-        {
+        if col_ix == 0 || self.open_all_cells {
+            let open_row = self.open_row.clone();
             let key = row.key.clone();
             let id = if col_ix == 0 {
-                format!("row-{key}")
+                format!("{prefix}row-{key}")
             } else {
-                format!("event-row-{key}-{col_ix}")
+                format!("{prefix}event-row-{key}-{col_ix}")
             };
             return text_cell(id, cell)
+                .when(self.link_rows, |cell| cell.text_color(link))
                 .test_support()
                 .cursor_pointer()
                 .on_click(move |_, _, cx| open_row(&key, cx))
                 .into_any_element();
         }
-        text_cell(format!("cell-{row_ix}-{col_ix}"), cell)
+        text_cell(format!("{prefix}cell-{row_ix}-{col_ix}"), cell)
             .test_support()
             .into_any_element()
     }
