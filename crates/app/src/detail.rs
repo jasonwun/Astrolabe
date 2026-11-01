@@ -101,7 +101,6 @@ pub struct Resolved {
 #[derive(Debug)]
 pub struct RelatedRows {
     pub title: &'static str,
-    pub kind: BuiltinKind,
     pub outcome: RelatedOutcome,
 }
 
@@ -206,7 +205,6 @@ pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Opti
                 };
                 Some(RelatedRows {
                     title: related.title,
-                    kind: related.kind,
                     outcome,
                 })
             });

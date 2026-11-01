@@ -5,7 +5,6 @@
 //! through their registration (#17).
 
 use std::collections::BTreeSet;
-use std::rc::Rc;
 
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
@@ -22,7 +21,7 @@ use crate::clock;
 use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::projection::config::{HIDDEN, SecretKey};
 use crate::projection::{DetailField, DetailItem, ReplicaCounts, SummaryTable, track_ages};
-use crate::resource_list::{OpenDetail, OpenRow, RowsTable, fitted_table, rows_table_state};
+use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::{ExecRequest, LogRequest, Session};
 use crate::store::ObjectKey;
 
@@ -96,14 +95,7 @@ impl ResourceDetailPanel {
             cx.notify();
         })
         .detach();
-        let open_row: OpenRow = {
-            let panel = cx.entity().downgrade();
-            Rc::new(move |key: &ObjectKey, cx: &mut App| {
-                panel
-                    .update(cx, |panel, cx| panel.open_related(key, cx))
-                    .ok();
-            })
-        };
+        let open_row = open_row_with(cx, Self::open_related);
         let related_table = cx.new(|cx| rows_table_state(RowsTable::related(open_row), window, cx));
         Self {
             session,
@@ -339,11 +331,15 @@ impl ResourceDetailPanel {
             RelatedOutcome::Rows(table) => {
                 // Header plus rows, inside the table's 1px borders: the
                 // detail body scrolls, the table never does vertically.
+                // `DataTable` draws both at its default size's row height.
                 let height =
                     Size::default().table_row_height() * (table.rows.len() + 1) as f32 + px(2.);
                 self.related_table.update(cx, |state, cx| {
-                    state.delegate_mut().set_table(table);
-                    state.refresh(cx);
+                    // Rebuilt only when the rows change, not on every frame.
+                    if state.delegate().table() != &table {
+                        state.delegate_mut().set_table(table);
+                        state.refresh(cx);
+                    }
                 });
                 fitted_table(&self.related_table, "related-table")
                     .w_full()

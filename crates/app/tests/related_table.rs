@@ -6,12 +6,13 @@
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{MIN_COLUMN_WIDTH, column_widths, default_column_weights};
+use astrolabe::projection::{MIN_COLUMN_WIDTH, column_widths};
+use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Bounds, Pixels, TestAppContext, Window, point, px, size};
-use support::{Ui, key, object, open, open_detail, snapshot};
+use support::{Ui, key, list, object, open, open_detail, snapshot};
 
 /// The Pods list's columns: Name, Ready, Status, Restarts, IP, Node, Age.
 const POD_COLUMNS: usize = 7;
@@ -83,12 +84,17 @@ fn related_bounds(
 fn related_columns_share_the_width_by_the_related_kinds_weights(cx: &mut TestAppContext) {
     let mut ui = deployment_with_a_pod(cx, 1200.);
 
+    // The weights the Pods Registration gives its own list.
+    let weights = list(BuiltinKind::Pods, vec![], Timestamp::UNIX_EPOCH).weights();
+    assert_eq!(weights.len(), POD_COLUMNS);
+
     ui.frame(|window, _| {
+        let panel = window.find("detail-tab").bounds();
         let section = window.find("detail-related").bounds();
         let table = related_bounds(window, "related-table");
         // The table's 1px border on each side.
         let inner = f32::from(table.size.width) - 2.;
-        let expected = column_widths(inner, &default_column_weights(POD_COLUMNS));
+        let expected = column_widths(inner, &weights);
         for (index, width) in expected.iter().enumerate() {
             let header = related_bounds(window, ("col-header", index));
             assert!(
@@ -96,9 +102,16 @@ fn related_columns_share_the_width_by_the_related_kinds_weights(cx: &mut TestApp
                 "column {index}: {header:?}, expected width {width}"
             );
         }
+        // Age ends at the table's inner edge, and the table sits in the
+        // detail tab.
         let age = related_bounds(window, ("col-header", POD_COLUMNS - 1));
-        assert!(age.right() <= section.right(), "{age:?} {section:?}");
-        assert!(age.left() >= section.left(), "{age:?} {section:?}");
+        let inner_right = table.right() - px(1.);
+        assert!(
+            (age.right() - inner_right).abs() <= px(1.),
+            "{age:?} {table:?}"
+        );
+        assert!(section.right() <= panel.right(), "{section:?} {panel:?}");
+        assert!(section.left() >= panel.left(), "{section:?} {panel:?}");
     });
 }
 
@@ -124,18 +137,20 @@ fn the_related_table_is_only_as_tall_as_its_rows(cx: &mut TestAppContext) {
 fn below_the_minimum_widths_the_related_table_scrolls_to_its_last_column(cx: &mut TestAppContext) {
     let mut ui = deployment_with_a_pod(cx, 700.);
 
-    let (table, section) = ui.frame(|window, _| {
+    let (table, section, panel) = ui.frame(|window, _| {
         (
             related_bounds(window, "related-table"),
             window.find("detail-related").bounds(),
+            window.find("detail-tab").bounds(),
         )
     });
     assert!(
         table.size.width < px(POD_COLUMNS as f32 * MIN_COLUMN_WIDTH),
         "{table:?}"
     );
-    // The section, and so the detail tab, does not grow past the table.
+    // Neither the section nor the detail tab grows to hold the table.
     assert!(table.right() <= section.right(), "{table:?} {section:?}");
+    assert!(section.right() <= panel.right(), "{section:?} {panel:?}");
     // Age starts out of view: past the table's edge, or not drawn at all.
     ui.frame(|window, _| {
         let age = window

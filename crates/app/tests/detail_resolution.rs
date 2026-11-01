@@ -198,7 +198,7 @@ fn a_section_lists_only_the_selected_objects(cx: &mut TestAppContext) {
     );
 
     let related = resolved(&target, &session, cx).related.unwrap();
-    assert_eq!(related.kind, BuiltinKind::EndpointSlices);
+    assert_eq!(related.title, "Endpoint Slices");
     let RelatedOutcome::Rows(table) = related.outcome else {
         panic!("expected rows, got {:?}", related.outcome);
     };

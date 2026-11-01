@@ -71,12 +71,7 @@ pub struct ResourceListPanel {
 
 impl ResourceListPanel {
     pub fn new(session: Entity<Session>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let open_row: OpenRow = {
-            let panel = cx.entity().downgrade();
-            Rc::new(move |key: &ObjectKey, cx: &mut App| {
-                panel.update(cx, |panel, cx| panel.open_row(key, cx)).ok();
-            })
-        };
+        let open_row = open_row_with(cx, Self::open_row);
         let table = cx.new(|cx| rows_table_state(RowsTable::list(open_row), window, cx));
         cx.observe(&session, |panel, _, cx| panel.refresh(cx))
             .detach();
@@ -406,6 +401,18 @@ impl Render for ResourceListPanel {
 /// Opens the object a row names.
 pub(crate) type OpenRow = Rc<dyn Fn(&ObjectKey, &mut App)>;
 
+/// An [`OpenRow`] that calls `open` on the panel `cx` belongs to, while that
+/// panel lives.
+pub(crate) fn open_row_with<P: 'static>(
+    cx: &mut Context<P>,
+    open: fn(&mut P, &ObjectKey, &mut Context<P>),
+) -> OpenRow {
+    let panel = cx.entity().downgrade();
+    Rc::new(move |key: &ObjectKey, cx: &mut App| {
+        panel.update(cx, |panel, cx| open(panel, key, cx)).ok();
+    })
+}
+
 /// A [`TableState`] over `rows`, with selection, sorting and column moves
 /// off.
 pub(crate) fn rows_table_state(
@@ -456,37 +463,63 @@ pub(crate) struct RowsTable {
     widths: Vec<f32>,
     open_row: OpenRow,
     open_all_cells: bool,
-    /// Prefixes every row, cell and header id, so two tables' ids differ.
-    id_prefix: &'static str,
+    place: TablePlace,
+}
+
+/// Where a [`RowsTable`] is drawn, which sets its ids and its link style.
+#[derive(Clone, Copy)]
+enum TablePlace {
+    /// The list tab: plain ids, plain text.
+    List,
+    /// A detail tab's Related section: `related-` ids, so they differ from
+    /// the list's, and the cells that open a row drawn as links.
+    Related,
+}
+
+impl TablePlace {
+    /// Prefixes every row, cell and header id.
+    fn id_prefix(self) -> &'static str {
+        match self {
+            Self::List => "",
+            Self::Related => "related-",
+        }
+    }
+
     /// Draws the cells that open a row as links.
-    link_rows: bool,
+    fn links_rows(self) -> bool {
+        matches!(self, Self::Related)
+    }
 }
 
 impl RowsTable {
-    /// The list tab's table: plain ids, plain text.
+    /// The list tab's table.
     fn list(open_row: OpenRow) -> Self {
-        Self::new(open_row, "", false)
+        Self::new(open_row, TablePlace::List)
     }
 
-    /// A detail tab's Related table: `related-` ids, the first cell a link.
+    /// A detail tab's Related table.
     pub(crate) fn related(open_row: OpenRow) -> Self {
-        Self::new(open_row, "related-", true)
+        Self::new(open_row, TablePlace::Related)
     }
 
-    fn new(open_row: OpenRow, id_prefix: &'static str, link_rows: bool) -> Self {
+    fn new(open_row: OpenRow, place: TablePlace) -> Self {
         Self {
             table: ResourceTable::default(),
             measured_width: 0.,
             widths: Vec::new(),
             open_row,
             open_all_cells: false,
-            id_prefix,
-            link_rows,
+            place,
         }
     }
 
     fn row(&self, row_ix: usize) -> &ResourceRow {
         &self.table.rows[row_ix]
+    }
+
+    /// The table shown.
+    pub(crate) fn table(&self) -> &ResourceTable {
+        &self.table
     }
 
     /// Shows `table`, its columns fitted to the last measured width. The
@@ -539,7 +572,7 @@ impl TableDelegate for RowsTable {
         div()
             .id(SharedString::from(format!(
                 "{}column-{col_ix}",
-                self.id_prefix
+                self.place.id_prefix()
             )))
             .w_full()
             .text_ellipsis()
@@ -554,7 +587,7 @@ impl TableDelegate for RowsTable {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let prefix = self.id_prefix;
+        let prefix = self.place.id_prefix();
         let link = cx.theme().link;
         let row = self.row(row_ix);
         let cell = row.cells[col_ix].clone();
@@ -567,7 +600,7 @@ impl TableDelegate for RowsTable {
                 format!("{prefix}event-row-{key}-{col_ix}")
             };
             return text_cell(id, cell)
-                .when(self.link_rows, |cell| cell.text_color(link))
+                .when(self.place.links_rows(), |cell| cell.text_color(link))
                 .test_support()
                 .cursor_pointer()
                 .on_click(move |_, _, cx| open_row(&key, cx))
