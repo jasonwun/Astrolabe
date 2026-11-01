@@ -202,10 +202,10 @@ retro).
 ## View-test steps the support module already has
 
 A view test opens a built-in kind's list with `support::open_list`, its
-detail with `support::open_detail`, and builds a `DynamicObject` with `support::object`; a test asserting
-on `tracing` output captures it with `support::LogCapture`
-(`dev/log-capture.sh` checks the last). A local helper or
-an inline run that repeats `open_list`'s or `open_detail`'s steps
+detail with `support::open_detail`, and builds a `DynamicObject` with
+`support::object`; a test asserting on `tracing` output captures it with
+`support::LogCapture` (`dev/log-capture.sh` checks the last). A local
+helper or an inline run that repeats `open_list`'s or `open_detail`'s steps
 (select the namespace, click the nav item, send the snapshot, click the
 row) is a finding, whatever its name.
 
