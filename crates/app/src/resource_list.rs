@@ -16,11 +16,11 @@ use gpui_kit::*;
 
 use crate::builtin::{BuiltinKind, Registration};
 use crate::clock;
+use crate::detail::{DetailTarget, forbidden_message};
 use crate::projection::{
     ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
     project_namespaces, track_ages,
 };
-use crate::resource_detail::DetailTarget;
 use crate::session::{CustomKindId, Session};
 use crate::store::ObjectKey;
 use crate::workspace::STALE_MESSAGE;
@@ -176,8 +176,7 @@ impl ResourceListPanel {
         let session = self.session.read(cx);
         let namespace = key.namespace.as_deref().unwrap_or_default();
         let (object, reference) = session
-            .object_watch(&session.builtin_watch_key(kind, namespace))
-            .and_then(|watch| watch.get(Some(namespace), &key.name))
+            .builtin_object(kind, namespace, &key.name)
             .and_then(|object| Some((object, row_target?(object)?)))
             .ok_or_else(|| format!("Cannot open {} {key}: object is unavailable", kind.kind()))?;
         DetailTarget::by_reference(reference, object.metadata.namespace.clone(), session)
@@ -201,14 +200,12 @@ impl ResourceListPanel {
             ),
             ListView::Builtin(kind) => {
                 let registration = kind.registration();
-                let watch =
-                    session.object_watch(&session.builtin_watch_key(*kind, session.namespace()));
+                let watch = session.builtin_watch(*kind, session.namespace());
                 let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                 let state = match watch {
-                    Some(watch) if watch.forbidden() => ListState::Message(format!(
-                        "No permission to list {} here",
-                        registration.label.to_lowercase()
-                    )),
+                    Some(watch) if watch.forbidden() => {
+                        ListState::Message(forbidden_message(registration.label))
+                    }
                     _ => ListState::Table,
                 };
                 (
@@ -257,10 +254,9 @@ impl ResourceListPanel {
                         let watch = session.object_watch(&session.custom_watch_key(kind));
                         let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                         let state = match watch {
-                            Some(watch) if watch.forbidden() => ListState::Message(format!(
-                                "No permission to list {} here",
-                                kind.plural
-                            )),
+                            Some(watch) if watch.forbidden() => {
+                                ListState::Message(forbidden_message(&kind.plural))
+                            }
                             _ => ListState::Table,
                         };
                         (
