@@ -1,11 +1,11 @@
 //! P3 built-in workload projections, aligned with Freelens 14a491f.
 
+use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::ReplicaCounts;
-use astrolabe::projection::workloads::{
-    cronjob_detail, daemonset_detail, job_detail, project_cronjobs, project_daemonsets,
-    project_jobs, project_replicasets, project_statefulsets, replicaset_detail, statefulset_detail,
-};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use support::{detail, list};
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -13,7 +13,7 @@ fn now() -> Timestamp {
 
 #[test]
 fn statefulsets_list_and_detail_follow_freelens() {
-    let statefulset = serde_json::from_value(serde_json::json!({
+    let statefulset = serde_json::json!({
         "apiVersion": "apps/v1", "kind": "StatefulSet",
         "metadata": {"name": "db", "namespace": "default", "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {
@@ -26,14 +26,13 @@ fn statefulsets_list_and_detail_follow_freelens() {
             }}
         },
         "status": {"replicas": 3, "readyReplicas": 2, "updatedReplicas": 2, "availableReplicas": 2, "unavailableReplicas": 1}
-    }))
-    .unwrap();
+    });
 
-    let table = project_statefulsets(&[&statefulset], now());
+    let table = list(BuiltinKind::StatefulSets, vec![statefulset.clone()], now());
     assert_eq!(table.headers(), ["Name", "Ready", "Desired", "Age"]);
     assert_eq!(table.rows[0].cells, ["db", "2", "3", "60m"]);
 
-    let detail = statefulset_detail(&statefulset, now());
+    let detail = detail(BuiltinKind::StatefulSets, statefulset, now());
     assert_eq!(detail.title, "StatefulSet default/db");
     assert_eq!(
         detail.replicas,
@@ -59,21 +58,20 @@ fn statefulsets_list_and_detail_follow_freelens() {
 
 #[test]
 fn replicasets_list_and_detail_follow_freelens() {
-    let replicaset = serde_json::from_value(serde_json::json!({
+    let replicaset = serde_json::json!({
         "apiVersion": "apps/v1", "kind": "ReplicaSet",
         "metadata": {"name": "web-abc", "namespace": "default", "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {"replicas": 3, "selector": {"matchLabels": {"app": "web"}},
                  "template": {"spec": {"containers": [{"name": "web", "image": "nginx:1.27"}]}}},
         "status": {"replicas": 3, "availableReplicas": 2, "readyReplicas": 2}
-    }))
-    .unwrap();
-    let table = project_replicasets(&[&replicaset], now());
+    });
+    let table = list(BuiltinKind::ReplicaSets, vec![replicaset.clone()], now());
     assert_eq!(
         table.headers(),
         ["Name", "Desired", "Current", "Ready", "Age"]
     );
     assert_eq!(table.rows[0].cells, ["web-abc", "3", "2", "2", "60m"]);
-    let detail = replicaset_detail(&replicaset, now());
+    let detail = detail(BuiltinKind::ReplicaSets, replicaset, now());
     assert_eq!(
         detail.status,
         [
@@ -87,7 +85,7 @@ fn replicasets_list_and_detail_follow_freelens() {
 
 #[test]
 fn daemonsets_list_and_detail_follow_freelens() {
-    let daemonset = serde_json::from_value(serde_json::json!({
+    let daemonset = serde_json::json!({
         "apiVersion": "apps/v1", "kind": "DaemonSet",
         "metadata": {"name": "agent", "namespace": "default", "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {"selector": {"matchLabels": {"app": "agent"}},
@@ -98,9 +96,8 @@ fn daemonsets_list_and_detail_follow_freelens() {
         "status": {"desiredNumberScheduled": 4, "currentNumberScheduled": 4,
                    "numberReady": 3, "updatedNumberScheduled": 2, "numberAvailable": 3,
                    "numberUnavailable": 1, "numberMisscheduled": 0}
-    }))
-    .unwrap();
-    let table = project_daemonsets(&[&daemonset], now());
+    });
+    let table = list(BuiltinKind::DaemonSets, vec![daemonset.clone()], now());
     assert_eq!(
         table.headers(),
         [
@@ -118,7 +115,7 @@ fn daemonsets_list_and_detail_follow_freelens() {
         table.rows[0].cells,
         ["agent", "4", "4", "3", "2", "3", "role=worker", "60m"]
     );
-    let detail = daemonset_detail(&daemonset, now());
+    let detail = detail(BuiltinKind::DaemonSets, daemonset, now());
     assert_eq!(
         detail.status,
         [
@@ -142,7 +139,7 @@ fn daemonsets_list_and_detail_follow_freelens() {
 
 #[test]
 fn jobs_list_and_detail_follow_freelens_completion_status() {
-    let job = serde_json::from_value(serde_json::json!({
+    let job = serde_json::json!({
         "apiVersion": "batch/v1", "kind": "Job",
         "metadata": {"name": "migrate", "namespace": "default", "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {"parallelism": 2, "completions": 4, "completionMode": "Indexed",
@@ -156,9 +153,8 @@ fn jobs_list_and_detail_follow_freelens_completion_status() {
         "status": {"active": 0, "ready": 0, "succeeded": 4, "failed": 1,
                    "startTime": "2026-10-22T11:50:00Z", "completionTime": "2026-10-22T11:55:00Z",
                    "completedIndexes": "0-3", "conditions": [{"type": "Complete", "status": "True"}]}
-    }))
-    .unwrap();
-    let table = project_jobs(&[&job], now());
+    });
+    let table = list(BuiltinKind::Jobs, vec![job.clone()], now());
     assert_eq!(
         table.headers(),
         [
@@ -176,7 +172,7 @@ fn jobs_list_and_detail_follow_freelens_completion_status() {
         table.rows[0].cells,
         ["migrate", "true", "Complete", "4", "4", "2", "5m", "60m"]
     );
-    let detail = job_detail(&job, now());
+    let detail = detail(BuiltinKind::Jobs, job, now());
     assert_eq!(
         detail.status,
         [
@@ -207,7 +203,7 @@ fn jobs_list_and_detail_follow_freelens_completion_status() {
 
 #[test]
 fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
-    let cronjob = serde_json::from_value(serde_json::json!({
+    let cronjob = serde_json::json!({
         "apiVersion": "batch/v1", "kind": "CronJob",
         "metadata": {"name": "nightly", "namespace": "default", "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {"schedule": "0 0 * * *", "timeZone": "UTC", "suspend": false,
@@ -218,9 +214,8 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
                                           "template": {"spec": {"containers": [{"name": "job", "image": "busybox"}]}}}}},
         "status": {"active": [{"kind": "Job", "name": "nightly-1", "namespace": "default", "uid": "job-1", "apiVersion": "batch/v1"}],
                    "lastScheduleTime": "2026-10-22T11:58:00Z", "lastSuccessfulTime": "2026-10-22T11:57:00Z"}
-    }))
-    .unwrap();
-    let table = project_cronjobs(&[&cronjob], now());
+    });
+    let table = list(BuiltinKind::CronJobs, vec![cronjob.clone()], now());
     assert_eq!(
         table.headers(),
         [
@@ -237,7 +232,7 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
         table.rows[0].cells,
         ["nightly", "0 0 * * *", "UTC", "true", "1", "2m", "60m"]
     );
-    let detail = cronjob_detail(&cronjob, now());
+    let detail = detail(BuiltinKind::CronJobs, cronjob, now());
     assert_eq!(
         detail.status,
         [
@@ -279,15 +274,14 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
 
 #[test]
 fn a_zero_second_ttl_reads_zero_seconds() {
-    let cronjob = serde_json::from_value(serde_json::json!({
+    let cronjob = serde_json::json!({
         "metadata": {"name": "once", "namespace": "default"},
         "spec": {"schedule": "@yearly", "jobTemplate": {"spec": {
             "ttlSecondsAfterFinished": 0,
             "template": {"spec": {"containers": [], "restartPolicy": "Never"}}
         }}}
-    }))
-    .unwrap();
-    let detail = cronjob_detail(&cronjob, now());
+    });
+    let detail = detail(BuiltinKind::CronJobs, cronjob, now());
     let ttl = detail.sections[0].items.iter().find_map(|item| {
         let astrolabe::projection::DetailItem::Field(field) = item else {
             return None;
@@ -308,14 +302,16 @@ fn a_zero_second_ttl_reads_zero_seconds() {
 #[test]
 fn schedule_descriptions_cover_steps_weekdays_and_invalid_syntax() {
     let detail = |schedule: &str| {
-        let cronjob = serde_json::from_value(serde_json::json!({
+        let cronjob = serde_json::json!({
             "metadata": {"name": "scheduled", "namespace": "default"},
             "spec": {"schedule": schedule, "jobTemplate": {"spec": {
                 "template": {"spec": {"containers": [], "restartPolicy": "Never"}}
             }}}
-        }))
-        .unwrap();
-        cronjob_detail(&cronjob, now()).status.remove(0).1
+        });
+        detail(BuiltinKind::CronJobs, cronjob, now())
+            .status
+            .remove(0)
+            .1
     };
     assert_eq!(detail("*/15 * * * *"), "*/15 * * * * (Every 15 minutes)");
     assert_eq!(
@@ -330,26 +326,24 @@ fn schedule_descriptions_cover_steps_weekdays_and_invalid_syntax() {
 
 #[test]
 fn empty_template_fields_stay_distinct_from_empty_items() {
-    let statefulset = serde_json::from_value(serde_json::json!({
+    let statefulset = serde_json::json!({
         "metadata": {"name": "empty", "namespace": "default"},
         "spec": {"serviceName": "empty", "selector": {}, "template": {"spec": {
             "containers": [{"name": "empty", "image": ""}], "affinity": {}
         }}}
-    }))
-    .unwrap();
-    let detail = statefulset_detail(&statefulset, now());
+    });
+    let detail = detail(BuiltinKind::StatefulSets, statefulset, now());
     assert_eq!(detail.status, [("Images".to_string(), String::new())]);
 }
 
 #[test]
 fn a_cronjob_detail_says_whether_it_is_suspended() {
     let suspended = |spec: serde_json::Value| {
-        let cronjob = serde_json::from_value(serde_json::json!({
+        let cronjob = serde_json::json!({
             "metadata": {"name": "nightly", "namespace": "default"},
             "spec": spec
-        }))
-        .unwrap();
-        cronjob_detail(&cronjob, now()).suspended
+        });
+        detail(BuiltinKind::CronJobs, cronjob, now()).suspended
     };
     let template = serde_json::json!({"spec": {
         "template": {"spec": {"containers": [], "restartPolicy": "Never"}}

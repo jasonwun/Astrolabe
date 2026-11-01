@@ -1,16 +1,18 @@
 //! Pods and Deployments on the generic list/detail pipeline (#17).
 
+use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::workloads::{
-    ForwardPort, deployment_detail, pod_detail, pod_ports, project_deployments, project_pods,
-    running_containers, selector_matches,
+    ForwardPort, pod_ports, running_containers, selector_matches,
 };
 use astrolabe::projection::{Containers, Forward, ForwardTo, ReplicaCounts, SummaryTable};
 use astrolabe::store::ObjectKey;
-use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use std::collections::BTreeMap;
+use support::{detail, list};
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -18,8 +20,8 @@ fn now() -> Timestamp {
 
 /// Synthetic Pod (plausible shape, not captured from a server): one init
 /// container done, one app container crash-looping after 3 restarts.
-fn crashing_pod() -> Pod {
-    serde_json::from_value(serde_json::json!({
+fn crashing_pod() -> serde_json::Value {
+    serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
@@ -51,28 +53,30 @@ fn crashing_pod() -> Pod {
                 }
             ]
         }
-    }))
-    .unwrap()
+    })
 }
 
-fn pod(spec: serde_json::Value, status: serde_json::Value) -> Pod {
-    serde_json::from_value(serde_json::json!({
+fn pod(spec: serde_json::Value, status: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "p", "namespace": "default", "creationTimestamp": "2026-10-22T11:59:00Z"},
         "spec": spec,
         "status": status
-    }))
-    .unwrap()
+    })
 }
 
-fn status_of(pod: &Pod) -> String {
-    project_pods(&[pod], now()).rows[0].cells[2].clone()
+fn typed_pod(spec: serde_json::Value, status: serde_json::Value) -> Pod {
+    serde_json::from_value(pod(spec, status)).unwrap()
+}
+
+fn status_of(pod: serde_json::Value) -> String {
+    list(BuiltinKind::Pods, vec![pod], now()).rows[0].cells[2].clone()
 }
 
 #[test]
 fn pods_list_kubectl_columns() {
     let pod = crashing_pod();
 
-    let table = project_pods(&[&pod], now());
+    let table = list(BuiltinKind::Pods, vec![pod], now());
 
     assert_eq!(
         table.headers(),
@@ -103,7 +107,7 @@ fn unscheduled_pods_show_none_for_ip_and_node() {
         serde_json::json!({"phase": "Pending"}),
     );
 
-    let cells = &project_pods(&[&pending], now()).rows[0].cells;
+    let cells = &list(BuiltinKind::Pods, vec![pending], now()).rows[0].cells;
 
     assert_eq!(cells[1..6], ["0/1", "Pending", "0", "<none>", "<none>"]);
 }
@@ -124,18 +128,18 @@ fn status_column_follows_kubectl_print_pod() {
 
     // Init:i/n counts finished init containers; the running one stops the scan.
     assert_eq!(
-        status_of(&pod(containers.clone(), init_status(done.clone(), running))),
+        status_of(pod(containers.clone(), init_status(done.clone(), running))),
         "Init:1/2"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             containers.clone(),
             init_status(done.clone(), initializing)
         )),
         "Init:1/2"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             containers.clone(),
             init_status(
                 serde_json::json!({"waiting": {"reason": "ImagePullBackOff"}}),
@@ -145,7 +149,7 @@ fn status_column_follows_kubectl_print_pod() {
         "Init:ImagePullBackOff"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             containers.clone(),
             init_status(
                 serde_json::json!({"terminated": {"exitCode": 2}}),
@@ -155,7 +159,7 @@ fn status_column_follows_kubectl_print_pod() {
         "Init:ExitCode:2"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             containers.clone(),
             init_status(
                 serde_json::json!({"terminated": {"exitCode": 1, "reason": "OOMKilled"}}),
@@ -165,7 +169,7 @@ fn status_column_follows_kubectl_print_pod() {
         "Init:OOMKilled"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             containers.clone(),
             init_status(
                 serde_json::json!({"terminated": {"exitCode": 137, "signal": 9}}),
@@ -182,14 +186,14 @@ fn status_column_follows_kubectl_print_pod() {
     };
     let single = serde_json::json!({"containers": [{"name": "app"}]});
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             single.clone(),
             app(serde_json::json!({"running": {}}), true)
         )),
         "Running"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             single.clone(),
             app(
                 serde_json::json!({"terminated": {"exitCode": 0, "reason": "Completed"}}),
@@ -199,14 +203,14 @@ fn status_column_follows_kubectl_print_pod() {
         "Completed"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             single.clone(),
             app(serde_json::json!({"terminated": {"exitCode": 3}}), false)
         )),
         "ExitCode:3"
     );
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             single.clone(),
             app(
                 serde_json::json!({"terminated": {"exitCode": 143, "signal": 15}}),
@@ -218,7 +222,7 @@ fn status_column_follows_kubectl_print_pod() {
 
     // A pod-level reason (eviction) wins over the phase.
     assert_eq!(
-        status_of(&pod(
+        status_of(pod(
             single.clone(),
             serde_json::json!({"phase": "Failed", "reason": "Evicted"})
         )),
@@ -229,9 +233,8 @@ fn status_column_follows_kubectl_print_pod() {
         single.clone(),
         app(serde_json::json!({"running": {}}), true),
     );
-    terminating.metadata.deletion_timestamp =
-        Some(astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(now()));
-    assert_eq!(status_of(&terminating), "Terminating");
+    terminating["metadata"]["deletionTimestamp"] = now().to_string().into();
+    assert_eq!(status_of(terminating), "Terminating");
 }
 
 #[test]
@@ -247,15 +250,15 @@ fn completed_sidecar_with_running_app_reads_running_or_not_ready() {
              "state": {"terminated": {"exitCode": 0, "reason": "Completed"}}}
         ]})
     };
-    assert_eq!(status_of(&pod(spec.clone(), status("True"))), "Running");
-    assert_eq!(status_of(&pod(spec, status("False"))), "NotReady");
+    assert_eq!(status_of(pod(spec.clone(), status("True"))), "Running");
+    assert_eq!(status_of(pod(spec, status("False"))), "NotReady");
 }
 
 #[test]
 fn pod_detail_summarizes_containers_including_init_and_last_state() {
     let pod = crashing_pod();
 
-    let detail = pod_detail(&pod, now());
+    let detail = detail(BuiltinKind::Pods, pod, now());
 
     assert_eq!(detail.title, "Pod default/web-1");
     assert_eq!(
@@ -314,7 +317,7 @@ fn containers_without_a_status_yet_still_list_from_the_spec() {
         serde_json::json!({"phase": "Pending"}),
     );
 
-    let detail = pod_detail(&pending, now());
+    let detail = detail(BuiltinKind::Pods, pending, now());
 
     assert_eq!(
         detail.tables[0].rows,
@@ -326,8 +329,8 @@ fn containers_without_a_status_yet_still_list_from_the_spec() {
 
 /// Synthetic Deployment (plausible shape, not captured from a server): a
 /// rollout half done — 3 desired, 2 on the new template, 1 unavailable.
-fn rolling_deployment() -> Deployment {
-    serde_json::from_value(serde_json::json!({
+fn rolling_deployment() -> serde_json::Value {
+    serde_json::json!({
         "apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-deploy",
                      "creationTimestamp": "2026-10-20T12:00:00Z"},
@@ -347,15 +350,14 @@ fn rolling_deployment() -> Deployment {
                 {"type": "Progressing", "status": "True", "reason": "ReplicaSetUpdated"}
             ]
         }
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn deployments_list_kubectl_columns() {
     let deployment = rolling_deployment();
 
-    let table = project_deployments(&[&deployment], now());
+    let table = list(BuiltinKind::Deployments, vec![deployment], now());
 
     assert_eq!(
         table.headers(),
@@ -370,13 +372,12 @@ fn deployments_list_kubectl_columns() {
 
 #[test]
 fn a_deployment_with_no_status_yet_reads_zero() {
-    let fresh: Deployment = serde_json::from_value(serde_json::json!({
+    let fresh = serde_json::json!({
         "metadata": {"name": "new", "namespace": "default", "creationTimestamp": "2026-10-22T11:59:00Z"},
         "spec": {"selector": {}, "template": {}}
-    }))
-    .unwrap();
+    });
 
-    let table = project_deployments(&[&fresh], now());
+    let table = list(BuiltinKind::Deployments, vec![fresh], now());
 
     // spec.replicas defaults to 1 server-side; an unset field reads that way.
     assert_eq!(table.rows[0].cells[1..4], ["0/1", "0", "0"]);
@@ -386,7 +387,7 @@ fn a_deployment_with_no_status_yet_reads_zero() {
 fn deployment_detail_shows_replica_bar_and_strategy() {
     let deployment = rolling_deployment();
 
-    let detail = deployment_detail(&deployment, now());
+    let detail = detail(BuiltinKind::Deployments, deployment, now());
 
     assert_eq!(detail.title, "Deployment default/web");
     assert_eq!(
@@ -421,10 +422,9 @@ fn deployment_detail_shows_replica_bar_and_strategy() {
 #[test]
 fn recreate_strategy_has_no_rolling_parameters() {
     let mut deployment = rolling_deployment();
-    deployment.spec.as_mut().unwrap().strategy =
-        serde_json::from_value(serde_json::json!({"type": "Recreate"})).unwrap();
+    deployment["spec"]["strategy"] = serde_json::json!({"type": "Recreate"});
 
-    let detail = deployment_detail(&deployment, now());
+    let detail = detail(BuiltinKind::Deployments, deployment, now());
 
     assert_eq!(
         detail.status,
@@ -497,7 +497,7 @@ fn an_empty_selector_matches_everything() {
 
 #[test]
 fn pod_ports_are_the_running_containers_declared_tcp_ports_in_order() {
-    let pod = pod(
+    let pod = typed_pod(
         serde_json::json!({
             "initContainers": [
                 {"name": "migrate", "ports": [{"containerPort": 9000}]},
@@ -538,7 +538,7 @@ fn pod_ports_are_the_running_containers_declared_tcp_ports_in_order() {
 
 #[test]
 fn exec_targets_sidecars_and_app_containers_but_not_run_once_init_containers() {
-    let pod = pod(
+    let pod = typed_pod(
         serde_json::json!({
             "initContainers": [
                 {"name": "migrate"},
@@ -559,7 +559,7 @@ fn a_pod_without_a_spec_has_no_ports() {
 
 #[test]
 fn a_pod_detail_offers_its_containers_and_ports_to_the_actions() {
-    let model = pod_detail(&crashing_pod(), now());
+    let model = detail(BuiltinKind::Pods, crashing_pod(), now());
 
     assert_eq!(
         model.containers,

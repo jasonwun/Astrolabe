@@ -1,12 +1,12 @@
 //! ResourceQuotas and LimitRanges on the generic list/detail pipeline
 //! (#20), with Freelens 14a491f's columns and detail fields.
 
-use astrolabe::projection::quotas::{
-    limit_range_detail, project_limit_ranges, project_resource_quotas, resource_quota_detail,
-};
+use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::{DetailField, DetailItem, DetailSection, DetailValue, SummaryTable};
-use astrolabe_kube::k8s_openapi::api::core::v1::{LimitRange, ResourceQuota};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use support::{detail, list};
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
@@ -19,8 +19,8 @@ fn rows(rows: &[&[&str]]) -> Vec<Vec<String>> {
 }
 
 /// Synthetic ResourceQuota (plausible shape, not captured from a server).
-fn compute_quota() -> ResourceQuota {
-    serde_json::from_value(serde_json::json!({
+fn compute_quota() -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "compute", "namespace": "default", "uid": "uid-quota",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {
@@ -40,13 +40,12 @@ fn compute_quota() -> ResourceQuota {
                 "memory": "512M", "pods": "3", "requests.storage": "2.5Gi"
             }
         }
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn resource_quotas_list_names_and_ages() {
-    let table = project_resource_quotas(&[&compute_quota()], now());
+    let table = list(BuiltinKind::ResourceQuotas, vec![compute_quota()], now());
 
     assert_eq!(table.headers(), ["Name", "Age"]);
     assert_eq!(table.rows[0].cells, ["compute", "60m"]);
@@ -54,7 +53,7 @@ fn resource_quotas_list_names_and_ages() {
 
 #[test]
 fn a_resource_quota_detail_shows_usage_of_each_hard_limit() {
-    let model = resource_quota_detail(&compute_quota(), now());
+    let model = detail(BuiltinKind::ResourceQuotas, compute_quota(), now());
 
     assert_eq!(model.title, "ResourceQuota default/compute");
     assert!(model.status.is_empty());
@@ -99,22 +98,19 @@ fn a_resource_quota_detail_shows_usage_of_each_hard_limit() {
 #[test]
 fn quota_usage_parses_every_quantity_form_and_leaves_bad_values_blank() {
     let mut quota = compute_quota();
-    quota.spec = None;
-    quota.status = Some(
-        serde_json::from_value(serde_json::json!({
-            "hard": {
-                "a": "1Ki", "b": "3", "c": "1e3", "d": "1E", "e": "2", "f": "1Mi",
-                "g": "4", "h": "2"
-            },
-            "used": {
-                "a": "512", "b": "1", "c": "250", "d": "500P", "e": "1500m",
-                "f": "1.5Mi", "g": "bogus", "h": "-1"
-            }
-        }))
-        .unwrap(),
-    );
+    quota.as_object_mut().unwrap().remove("spec");
+    quota["status"] = serde_json::json!({
+        "hard": {
+            "a": "1Ki", "b": "3", "c": "1e3", "d": "1E", "e": "2", "f": "1Mi",
+            "g": "4", "h": "2"
+        },
+        "used": {
+            "a": "512", "b": "1", "c": "250", "d": "500P", "e": "1500m",
+            "f": "1.5Mi", "g": "bogus", "h": "-1"
+        }
+    });
 
-    let model = resource_quota_detail(&quota, now());
+    let model = detail(BuiltinKind::ResourceQuotas, quota, now());
 
     let usage: Vec<&str> = model.tables[0]
         .rows
@@ -132,9 +128,9 @@ fn quota_usage_parses_every_quantity_form_and_leaves_bad_values_blank() {
 #[test]
 fn a_resource_quota_without_status_keeps_an_empty_quotas_table() {
     let mut quota = compute_quota();
-    quota.status = None;
+    quota.as_object_mut().unwrap().remove("status");
 
-    let model = resource_quota_detail(&quota, now());
+    let model = detail(BuiltinKind::ResourceQuotas, quota, now());
 
     assert_eq!(model.tables.len(), 1);
     assert_eq!(model.tables[0].title, "Quotas");
@@ -142,8 +138,8 @@ fn a_resource_quota_without_status_keeps_an_empty_quotas_table() {
 }
 
 /// Synthetic LimitRange (plausible shape, not captured from a server).
-fn defaults() -> LimitRange {
-    serde_json::from_value(serde_json::json!({
+fn defaults() -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "defaults", "namespace": "default", "uid": "uid-limits",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {"limits": [
@@ -155,13 +151,12 @@ fn defaults() -> LimitRange {
             {"type": "PersistentVolumeClaim", "min": {"storage": "1Gi"}, "max": {"storage": "10Gi"}},
             {"type": "Container", "max": {"ephemeral-storage": "2Gi"}}
         ]}
-    }))
-    .unwrap()
+    })
 }
 
 #[test]
 fn limit_ranges_list_names_and_ages() {
-    let table = project_limit_ranges(&[&defaults()], now());
+    let table = list(BuiltinKind::LimitRanges, vec![defaults()], now());
 
     assert_eq!(table.headers(), ["Name", "Age"]);
     assert_eq!(table.rows[0].cells, ["defaults", "60m"]);
@@ -182,7 +177,7 @@ fn field(label: &str, values: &[&str]) -> DetailItem {
 
 #[test]
 fn a_limit_range_detail_groups_limits_by_type_and_resource() {
-    let model = limit_range_detail(&defaults(), now());
+    let model = detail(BuiltinKind::LimitRanges, defaults(), now());
 
     assert_eq!(model.title, "LimitRange default/defaults");
     assert!(model.status.is_empty());
@@ -219,14 +214,11 @@ fn a_limit_range_detail_groups_limits_by_type_and_resource() {
 #[test]
 fn a_limit_type_lists_every_resource_even_without_limits() {
     let mut pods = defaults();
-    pods.spec = Some(
-        serde_json::from_value(serde_json::json!({"limits": [
-            {"type": "Pod", "max": {"memory": "2Gi"}}
-        ]}))
-        .unwrap(),
-    );
+    pods["spec"] = serde_json::json!({"limits": [
+        {"type": "Pod", "max": {"memory": "2Gi"}}
+    ]});
 
-    let model = limit_range_detail(&pods, now());
+    let model = detail(BuiltinKind::LimitRanges, pods, now());
 
     assert_eq!(
         model.sections,
@@ -244,14 +236,11 @@ fn a_limit_type_lists_every_resource_even_without_limits() {
 #[test]
 fn an_empty_limit_value_shows_no_badge() {
     let mut empty = defaults();
-    empty.spec = Some(
-        serde_json::from_value(serde_json::json!({"limits": [
-            {"type": "PersistentVolumeClaim", "min": {"storage": ""}, "max": {"storage": "10Gi"}}
-        ]}))
-        .unwrap(),
-    );
+    empty["spec"] = serde_json::json!({"limits": [
+        {"type": "PersistentVolumeClaim", "min": {"storage": ""}, "max": {"storage": "10Gi"}}
+    ]});
 
-    let model = limit_range_detail(&empty, now());
+    let model = detail(BuiltinKind::LimitRanges, empty, now());
 
     assert_eq!(model.sections[0].items, [field("storage", &["max:10Gi"])]);
 }
@@ -259,13 +248,17 @@ fn an_empty_limit_value_shows_no_badge() {
 #[test]
 fn empty_limits_and_hard_lists_behave_as_missing_ones() {
     let mut limits = defaults();
-    limits.spec = Some(serde_json::from_value(serde_json::json!({"limits": []})).unwrap());
+    limits["spec"] = serde_json::json!({"limits": []});
     let mut quota = compute_quota();
-    quota.status = Some(serde_json::from_value(serde_json::json!({"hard": {}})).unwrap());
+    quota["status"] = serde_json::json!({"hard": {}});
 
-    assert!(limit_range_detail(&limits, now()).sections.is_empty());
     assert!(
-        resource_quota_detail(&quota, now()).tables[0]
+        detail(BuiltinKind::LimitRanges, limits, now())
+            .sections
+            .is_empty()
+    );
+    assert!(
+        detail(BuiltinKind::ResourceQuotas, quota, now()).tables[0]
             .rows
             .is_empty()
     );

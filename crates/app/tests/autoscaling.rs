@@ -1,24 +1,22 @@
 //! HorizontalPodAutoscalers on the generic list/detail pipeline (#20), with
 //! Freelens 14a491f's columns and detail fields.
 
-use astrolabe::projection::autoscaling::{hpa_detail, project_hpas};
+use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::{DetailItem, DetailSection, SummaryTable};
-use astrolabe_kube::k8s_openapi::api::autoscaling::v2::HorizontalPodAutoscaler;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use support::{detail, list};
+
+mod support;
 
 fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
 }
 
-fn hpa(value: serde_json::Value) -> HorizontalPodAutoscaler {
-    serde_json::from_value(value).unwrap()
-}
-
 /// Synthetic autoscaling/v2 HPA (plausible shape, not captured from a
 /// server): one metric of each source type, all but the External one
 /// reported in `currentMetrics`.
-fn web_hpa() -> HorizontalPodAutoscaler {
-    hpa(serde_json::json!({
+fn web_hpa() -> serde_json::Value {
+    serde_json::json!({
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-hpa",
                      "creationTimestamp": "2026-10-22T11:00:00Z"},
         "spec": {
@@ -63,12 +61,16 @@ fn web_hpa() -> HorizontalPodAutoscaler {
                  "lastTransitionTime": "2026-10-22T11:20:00Z"}
             ]
         }
-    }))
+    })
 }
 
 #[test]
 fn hpa_list_follows_freelens_columns() {
-    let table = project_hpas(&[&web_hpa()], now());
+    let table = list(
+        BuiltinKind::HorizontalPodAutoscalers,
+        vec![web_hpa()],
+        now(),
+    );
 
     assert_eq!(
         table.headers(),
@@ -99,15 +101,15 @@ fn hpa_list_follows_freelens_columns() {
 
 #[test]
 fn an_hpa_without_metrics_min_replicas_or_status_lists_defaults() {
-    let bare = hpa(serde_json::json!({
+    let bare = serde_json::json!({
         "metadata": {"name": "bare", "namespace": "default"},
         "spec": {
             "scaleTargetRef": {"kind": "Deployment", "name": "web"},
             "maxReplicas": 5
         }
-    }));
+    });
 
-    let table = project_hpas(&[&bare], now());
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![bare], now());
 
     assert_eq!(table.rows[0].cells, ["bare", "--", "0", "5", "0", "", ""]);
 }
@@ -115,18 +117,18 @@ fn an_hpa_without_metrics_min_replicas_or_status_lists_defaults() {
 #[test]
 fn a_single_metric_has_no_more_suffix_and_a_false_ready_condition_shows_negated() {
     let mut single = web_hpa();
-    single.spec.metrics.as_mut().unwrap().truncate(1);
-    let status = single.status.as_mut().unwrap();
-    status.current_metrics = None;
-    status.conditions = Some(
-        serde_json::from_value(serde_json::json!([
-            {"type": "AbleToScale", "status": "True", "lastTransitionTime": "2026-10-22T11:00:00Z"},
-            {"type": "Ready", "status": "False", "lastTransitionTime": "2026-10-22T11:00:00Z"}
-        ]))
-        .unwrap(),
-    );
+    single["spec"]["metrics"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    let status = &mut single["status"];
+    status.as_object_mut().unwrap().remove("currentMetrics");
+    status["conditions"] = serde_json::json!([
+        {"type": "AbleToScale", "status": "True", "lastTransitionTime": "2026-10-22T11:00:00Z"},
+        {"type": "Ready", "status": "False", "lastTransitionTime": "2026-10-22T11:00:00Z"}
+    ]);
 
-    let table = project_hpas(&[&single], now());
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![single], now());
 
     assert_eq!(table.rows[0].cells[1], "unknown / 50%");
     assert_eq!(table.rows[0].cells[6], "NotReady, AbleToScale");
@@ -155,7 +157,7 @@ fn metrics_section(rows: &[[&str; 2]]) -> DetailSection {
 
 #[test]
 fn an_hpa_detail_shows_freelens_fields_desired_replicas_and_metrics() {
-    let model = hpa_detail(&web_hpa(), now());
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, web_hpa(), now());
 
     assert_eq!(model.title, "HorizontalPodAutoscaler default/web");
     assert_eq!(
@@ -193,15 +195,15 @@ fn an_hpa_detail_shows_freelens_fields_desired_replicas_and_metrics() {
 
 #[test]
 fn an_hpa_detail_without_metrics_or_status_has_no_metrics_section() {
-    let bare = hpa(serde_json::json!({
+    let bare = serde_json::json!({
         "metadata": {"name": "bare", "namespace": "default"},
         "spec": {
             "scaleTargetRef": {"kind": "Deployment", "name": "web"},
             "maxReplicas": 5
         }
-    }));
+    });
 
-    let model = hpa_detail(&bare, now());
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, bare, now());
 
     assert_eq!(
         model.status,
@@ -217,16 +219,24 @@ fn an_hpa_detail_without_metrics_or_status_has_no_metrics_section() {
     assert!(model.conditions.is_empty());
 }
 
+/// `hpa` with only its External metric left.
+fn external_only(mut hpa: serde_json::Value) -> serde_json::Value {
+    let metrics = hpa["spec"]["metrics"].as_array_mut().unwrap();
+    metrics.drain(..3);
+    metrics.truncate(1);
+    hpa
+}
+
 #[test]
 fn an_external_metric_names_its_selector_only_when_it_has_one() {
-    let mut external = web_hpa();
-    let metric = &mut external.spec.metrics.as_mut().unwrap()[3];
-    metric.external.as_mut().unwrap().metric.selector = None;
-    external.spec.metrics.as_mut().unwrap().drain(..3);
-    external.spec.metrics.as_mut().unwrap().truncate(1);
-    external.status = None;
+    let mut external = external_only(web_hpa());
+    external["spec"]["metrics"][0]["external"]["metric"]
+        .as_object_mut()
+        .unwrap()
+        .remove("selector");
+    external.as_object_mut().unwrap().remove("status");
 
-    let model = hpa_detail(&external, now());
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, external, now());
 
     assert_eq!(
         model.sections,
@@ -236,23 +246,13 @@ fn an_external_metric_names_its_selector_only_when_it_has_one() {
 
 #[test]
 fn an_external_selector_names_match_labels_before_match_expressions() {
-    let mut external = web_hpa();
-    external.spec.metrics.as_mut().unwrap().drain(..3);
-    external.spec.metrics.as_mut().unwrap().truncate(1);
-    external.spec.metrics.as_mut().unwrap()[0]
-        .external
-        .as_mut()
-        .unwrap()
-        .metric
-        .selector = Some(
-        serde_json::from_value(serde_json::json!({
-            "matchExpressions": [{"key": "tier", "operator": "In", "values": ["a", "b"]}],
-            "matchLabels": {"queue": "jobs", "app": "web"}
-        }))
-        .unwrap(),
-    );
+    let mut external = external_only(web_hpa());
+    external["spec"]["metrics"][0]["external"]["metric"]["selector"] = serde_json::json!({
+        "matchExpressions": [{"key": "tier", "operator": "In", "values": ["a", "b"]}],
+        "matchLabels": {"queue": "jobs", "app": "web"}
+    });
 
-    let model = hpa_detail(&external, now());
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, external, now());
 
     let DetailItem::Table(table) = &model.sections[0].items[0] else {
         panic!("{:?}", model.sections);
@@ -266,20 +266,13 @@ fn an_external_selector_names_match_labels_before_match_expressions() {
 
 #[test]
 fn an_empty_external_average_reads_as_unknown_like_a_missing_one() {
-    let mut external = web_hpa();
-    external.spec.metrics.as_mut().unwrap().drain(..3);
-    external.spec.metrics.as_mut().unwrap().truncate(1);
-    external.spec.metrics.as_mut().unwrap()[0]
-        .external
-        .as_mut()
-        .unwrap()
-        .target = serde_json::from_value(serde_json::json!({
+    let mut external = external_only(web_hpa());
+    external["spec"]["metrics"][0]["external"]["target"] = serde_json::json!({
         "type": "AverageValue", "averageValue": ""
-    }))
-    .unwrap();
-    external.status = None;
+    });
+    external.as_object_mut().unwrap().remove("status");
 
-    let table = project_hpas(&[&external], now());
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![external], now());
 
     assert_eq!(table.rows[0].cells[1], "unknown / unknown");
 }
