@@ -179,19 +179,25 @@ retro).
 
 ## Tests that claim the Registration's path
 
-A test of a built-in kind's list or detail calls the Registration with a
-`DynamicObject`: `(BuiltinKind::X.registration().detail)(&object, now)`
-or `.list`. `dev/registration-path.sh` (CI) fails a test that calls a
-projection function the Registration wraps; review covers the rest: a
-helper that rebuilds the Registration's glue (parsing, choosing which
-JSON to pass) some other way is a finding, since the copy drifts from
-the Registration and passes when the app's path differs.
+A test of a built-in kind's list or detail calls the Registration
+through `support::list(kind, raws, now)` or `support::detail(kind, raw,
+now)`, which pass `DynamicObject`s to
+`(BuiltinKind::X.registration().list)` / `.detail`.
+`dev/registration-path.sh` (CI) fails a test that calls a projection
+function the Registration wraps; review covers the rest: a helper that
+rebuilds the Registration's glue (parsing, choosing which JSON to pass)
+some other way, or a local copy of `support::list` / `support::detail`,
+is a finding, since the copy drifts from the Registration and passes
+when the app's path differs.
 
 Origin: #100's test helper rebuilt the Services Registration's
 `try_parse` and `.data` call; its first version passed `metadata` the
 app never sees, and neither reviewer suggested calling the Registration
-(#100 retro). The rule then took one ticket per file (#114, #121) until
-the check covered every test (#114 retro).
+(#100 retro). The rule then took one ticket per file (#114, #121), and
+the check has covered every test since #121 (#114 retro). #121 first
+copied a `list` / `detail` helper into eight test files, as its issue
+asked for one helper per kind; review moved them into `support` (#121
+retro).
 
 ## View-test steps the support module already has
 
