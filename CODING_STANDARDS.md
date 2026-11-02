@@ -207,7 +207,11 @@ detail with `support::open_detail`, and builds a `DynamicObject` with
 `support::mouse_click`; a test asserting on `tracing` output captures it with
 `support::LogCapture`, or `LogCapture::with_filter` when it needs a
 filter other than the default `astrolabe=debug` one (`dev/log-capture.sh`
-checks the last). A local
+checks the last; it and `dev/comment-width.sh` also read files not yet
+added). A test asserting a log line is the only one in its test binary
+that reaches the line's callsite: in #106 another test logging the same
+`warn!` with no subscriber left the assertion failing whenever both ran
+in parallel, and passing alone. A local
 helper or an inline run that repeats `open_list`'s or `open_detail`'s steps
 (select the namespace, click the nav item, send the snapshot, click the
 row) is a finding, whatever its name.

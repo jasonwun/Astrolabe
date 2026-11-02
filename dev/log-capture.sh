@@ -6,7 +6,8 @@
 # the support module already has").
 set -euo pipefail
 
-if git ls-files -z 'crates/app/tests/*.rs' ':!crates/app/tests/support/*' |
+# Untracked test files count too (#106 retro).
+if git ls-files -z --cached --others --exclude-standard 'crates/app/tests/*.rs' ':!crates/app/tests/support/*' |
     xargs -0 grep -nF 'Arc<Mutex<Vec<u8>>>'; then
     echo "Capture tracing output with support::LogCapture instead." >&2
     exit 1
