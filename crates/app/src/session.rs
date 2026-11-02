@@ -260,7 +260,7 @@ impl<K: ResourceExt> Watched<K> {
     }
 }
 
-/// An Operation's on-screen text (#151 keeps it in the app until #152).
+/// An Operation's on-screen text (#151 keeps it in the app until #153).
 pub trait OperationText {
     /// Shown while the server has not answered.
     fn pending(&self) -> &'static str;
