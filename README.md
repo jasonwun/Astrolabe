@@ -6,6 +6,7 @@ A desktop application built with [gpui](https://github.com/zed-industries/zed/tr
 
 - `crates/app` — `astrolabe` (binary): GPUI entry point; store and session entities live here
 - `crates/kube` — `astrolabe-kube` (library): kube-rs communication layer; must not depend on gpui
+- `crates/model` — `astrolabe-model` (library): the model layer (ADR-0002): Session's state and rules, synchronous, no I/O; `dev/layer-check.sh` holds its rules
 - `crates/terminal` — `astrolabe-terminal` (library): `TerminalBackend` trait + alacritty implementation + GPUI view; alacritty types never leave the crate
 
 ## Requirements

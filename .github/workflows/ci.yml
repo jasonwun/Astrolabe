@@ -16,6 +16,7 @@ jobs:
       - run: dev/comment-width.sh
       - run: dev/registration-path.sh
       - run: dev/log-capture.sh
+      - run: dev/layer-check.sh
       # Dependency-direction guard: the kube layer must stay gpui-free.
       - name: astrolabe-kube must not depend on gpui
         run: |
@@ -45,8 +46,9 @@ jobs:
       - run: cargo test -p astrolabe-kube --locked --test e2e_cluster -- --ignored --test-threads=1
 
   mutants:
-    # astrolabe-kube's zero-missed mutant bar (docs/agents/testing.md),
-    # scoped to the code this PR touches. Linux: the crate is gpui-free.
+    # astrolabe-kube's and astrolabe-model's zero-missed mutant bar
+    # (docs/agents/testing.md), scoped to the code this PR touches. Linux:
+    # both crates are gpui-free.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -60,7 +62,7 @@ jobs:
         with:
           tool: cargo-mutants
       - run: git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
-      - run: cargo mutants -p astrolabe-kube --cargo-arg=--locked --in-diff pr.diff -j 2
+      - run: cargo mutants -p astrolabe-kube -p astrolabe-model --cargo-arg=--locked --in-diff pr.diff -j 2
 
   e2e-legacy-discovery:
     # A pre-aggregated-discovery apiserver (aggregated discovery is
