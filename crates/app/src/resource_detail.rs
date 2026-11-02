@@ -662,10 +662,10 @@ impl Panel for ResourceDetailPanel {
 
 impl Render for ResourceDetailPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _cost = perf::span(perf::Work::DetailRender);
+        let _cost = perf::time(perf::Work::DetailRender);
         let now = clock::now(cx);
         let (resolved, next_tick) = track_ages(now, || {
-            let _cost = perf::span(perf::Work::DetailResolve);
+            let _cost = perf::time(perf::Work::DetailResolve);
             detail::resolve(&self.target, self.session.read(cx), now)
         });
         self.tick = cx.spawn(async move |panel, cx| {

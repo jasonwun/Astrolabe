@@ -6,8 +6,8 @@ use astrolabe::session::{NamespaceWatchMessage, ObjectWatchMessage, ScriptedClus
 use astrolabe::workspace::{LaunchTab, Preselection, WorkspaceView};
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
-use support::{LogCapture, key_on, object, snapshot};
+use gpui_kit::{TestAppContext, VisualTestContext};
+use support::{LogCapture, key_on, mouse_click, object, snapshot};
 
 mod support;
 
@@ -182,9 +182,7 @@ fn launch_opens_the_preselected_list_and_detail_tabs(cx: &mut TestAppContext) {
         assert_eq!(detail.label(), Some("Secret team-a/db"));
     });
     assert!(cx.debug_bounds("dock-tab-2").is_none(), "one detail tab");
-    let list_tab = cx.debug_bounds("dock-tab-0").expect("the list tab");
-    cx.simulate_mouse_down(list_tab.center(), MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_up(list_tab.center(), MouseButton::Left, Modifiers::none());
+    mouse_click(cx, "dock-tab-0");
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.render_frame(cx);

@@ -22,7 +22,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{TestAppContext, VisualTestContext};
+use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use tracing_subscriber::util::SubscriberInitExt as _;
 
 pub type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
@@ -244,6 +244,17 @@ impl Ui<'_> {
             f(window, cx)
         })
     }
+}
+
+/// Press and release the left button on the centre `id` was last drawn at,
+/// as a person clicks: for elements whose handlers listen for mouse events
+/// rather than `window.click`, such as dock tabs and their close buttons.
+pub fn mouse_click(cx: &mut VisualTestContext, id: &'static str) {
+    let bounds = cx
+        .debug_bounds(id)
+        .unwrap_or_else(|| panic!("{id} was not drawn"));
+    cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(bounds.center(), MouseButton::Left, Modifiers::none());
 }
 
 /// Shared buffer behind a `tracing` subscriber, so tests can assert on the

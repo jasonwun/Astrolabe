@@ -81,6 +81,10 @@ Reference: `crates/app/src/resource_list.rs`.
   `support::open_list(ui, BuiltinKind, watch, objects)`; the list then a
   row's detail: `support::open_detail(ui, BuiltinKind, watch, objects,
   name)`; a `DynamicObject` from JSON: `support::object` (#101, #117).
+- Clicking an element whose handler listens for mouse events, such as a
+  dock tab or its close button, which `window.click` does not reach:
+  `support::mouse_click(cx, id)` presses and releases on where `id` was
+  last drawn, so render a frame first (#106).
 - `Ui::frame` (`crates/app/tests/support`) renders the whole window
   before it queries, so every view shows fresh state whether or not it
   notified. To prove a view redraws on its own (a timer, a

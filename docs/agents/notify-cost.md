@@ -38,8 +38,9 @@ Secrets: every ConfigMaps event re-projects a list it does not touch.
 Run the pieces by hand when you need another mix:
 
 ```sh
-CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo run --release -p astrolabe-kube --example churn -- \
-    kind-astrolabe-dev NAMESPACE run 100 30
+kubectl --context kind-astrolabe-dev create namespace NAMESPACE
+cargo run --release -p astrolabe-kube --example churn -- kind-astrolabe-dev NAMESPACE seed 300
+cargo run --release -p astrolabe-kube --example churn -- kind-astrolabe-dev NAMESPACE run 100 30
 NO_COLOR=1 RUST_LOG=warn,astrolabe::perf=trace ASTROLABE_CLUSTER=kind-astrolabe-dev \
     ASTROLABE_NAMESPACE=NAMESPACE ASTROLABE_OPEN=ConfigMap,Secret,Deployment/d-1 \
     CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true cargo run --release -p astrolabe
@@ -68,4 +69,17 @@ last line:
 
 Main-thread ms/s is the `_ms` fields summed (render includes resolve, so
 add `list_refresh_ms + detail_render_ms`); the probe's lag catches the
-rest, such as layout and paint. Frame stalls are `lags_over_16ms`.
+rest, such as layout and paint. Frame stalls are `lags_over_16ms`: the
+probe measures how long the main thread was blocked, a proxy for frame
+time rather than frame time itself.
+
+Read the numbers with these in mind:
+
+- Debug assertions are on in the measured build, so times may run a
+  little high against a shipped release.
+- The time per call falls as the rate rises (a list refresh took about
+  6 ms idle, 1.2 ms at 100/s in #106's run): a busy main thread keeps the
+  CPU clocked up and its caches warm. Compare `_ms` per second across
+  runs at one rate, not per call across rates.
+- An idle app also logs a few `lags_over_16ms`, since macOS coalesces an
+  idle app's timers. Compare against the `RATES=0` row.

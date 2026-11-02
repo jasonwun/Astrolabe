@@ -11,9 +11,9 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
+use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{Modifiers, MouseButton, TestAppContext};
-use support::{LogCapture, Sender, Ui, key, object, open, open_detail, snapshot};
+use support::{LogCapture, Sender, Ui, key, mouse_click, object, open, open_detail, snapshot};
 
 const REPORT: &str = "main-thread cost";
 
@@ -102,17 +102,12 @@ fn a_report_counts_the_list_refreshes_an_unrelated_watch_triggers(cx: &mut TestA
         assert_eq!(field(report, "detail_resolve"), 0., "{report}");
 
         // With the detail shown, each change resolves it again.
-        let detail_tab = ui.cx.debug_bounds("dock-tab-1").expect("the detail tab");
-        ui.cx
-            .simulate_mouse_down(detail_tab.center(), MouseButton::Left, Modifiers::none());
-        ui.cx
-            .simulate_mouse_up(detail_tab.center(), MouseButton::Left, Modifiers::none());
+        mouse_click(ui.cx, "dock-tab-1");
         next_reports(&mut ui, &log, &mut seen);
         churn(&mut ui, &mut secrets, 3);
-        ui.frame(|_, _| {});
         let report = &next_reports(&mut ui, &log, &mut seen)[0];
-        assert!(field(report, "detail_resolve") >= 1., "{report}");
-        assert!(field(report, "detail_render") >= 1., "{report}");
+        assert!(field(report, "detail_resolve") >= 3., "{report}");
+        assert!(field(report, "detail_render") >= 3., "{report}");
     });
 }
 

@@ -2,8 +2,10 @@
 //! `docs/agents/notify-cost.md`).
 //!
 //! ```text
-//! cargo run --release -p astrolabe-kube --example churn -- CONTEXT NAMESPACE seed COUNT
-//! cargo run --release -p astrolabe-kube --example churn -- CONTEXT NAMESPACE run RATE SECONDS
+//! cargo run --release -p astrolabe-kube --example churn -- \
+//!     CONTEXT NAMESPACE seed COUNT
+//! cargo run --release -p astrolabe-kube --example churn -- \
+//!     CONTEXT NAMESPACE run RATE SECONDS
 //! ```
 //!
 //! `seed` server-side-applies COUNT each of Secrets `s-N`, Services
@@ -157,17 +159,34 @@ async fn seed(client: Client, namespace: &str, count: u32) -> Result<(), Error> 
     Ok(())
 }
 
-/// Operation `k`: the `churn-N` it touches, and whether it creates (0),
-/// patches (1) or deletes (2) it.
-fn operation(k: u64) -> (String, u64) {
-    (format!("churn-{}", k % POOL), (k / POOL) % 3)
+/// What an operation does to its `churn-N`.
+enum Op {
+    Create,
+    Patch,
+    Delete,
+}
+
+/// Operation `k`: the `churn-N` it touches, and what it does to it.
+fn operation(k: u64) -> (String, Op) {
+    let op = match (k / POOL) % 3 {
+        0 => Op::Create,
+        1 => Op::Patch,
+        _ => Op::Delete,
+    };
+    (format!("churn-{}", k % POOL), op)
+}
+
+/// Operations finished so far.
+#[derive(Default)]
+struct Counts {
+    done: AtomicU64,
+    failed: AtomicU64,
 }
 
 async fn run(client: Client, namespace: &str, rate: u32, seconds: u64) -> Result<(), Error> {
     let api: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
     let permits = Arc::new(Semaphore::new(IN_FLIGHT));
-    let done = Arc::new(AtomicU64::new(0));
-    let failed = Arc::new(AtomicU64::new(0));
+    let counts = Arc::new(Counts::default());
     let mut ticks = tokio::time::interval(Duration::from_secs_f64(1. / f64::from(rate.max(1))));
     let start = Instant::now();
     let mut next_print = Duration::from_secs(1);
@@ -179,55 +198,51 @@ async fn run(client: Client, namespace: &str, rate: u32, seconds: u64) -> Result
             continue;
         }
         let permit = permits.clone().acquire_owned().await?;
-        let (api, counts) = (api.clone(), (done.clone(), failed.clone()));
-        let (name, phase) = operation(k);
+        let (client, api, finished) = (client.clone(), api.clone(), counts.clone());
+        let (name, op) = operation(k);
         let namespace = namespace.to_string();
         tokio::spawn(async move {
-            let outcome = match phase {
-                2 => api.delete(&name, &DeleteParams::default()).await.map(drop),
-                _ => {
+            let outcome = match op {
+                Op::Delete => api.delete(&name, &DeleteParams::default()).await.map(drop),
+                // A create and a patch are both an apply: the object is
+                // new, or its data changes.
+                Op::Create | Op::Patch => {
                     let object = ConfigMap {
-                        metadata: meta(&namespace, name.clone()),
+                        metadata: meta(&namespace, name),
                         data: Some(BTreeMap::from([("k".to_string(), k.to_string())])),
                         ..ConfigMap::default()
                     };
-                    api.patch(
-                        &name,
-                        &PatchParams::apply(MANAGER).force(),
-                        &Patch::Apply(&object),
-                    )
-                    .await
-                    .map(drop)
+                    apply!(client, &namespace, object).await
                 }
             };
             let counter = if outcome.is_ok() {
-                &counts.0
+                &finished.done
             } else {
-                &counts.1
+                &finished.failed
             };
             counter.fetch_add(1, Ordering::Relaxed);
             drop(permit);
         });
         k += 1;
         if start.elapsed() >= next_print {
-            let total = done.load(Ordering::Relaxed);
+            let total = counts.done.load(Ordering::Relaxed);
             println!(
                 "{:>4}s {:>5} ops/s ({} failed)",
                 next_print.as_secs(),
                 total - printed,
-                failed.load(Ordering::Relaxed)
+                counts.failed.load(Ordering::Relaxed)
             );
             printed = total;
             next_print += Duration::from_secs(1);
         }
     }
     let _ = permits.acquire_many(IN_FLIGHT as u32).await?;
-    let total = done.load(Ordering::Relaxed);
+    let total = counts.done.load(Ordering::Relaxed);
     println!(
         "{total} ops in {:.1}s ({:.1}/s), {} failed",
         start.elapsed().as_secs_f64(),
         total as f64 / start.elapsed().as_secs_f64(),
-        failed.load(Ordering::Relaxed)
+        counts.failed.load(Ordering::Relaxed)
     );
     Ok(())
 }

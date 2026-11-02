@@ -43,15 +43,33 @@ pub enum Event {
     Draw,
 }
 
+/// One kind of [`Work`]'s calls and their total time.
+#[derive(Default)]
+struct Cost {
+    calls: u64,
+    total: Duration,
+}
+
 #[derive(Default)]
 struct Stats {
     watch_events: u64,
     notifies: u64,
     draws: u64,
-    /// Calls and total time, indexed by [`Work`].
-    work: [(u64, Duration); 3],
+    list_refresh: Cost,
+    detail_resolve: Cost,
+    detail_render: Cost,
     lag_max: Duration,
     lags_over_budget: u64,
+}
+
+impl Stats {
+    fn cost(&mut self, work: Work) -> &mut Cost {
+        match work {
+            Work::ListRefresh => &mut self.list_refresh,
+            Work::DetailResolve => &mut self.detail_resolve,
+            Work::DetailRender => &mut self.detail_render,
+        }
+    }
 }
 
 thread_local! {
@@ -77,26 +95,26 @@ pub fn count(event: Event) {
 }
 
 /// Times `work` until dropped; `None` while the report is off.
-pub fn span(work: Work) -> Option<Span> {
-    enabled().then(|| Span {
+pub fn time(work: Work) -> Option<Timing> {
+    enabled().then(|| Timing {
         work,
         start: Instant::now(),
     })
 }
 
-/// A running [`span`].
-pub struct Span {
+/// A running [`time`].
+pub struct Timing {
     work: Work,
     start: Instant,
 }
 
-impl Drop for Span {
+impl Drop for Timing {
     fn drop(&mut self) {
         let elapsed = self.start.elapsed();
         STATS.with_borrow_mut(|stats| {
-            let (calls, total) = &mut stats.work[self.work as usize];
-            *calls += 1;
-            *total += elapsed;
+            let cost = stats.cost(self.work);
+            cost.calls += 1;
+            cost.total += elapsed;
         });
     }
 }
@@ -133,17 +151,16 @@ pub fn start(cx: &mut App) {
 fn report() {
     let stats = STATS.take();
     let ms = |duration: Duration| format!("{:.2}", duration.as_secs_f64() * 1000.);
-    let [list, resolve, render] = stats.work;
     tracing::trace!(
         watch_events = stats.watch_events,
         notifies = stats.notifies,
         draws = stats.draws,
-        list_refresh = list.0,
-        list_refresh_ms = %ms(list.1),
-        detail_resolve = resolve.0,
-        detail_resolve_ms = %ms(resolve.1),
-        detail_render = render.0,
-        detail_render_ms = %ms(render.1),
+        list_refresh = stats.list_refresh.calls,
+        list_refresh_ms = %ms(stats.list_refresh.total),
+        detail_resolve = stats.detail_resolve.calls,
+        detail_resolve_ms = %ms(stats.detail_resolve.total),
+        detail_render = stats.detail_render.calls,
+        detail_render_ms = %ms(stats.detail_render.total),
         lag_max_ms = %ms(stats.lag_max),
         lags_over_16ms = stats.lags_over_budget,
         "main-thread cost"

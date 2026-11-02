@@ -8,8 +8,8 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe_kube::kube::core::DynamicObject;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use gpui_kit::{Bounds, Modifiers, MouseButton, Pixels, TestAppContext};
-use support::{Ui, key, object, open, open_detail};
+use gpui_kit::{Bounds, Pixels, TestAppContext};
+use support::{Ui, key, mouse_click, object, open, open_detail};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
@@ -56,11 +56,8 @@ fn the_close_button_removes_a_detail_tab(cx: &mut TestAppContext) {
     // select the tab it closes.
     ui.frame(|window, cx| window.click("nav-namespaces", cx));
     ui.settle();
-    let button = bounds(&mut ui, CLOSE_BUTTON).expect("an inactive detail tab keeps its button");
-    ui.cx
-        .simulate_mouse_down(button.center(), MouseButton::Left, Modifiers::none());
-    ui.cx
-        .simulate_mouse_up(button.center(), MouseButton::Left, Modifiers::none());
+    bounds(&mut ui, CLOSE_BUTTON).expect("an inactive detail tab keeps its button");
+    mouse_click(ui.cx, CLOSE_BUTTON);
     ui.settle();
 
     assert!(!detail_tab_shown(&mut ui));

@@ -168,7 +168,7 @@ impl ResourceListPanel {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let _cost = perf::span(perf::Work::ListRefresh);
+        let _cost = perf::time(perf::Work::ListRefresh);
         let now = clock::now(cx);
         let session = self.session.read(cx);
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
