@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use astrolabe_kube::apply::{ApplyError, Location, apply_documents, precheck_documents};
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
+use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube;
@@ -22,6 +23,7 @@ use astrolabe_kube::kube::api::{Api, DeleteParams, ListParams, PostParams};
 use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
+use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_kube::pod::{self, ExecInput};
 use astrolabe_kube::{default_client, resource, service};
 use futures::StreamExt;
@@ -484,7 +486,11 @@ spec:
     .await
     .expect("timed out waiting for the Widget");
 
-    astrolabe_kube::resource::delete(&client, resource, Some(&ns), "w1")
+    let widget_ref = ObjectRef {
+        resource: resource.clone(),
+        key: ObjectKey::new(Some(ns.clone()), "w1"),
+    };
+    astrolabe_kube::resource::delete(&client, &widget_ref)
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -572,19 +578,18 @@ async fn scale_and_rollout_restart_a_deployment() {
     let ns = unique_ns();
     let first = running_nginx(&client, &ns).await;
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &ns);
-    let deployment = ApiResource::erase::<Deployment>(&());
+    let deployment = ObjectRef {
+        resource: ApiResource::erase::<Deployment>(&()),
+        key: ObjectKey::new(Some(ns.clone()), "nginx"),
+    };
 
-    resource::scale(&client, &deployment, &ns, "nginx", 2)
-        .await
-        .unwrap();
+    resource::scale(&client, &deployment, 2).await.unwrap();
     let scaled = deployments.get("nginx").await.unwrap();
     assert_eq!(scaled.spec.unwrap().replicas, Some(2));
-    resource::scale(&client, &deployment, &ns, "nginx", 1)
-        .await
-        .unwrap();
+    resource::scale(&client, &deployment, 1).await.unwrap();
 
     let at: Timestamp = "2026-01-02T03:04:05Z".parse().unwrap();
-    resource::rollout_restart(&client, &deployment, &ns, "nginx", at)
+    resource::rollout_restart(&client, &deployment, at)
         .await
         .unwrap();
     let restarted = deployments.get("nginx").await.unwrap();
@@ -601,6 +606,70 @@ async fn scale_and_rollout_restart_a_deployment() {
         "2026-01-02T03:04:05Z"
     );
     ready_pod(&client, &ns, Some(&first)).await;
+
+    delete_ns(&client, &ns).await;
+}
+
+fn cronjob_doc(ns: &str) -> String {
+    format!(
+        "\
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly
+  namespace: {ns}
+spec:
+  schedule: \"0 0 1 1 *\"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: run
+              image: busybox:1.36
+              command: [\"true\"]
+"
+    )
+}
+
+/// Suspend patches the CronJob in its namespace; trigger reads it there
+/// and creates a manual Job beside it, owned by the CronJob.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn suspend_and_trigger_a_cronjob() {
+    let client = default_client().await.unwrap();
+    let ns = unique_ns();
+    let report = apply_documents(&client, &join_docs(&[ns_doc(&ns), cronjob_doc(&ns)]), false)
+        .await
+        .unwrap();
+    assert!(report.ok, "setup should apply: {:?}", report.outcomes);
+    let nightly = ObjectRef {
+        resource: ApiResource::erase::<CronJob>(&()),
+        key: ObjectKey::new(Some(ns.clone()), "nightly"),
+    };
+
+    resource::suspend(&client, &nightly, true).await.unwrap();
+    let cronjobs: Api<CronJob> = Api::namespaced(client.clone(), &ns);
+    let suspended = cronjobs.get("nightly").await.unwrap();
+    assert_eq!(suspended.spec.suspend, Some(true));
+
+    resource::trigger_cron_job(&client, &nightly).await.unwrap();
+    let jobs: Api<Job> = Api::namespaced(client.clone(), &ns);
+    let created = jobs.list(&ListParams::default()).await.unwrap().items;
+    assert_eq!(created.len(), 1, "one manual Job");
+    let job = &created[0].metadata;
+    assert!(
+        job.name.as_deref().unwrap().starts_with("nightly-manual-"),
+        "{:?}",
+        job.name
+    );
+    let owner = &job.owner_references.as_ref().unwrap()[0];
+    assert_eq!(
+        (owner.kind.as_str(), owner.name.as_str()),
+        ("CronJob", "nightly")
+    );
+    assert_eq!(owner.uid, suspended.metadata.uid.unwrap());
 
     delete_ns(&client, &ns).await;
 }

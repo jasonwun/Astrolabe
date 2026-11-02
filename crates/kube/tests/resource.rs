@@ -9,6 +9,7 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_kube::resource::{delete, rollout_restart, scale, suspend, trigger_cron_job};
 
 /// One request the mock apiserver saw.
@@ -75,6 +76,13 @@ fn crontabs() -> ApiResource {
     }
 }
 
+fn object(resource: ApiResource, namespace: Option<&str>, name: &str) -> ObjectRef {
+    ObjectRef {
+        resource,
+        key: ObjectKey::new(namespace.map(str::to_string), name),
+    }
+}
+
 const DELETED: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Success","code":200}"#;
 const FORBIDDEN: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"crontabs \"nightly\" is forbidden"}"#;
 
@@ -82,10 +90,12 @@ const FORBIDDEN: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure"
 async fn delete_targets_the_namespaced_or_cluster_scoped_object() {
     let (client, seen) = mock_client(200, DELETED);
 
-    delete(&client, &crontabs(), Some("team-a"), "nightly")
+    delete(&client, &object(crontabs(), Some("team-a"), "nightly"))
         .await
         .unwrap();
-    delete(&client, &crontabs(), None, "global").await.unwrap();
+    delete(&client, &object(crontabs(), None, "global"))
+        .await
+        .unwrap();
 
     assert_eq!(
         lines(&seen),
@@ -100,7 +110,7 @@ async fn delete_targets_the_namespaced_or_cluster_scoped_object() {
 async fn delete_reports_server_refusals() {
     let (client, _) = mock_client(403, FORBIDDEN);
 
-    let error = delete(&client, &crontabs(), Some("team-a"), "nightly")
+    let error = delete(&client, &object(crontabs(), Some("team-a"), "nightly"))
         .await
         .unwrap_err();
 
@@ -118,9 +128,7 @@ async fn scale_patches_the_scale_subresource() {
 
     scale(
         &client,
-        &ApiResource::erase::<Deployment>(&()),
-        "team-a",
-        "web",
+        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
         5,
     )
     .await
@@ -142,9 +150,7 @@ async fn rollout_restart_stamps_the_pod_template_as_kubectl_does() {
 
     rollout_restart(
         &client,
-        &ApiResource::erase::<Deployment>(&()),
-        "team-a",
-        "web",
+        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
         at,
     )
     .await
@@ -171,18 +177,14 @@ async fn scale_and_restart_report_server_refusals() {
 
     let scaled = scale(
         &client,
-        &ApiResource::erase::<Deployment>(&()),
-        "team-a",
-        "web",
+        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
         5,
     )
     .await
     .unwrap_err();
     let restarted = rollout_restart(
         &client,
-        &ApiResource::erase::<Deployment>(&()),
-        "team-a",
-        "web",
+        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
         at,
     )
     .await
@@ -197,18 +199,18 @@ async fn p3_scale_and_restart_target_the_registered_kind() {
     let (client, seen) = mock_client(200, SCALE);
     scale(
         &client,
-        &ApiResource::erase::<StatefulSet>(&()),
-        "team-a",
-        "db",
+        &object(ApiResource::erase::<StatefulSet>(&()), Some("team-a"), "db"),
         5,
     )
     .await
     .unwrap();
     scale(
         &client,
-        &ApiResource::erase::<ReplicaSet>(&()),
-        "team-a",
-        "web-abc",
+        &object(
+            ApiResource::erase::<ReplicaSet>(&()),
+            Some("team-a"),
+            "web-abc",
+        ),
         2,
     )
     .await
@@ -216,9 +218,11 @@ async fn p3_scale_and_restart_target_the_registered_kind() {
     let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
     rollout_restart(
         &client,
-        &ApiResource::erase::<DaemonSet>(&()),
-        "team-a",
-        "agent",
+        &object(
+            ApiResource::erase::<DaemonSet>(&()),
+            Some("team-a"),
+            "agent",
+        ),
         at,
     )
     .await
@@ -241,16 +245,25 @@ async fn cronjob_suspend_and_trigger_patch_and_create_the_right_objects() {
     let (client, seen) = mock_client(200, CRONJOB);
     suspend(
         &client,
-        &ApiResource::erase::<CronJob>(&()),
-        "team-a",
-        "nightly",
+        &object(
+            ApiResource::erase::<CronJob>(&()),
+            Some("team-a"),
+            "nightly",
+        ),
         true,
     )
     .await
     .unwrap();
-    trigger_cron_job(&client, "team-a", "nightly")
-        .await
-        .unwrap();
+    trigger_cron_job(
+        &client,
+        &object(
+            ApiResource::erase::<CronJob>(&()),
+            Some("team-a"),
+            "nightly",
+        ),
+    )
+    .await
+    .unwrap();
 
     let seen = seen.lock().unwrap();
     assert_eq!(
@@ -298,9 +311,12 @@ async fn triggering_a_cronjob_without_a_job_spec_is_a_bad_request() {
     const WITHOUT_SPEC: &str = r#"{"apiVersion":"batch/v1","kind":"CronJob","metadata":{"name":"broken","namespace":"team-a"},"spec":{"schedule":"0 0 * * *","jobTemplate":{}}}"#;
     let (client, seen) = mock_client(200, WITHOUT_SPEC);
 
-    let error = trigger_cron_job(&client, "team-a", "broken")
-        .await
-        .unwrap_err();
+    let error = trigger_cron_job(
+        &client,
+        &object(ApiResource::erase::<CronJob>(&()), Some("team-a"), "broken"),
+    )
+    .await
+    .unwrap_err();
 
     let astrolabe_kube::kube::Error::Api(status) = error else {
         panic!("API error expected")
@@ -314,5 +330,58 @@ async fn triggering_a_cronjob_without_a_job_spec_is_a_bad_request() {
     assert_eq!(
         lines(&seen),
         ["GET /apis/batch/v1/namespaces/team-a/cronjobs/broken"]
+    );
+}
+
+/// The `crontabs()` fixture served cluster-scoped, as a cluster-scoped
+/// custom resource is.
+fn clustertabs() -> ApiResource {
+    ApiResource {
+        plural: "clustertabs".to_string(),
+        kind: "ClusterTab".to_string(),
+        ..crontabs()
+    }
+}
+
+/// Scale, restart, suspend and delete `object`, and return the requests'
+/// method and path lines.
+async fn every_operation_on(object: &ObjectRef) -> Vec<String> {
+    let (client, seen) = mock_client(200, SCALE);
+    let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
+
+    scale(&client, object, 2).await.unwrap();
+    rollout_restart(&client, object, at).await.unwrap();
+    suspend(&client, object, true).await.unwrap();
+    delete(&client, object).await.unwrap();
+    lines(&seen)
+}
+
+#[tokio::test]
+async fn every_operation_addresses_a_namespaced_object_in_its_namespace() {
+    let nightly = object(crontabs(), Some("team-a"), "nightly");
+
+    assert_eq!(
+        every_operation_on(&nightly).await,
+        [
+            "PATCH /apis/stable.example.com/v1/namespaces/team-a/crontabs/nightly/scale",
+            "PATCH /apis/stable.example.com/v1/namespaces/team-a/crontabs/nightly",
+            "PATCH /apis/stable.example.com/v1/namespaces/team-a/crontabs/nightly",
+            "DELETE /apis/stable.example.com/v1/namespaces/team-a/crontabs/nightly",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn every_operation_addresses_a_cluster_scoped_object_without_a_namespace() {
+    let global = object(clustertabs(), None, "global");
+
+    assert_eq!(
+        every_operation_on(&global).await,
+        [
+            "PATCH /apis/stable.example.com/v1/clustertabs/global/scale",
+            "PATCH /apis/stable.example.com/v1/clustertabs/global",
+            "PATCH /apis/stable.example.com/v1/clustertabs/global",
+            "DELETE /apis/stable.example.com/v1/clustertabs/global",
+        ]
     );
 }

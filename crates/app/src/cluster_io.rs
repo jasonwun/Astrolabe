@@ -303,53 +303,26 @@ impl ClusterIo {
                     let client = client.await?;
                     let result = match &operation {
                         Operation::Scale { object, replicas } => {
-                            astrolabe_kube::resource::scale(
-                                &client,
-                                &object.resource,
-                                object.key.namespace.as_deref().unwrap_or_default(),
-                                &object.key.name,
-                                *replicas,
-                            )
-                            .await
+                            astrolabe_kube::resource::scale(&client, object, *replicas).await
                         }
                         // The restart stamp goes to the server: system time.
                         #[allow(clippy::disallowed_methods)]
                         Operation::RolloutRestart { object } => {
                             astrolabe_kube::resource::rollout_restart(
                                 &client,
-                                &object.resource,
-                                object.key.namespace.as_deref().unwrap_or_default(),
-                                &object.key.name,
+                                object,
                                 astrolabe_kube::k8s_openapi::jiff::Timestamp::now(),
                             )
                             .await
                         }
                         Operation::SetSuspend { object, suspend } => {
-                            astrolabe_kube::resource::suspend(
-                                &client,
-                                &object.resource,
-                                object.key.namespace.as_deref().unwrap_or_default(),
-                                &object.key.name,
-                                *suspend,
-                            )
-                            .await
+                            astrolabe_kube::resource::suspend(&client, object, *suspend).await
                         }
                         Operation::TriggerCronJob { object } => {
-                            astrolabe_kube::resource::trigger_cron_job(
-                                &client,
-                                object.key.namespace.as_deref().unwrap_or_default(),
-                                &object.key.name,
-                            )
-                            .await
+                            astrolabe_kube::resource::trigger_cron_job(&client, object).await
                         }
                         Operation::Delete { object } => {
-                            astrolabe_kube::resource::delete(
-                                &client,
-                                &object.resource,
-                                object.key.namespace.as_deref(),
-                                &object.key.name,
-                            )
-                            .await
+                            astrolabe_kube::resource::delete(&client, object).await
                         }
                     };
                     result.map_err(|error| error.to_string())

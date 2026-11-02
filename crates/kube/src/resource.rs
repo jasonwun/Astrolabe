@@ -3,10 +3,14 @@
 use k8s_openapi::api::batch::v1::{CronJob, Job};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference};
 use k8s_openapi::jiff::Timestamp;
+use k8s_openapi::serde::Serialize;
+use k8s_openapi::serde::de::DeserializeOwned;
 use kube::api::{DeleteParams, Patch, PatchParams, PostParams};
 use kube::core::DynamicObject;
 use kube::discovery::ApiResource;
 use kube::{Api, Client};
+
+use crate::object::ObjectRef;
 
 /// Delete one object with the server's default propagation, so dependents
 /// owned through `ownerReferences` are garbage-collected.
@@ -15,17 +19,10 @@ use kube::{Api, Client};
 ///
 /// A [`kube::Error`] when the request fails, e.g. the object is gone (404)
 /// or RBAC forbids the delete (403).
-pub async fn delete(
-    client: &Client,
-    resource: &ApiResource,
-    namespace: Option<&str>,
-    name: &str,
-) -> kube::Result<()> {
-    let api: Api<DynamicObject> = match namespace {
-        Some(namespace) => Api::namespaced_with(client.clone(), namespace, resource),
-        None => Api::all_with(client.clone(), resource),
-    };
-    api.delete(name, &DeleteParams::default()).await?;
+pub async fn delete(client: &Client, object: &ObjectRef) -> kube::Result<()> {
+    api(client, object)
+        .delete(&object.key.name, &DeleteParams::default())
+        .await?;
     Ok(())
 }
 
@@ -35,22 +32,16 @@ pub async fn delete(
 ///
 /// A [`kube::Error`] when the patch fails, e.g. the object is gone (404),
 /// the kind has no `scale` subresource, or RBAC forbids the patch (403).
-pub async fn scale(
-    client: &Client,
-    resource: &ApiResource,
-    namespace: &str,
-    name: &str,
-    replicas: i32,
-) -> kube::Result<()> {
-    merge_patch(
-        client,
-        resource,
-        namespace,
-        name,
-        serde_json::json!({"spec": {"replicas": replicas}}),
-        true,
-    )
-    .await
+pub async fn scale(client: &Client, object: &ObjectRef, replicas: i32) -> kube::Result<()> {
+    let patch = serde_json::json!({"spec": {"replicas": replicas}});
+    api(client, object)
+        .patch_scale(
+            &object.key.name,
+            &PatchParams::default(),
+            &Patch::Merge(&patch),
+        )
+        .await?;
+    Ok(())
 }
 
 /// `kubectl rollout restart`: stamp the pod template with kubectl's
@@ -62,20 +53,15 @@ pub async fn scale(
 /// or RBAC forbids the patch (403).
 pub async fn rollout_restart(
     client: &Client,
-    resource: &ApiResource,
-    namespace: &str,
-    name: &str,
+    object: &ObjectRef,
     at: Timestamp,
 ) -> kube::Result<()> {
     merge_patch(
         client,
-        resource,
-        namespace,
-        name,
+        object,
         serde_json::json!({"spec": {"template": {"metadata": {"annotations": {
             "kubectl.kubernetes.io/restartedAt": at.to_string()
         }}}}}),
-        false,
     )
     .await
 }
@@ -86,58 +72,62 @@ pub async fn rollout_restart(
 ///
 /// A [`kube::Error`] when the patch fails, e.g. the object is gone (404)
 /// or RBAC forbids the patch (403).
-pub async fn suspend(
-    client: &Client,
-    resource: &ApiResource,
-    namespace: &str,
-    name: &str,
-    suspended: bool,
-) -> kube::Result<()> {
+pub async fn suspend(client: &Client, object: &ObjectRef, suspended: bool) -> kube::Result<()> {
     merge_patch(
         client,
-        resource,
-        namespace,
-        name,
+        object,
         serde_json::json!({"spec": {"suspend": suspended}}),
-        false,
     )
     .await
 }
 
 async fn merge_patch(
     client: &Client,
-    resource: &ApiResource,
-    namespace: &str,
-    name: &str,
+    object: &ObjectRef,
     patch: serde_json::Value,
-    scale: bool,
 ) -> kube::Result<()> {
-    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, resource);
-    if scale {
-        api.patch_scale(name, &PatchParams::default(), &Patch::Merge(&patch))
-            .await?;
-    } else {
-        api.patch(name, &PatchParams::default(), &Patch::Merge(&patch))
-            .await?;
-    }
+    api(client, object)
+        .patch(
+            &object.key.name,
+            &PatchParams::default(),
+            &Patch::Merge(&patch),
+        )
+        .await?;
     Ok(())
 }
 
+fn api(client: &Client, object: &ObjectRef) -> Api<DynamicObject> {
+    api_in(client, &object.resource, object.key.namespace.as_deref())
+}
+
+/// The one place a namespace picks a request's URL: a namespaced object is
+/// addressed in its namespace, a cluster-scoped one (no namespace) across
+/// the cluster. `ObjectKey` carries `None` only for cluster-scoped objects,
+/// so no namespace is ever made up here.
+fn api_in(client: &Client, resource: &ApiResource, namespace: Option<&str>) -> Api<DynamicObject> {
+    match namespace {
+        Some(namespace) => Api::namespaced_with(client.clone(), namespace, resource),
+        None => Api::all_with(client.clone(), resource),
+    }
+}
+
 /// Create one Job from a CronJob's current template, as `kubectl create job
-/// --from=cronjob/...` does.
+/// --from=cronjob/...` does. `object` addresses a CronJob, so it carries a
+/// namespace; the Job is created in the same one.
 ///
 /// # Errors
 ///
 /// A [`kube::Error`] when getting the CronJob or creating the Job fails,
-/// and a 400 `BadRequest` [`kube::Error::Api`] when the CronJob's Job
-/// template has no spec.
-pub async fn trigger_cron_job(client: &Client, namespace: &str, name: &str) -> kube::Result<()> {
-    let cronjobs: Api<CronJob> = Api::namespaced(client.clone(), namespace);
-    let cronjob = cronjobs.get(name).await?;
+/// a [`kube::Error::SerdeError`] when the object read does not decode as a
+/// CronJob, and a 400 `BadRequest` [`kube::Error::Api`] when the CronJob's
+/// Job template has no spec.
+pub async fn trigger_cron_job(client: &Client, object: &ObjectRef) -> kube::Result<()> {
+    let name = &object.key.name;
+    let cronjob: CronJob = convert(&api(client, object).get(name).await?)?;
     let owner = OwnerReference {
         api_version: "batch/v1".to_string(),
         kind: "CronJob".to_string(),
-        name: name.to_string(),
+        name: name.clone(),
         uid: cronjob.metadata.uid.clone().unwrap_or_default(),
         controller: Some(true),
         block_owner_deletion: Some(true),
@@ -145,7 +135,7 @@ pub async fn trigger_cron_job(client: &Client, namespace: &str, name: &str) -> k
     let template = cronjob.spec.job_template;
     let spec = template.spec.ok_or_else(|| {
         kube::Error::Api(Box::new(kube::core::Status {
-            message: format!("CronJob {namespace}/{name} has no Job template spec"),
+            message: format!("CronJob {} has no Job template spec", object.key),
             reason: "BadRequest".to_string(),
             code: 400,
             ..kube::core::Status::default()
@@ -168,7 +158,21 @@ pub async fn trigger_cron_job(client: &Client, namespace: &str, name: &str) -> k
         spec: Some(spec),
         ..Job::default()
     };
-    let jobs: Api<Job> = Api::namespaced(client.clone(), namespace);
-    jobs.create(&PostParams::default(), &job).await?;
+    let jobs = api_in(
+        client,
+        &ApiResource::erase::<Job>(&()),
+        object.key.namespace.as_deref(),
+    );
+    jobs.create(&PostParams::default(), &convert::<_, DynamicObject>(&job)?)
+        .await?;
     Ok(())
+}
+
+/// Re-express an object between its typed and dynamic forms: both requests
+/// go through [`api_in`]'s dynamic `Api`, so the CronJob arrives and the
+/// Job leaves as a `DynamicObject`.
+fn convert<T: Serialize, U: DeserializeOwned>(object: &T) -> kube::Result<U> {
+    serde_json::to_value(object)
+        .and_then(serde_json::from_value)
+        .map_err(kube::Error::SerdeError)
 }
