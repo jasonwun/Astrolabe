@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
+use astrolabe_kube::object::ObjectKey;
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
@@ -24,7 +25,6 @@ use crate::projection::{
     project_namespaces, track_ages,
 };
 use crate::session::{CustomKindId, Session};
-use crate::store::ObjectKey;
 use crate::workspace::STALE_MESSAGE;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
