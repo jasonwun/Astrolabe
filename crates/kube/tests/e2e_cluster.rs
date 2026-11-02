@@ -173,7 +173,7 @@ async fn namespace_watch_lists_then_streams_create_and_delete() {
     .expect("timed out waiting for the namespace delete event");
 }
 
-/// Happy path: a multi-doc buffer (Namespace + `ConfigMap` + Deployment)
+/// Happy path: a multi-doc buffer (Namespace + ConfigMap + Deployment)
 /// applies cleanly, outcomes arrive in send order, and the objects exist.
 #[tokio::test]
 #[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]

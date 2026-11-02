@@ -208,6 +208,10 @@ pub async fn port_forward(
 /// Accept on `listener` until it fails, forwarding each connection to the
 /// Pod and port `target` resolves for it; a failure, resolution included,
 /// goes to `on_error`. Dropping the future closes every open connection.
+///
+/// # Errors
+///
+/// The [`std::io::Error`] from the listener's `accept`, which ends the run.
 pub(crate) async fn serve_forwards<T>(
     listener: TcpListener,
     on_error: impl Fn(String) + Send + Sync + 'static,

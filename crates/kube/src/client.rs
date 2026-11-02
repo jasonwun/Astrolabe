@@ -15,11 +15,12 @@ pub async fn default_client() -> kube::Result<kube::Client> {
     kube::Client::try_default().await
 }
 
-/// Build a client for kubeconfig context `context`.
+/// Build a client for kubeconfig context `context`, whatever the
+/// kubeconfig's `current-context` names.
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when the kubeconfig cannot be read, has no context
+/// A [`kube::Error`] when the kubeconfig cannot be read or parsed, has no context
 /// named `context`, or the client cannot be built from it.
 pub async fn client_for_context(context: &str) -> kube::Result<kube::Client> {
     let options = kube::config::KubeConfigOptions {

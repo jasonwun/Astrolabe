@@ -9,8 +9,8 @@
 //! ```
 //!
 //! `seed` server-side-applies COUNT each of Secrets `s-N`, Services
-//! `svc-N`, Deployments `d-N` (zero replicas) and `ConfigMaps` `cm-N`, the
-//! steady objects the other watches hold. `run` cycles the `ConfigMaps`
+//! `svc-N`, Deployments `d-N` (zero replicas) and ConfigMaps `cm-N`, the
+//! steady objects the other watches hold. `run` cycles the ConfigMaps
 //! `churn-N` through create, patch and delete at RATE operations a second
 //! for SECONDS, each operation one watch event, and prints the rate it
 //! achieved each second. The namespace must exist.
@@ -34,7 +34,7 @@ use tokio::sync::Semaphore;
 /// The field manager both subcommands apply as.
 const MANAGER: &str = "astrolabe-churn";
 
-/// How many `churn-N` `ConfigMaps` `run` cycles through. A name's next
+/// How many `churn-N` ConfigMaps `run` cycles through. A name's next
 /// operation comes POOL operations after its last, so at 100/s the
 /// create, patch and delete of one name are 3 s apart and never race.
 const POOL: u64 = 300;

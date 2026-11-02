@@ -56,9 +56,10 @@ pub enum FieldPathError {
 /// # Errors
 ///
 /// [`FieldPathError::Empty`] when `raw` holds no segment,
-/// [`FieldPathError::EmptySegment`] for a doubled or trailing dot, and
-/// [`FieldPathError::MalformedBracket`] for a bracket that is unclosed or
-/// holds neither an index nor a `key="value"` selector.
+/// [`FieldPathError::EmptySegment`] for a trailing dot or a doubled dot
+/// after the first segment, and [`FieldPathError::MalformedBracket`] for a
+/// bracket that is unclosed, holds neither an index nor a `key="value"`
+/// selector, or is followed by text other than another bracket.
 pub fn parse_field_path(raw: &str) -> Result<Vec<Segment>, FieldPathError> {
     let raw = raw.trim();
     if raw.is_empty() {

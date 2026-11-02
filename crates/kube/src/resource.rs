@@ -80,7 +80,7 @@ pub async fn rollout_restart(
     .await
 }
 
-/// Set a `CronJob`'s suspend flag.
+/// Set a CronJob's suspend flag.
 ///
 /// # Errors
 ///
@@ -123,13 +123,13 @@ async fn merge_patch(
     Ok(())
 }
 
-/// Create one Job from a `CronJob`'s current template, as `kubectl create job
+/// Create one Job from a CronJob's current template, as `kubectl create job
 /// --from=cronjob/...` does.
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when getting the `CronJob` or creating the Job fails,
-/// and a 400 `BadRequest` [`kube::Error::Api`] when the `CronJob`'s Job
+/// A [`kube::Error`] when getting the CronJob or creating the Job fails,
+/// and a 400 `BadRequest` [`kube::Error::Api`] when the CronJob's Job
 /// template has no spec.
 pub async fn trigger_cron_job(client: &Client, namespace: &str, name: &str) -> kube::Result<()> {
     let cronjobs: Api<CronJob> = Api::namespaced(client.clone(), namespace);
