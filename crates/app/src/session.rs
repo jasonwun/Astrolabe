@@ -10,6 +10,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
+use astrolabe_kube::object::{ObjectKey, Operation};
 use futures::{Stream, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
@@ -21,7 +22,6 @@ pub use crate::cluster_io::{
     SharedClient,
 };
 use crate::perf;
-use crate::store::ObjectKey;
 pub use astrolabe_kube::pod::ExecInput;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
@@ -260,26 +260,18 @@ impl<K: ResourceExt> Watched<K> {
     }
 }
 
-/// One object of one resource: what an operation addresses.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ObjectRef {
-    pub resource: ApiResource,
-    pub key: ObjectKey,
-}
-
-/// A one-shot change to one object, sent from a detail tab's toolbar.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Operation {
-    Scale { object: ObjectRef, replicas: i32 },
-    RolloutRestart { object: ObjectRef },
-    SetSuspend { object: ObjectRef, suspend: bool },
-    TriggerCronJob { object: ObjectRef },
-    Delete { object: ObjectRef },
-}
-
-impl Operation {
+/// An Operation's on-screen text (#151 keeps it in the app until #152).
+pub trait OperationText {
     /// Shown while the server has not answered.
-    pub fn pending(&self) -> &'static str {
+    fn pending(&self) -> &'static str;
+    /// Shown once the server accepted it.
+    fn done(&self) -> String;
+    /// What failed, as in "{verb} failed: {error}".
+    fn verb(&self) -> &'static str;
+}
+
+impl OperationText for Operation {
+    fn pending(&self) -> &'static str {
         match self {
             Self::Scale { .. } => "Scaling…",
             Self::RolloutRestart { .. } => "Restarting…",
@@ -290,8 +282,7 @@ impl Operation {
         }
     }
 
-    /// Shown once the server accepted it.
-    pub fn done(&self) -> String {
+    fn done(&self) -> String {
         match self {
             Self::Scale { replicas, .. } => format!("Scaled to {replicas}"),
             Self::RolloutRestart { .. } => "Restart requested".to_string(),
@@ -302,8 +293,7 @@ impl Operation {
         }
     }
 
-    /// What failed, as in "{verb} failed: {error}".
-    pub fn verb(&self) -> &'static str {
+    fn verb(&self) -> &'static str {
         match self {
             Self::Scale { .. } => "Scale",
             Self::RolloutRestart { .. } => "Restart",

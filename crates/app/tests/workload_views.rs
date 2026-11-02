@@ -3,13 +3,11 @@
 mod support;
 
 use astrolabe::builtin::BuiltinKind;
-use astrolabe::session::{
-    ExecInput, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, ObjectRef, Operation,
-};
-use astrolabe::store::ObjectKey;
+use astrolabe::session::{ExecInput, ExecRequest, ForwardRequest, ForwardTarget, LogRequest};
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};

@@ -2,15 +2,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use astrolabe::session::{
-    ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
-};
+use astrolabe::session::{ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_kube::object::Operation;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{TestAppContext, VisualTestContext};

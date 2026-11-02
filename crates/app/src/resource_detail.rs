@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 
+use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -24,8 +25,7 @@ use crate::projection::{
     DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
 };
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
-use crate::session::{ExecRequest, LogRequest, ObjectRef, Operation, Session};
-use crate::store::ObjectKey;
+use crate::session::{ExecRequest, LogRequest, OperationText as _, Session};
 
 mod editor_panel;
 mod pod_actions;

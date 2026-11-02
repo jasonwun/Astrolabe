@@ -12,14 +12,15 @@ use astrolabe::builtin::BuiltinKind;
 use astrolabe::clock::Clock;
 use astrolabe::projection::{DetailModel, ResourceTable};
 use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ObjectRef,
-    ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
+    ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_kube::object::{ObjectRef, Operation};
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};

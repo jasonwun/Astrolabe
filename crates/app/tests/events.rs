@@ -3,9 +3,9 @@
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::projection::events::event_involves;
-use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Event, Pod};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::object::ObjectKey;
 use support::list;
 
 mod support;

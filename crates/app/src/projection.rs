@@ -12,10 +12,10 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::k8s_openapi::serde::Serialize;
 use astrolabe_kube::kube::Resource;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_kube::object::ObjectKey;
 use serde_json::Value;
 
 use crate::jsonpath;
-use crate::store::ObjectKey;
 
 pub mod autoscaling;
 pub mod config;
