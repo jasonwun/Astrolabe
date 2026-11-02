@@ -1,5 +1,10 @@
 //! A list's columns share the panel width by weight, as Freelens's do (#68).
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::projection::{

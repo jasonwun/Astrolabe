@@ -1,6 +1,11 @@
 //! Services and Ingresses on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_model::builtin::BuiltinKind;
@@ -22,6 +27,10 @@ fn service(spec: serde_json::Value, status: serde_json::Value) -> Service {
 }
 
 /// A Service as the server sends it.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a json! literal"
+)]
 fn service_object(spec: serde_json::Value, status: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-svc",
@@ -35,7 +44,7 @@ fn node_port_service() -> Service {
     serde_json::from_value(node_port_object()).unwrap()
 }
 
-/// Synthetic NodePort Service (plausible shape, not captured from a server).
+/// Synthetic `NodePort` Service (plausible shape, not captured from a server).
 fn node_port_object() -> serde_json::Value {
     service_object(
         serde_json::json!({

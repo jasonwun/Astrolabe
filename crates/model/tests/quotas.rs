@@ -1,6 +1,11 @@
 //! ResourceQuotas and LimitRanges on the generic list/detail pipeline
 //! (#20), with Freelens 14a491f's columns and detail fields.
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::projection::{
@@ -16,7 +21,7 @@ fn now() -> Timestamp {
 
 fn rows(rows: &[&[&str]]) -> Vec<Vec<String>> {
     rows.iter()
-        .map(|row| row.iter().map(|cell| cell.to_string()).collect())
+        .map(|row| row.iter().map(ToString::to_string).collect())
         .collect()
 }
 

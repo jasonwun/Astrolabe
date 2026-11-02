@@ -1,5 +1,10 @@
 //! Pods and Deployments on the generic list/detail pipeline (#17).
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -56,6 +61,10 @@ fn crashing_pod() -> serde_json::Value {
     })
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a json! literal"
+)]
 fn pod(spec: serde_json::Value, status: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "metadata": {"name": "p", "namespace": "default", "creationTimestamp": "2026-10-22T11:59:00Z"},
@@ -113,6 +122,10 @@ fn unscheduled_pods_show_none_for_ip_and_node() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one case per kubectl printPod branch"
+)]
 fn status_column_follows_kubectl_print_pod() {
     let containers = serde_json::json!({"initContainers": [{"name": "a"}, {"name": "b"}],
                                         "containers": [{"name": "app"}]});

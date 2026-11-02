@@ -136,6 +136,10 @@ pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
     let mut clamped = vec![false; weights.len()];
     let (free, unclamped_weight) = loop {
         let clamped_count = clamped.iter().filter(|clamped| **clamped).count();
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a table has far fewer than 2^23 columns"
+        )]
         let free = available - MIN_COLUMN_WIDTH * clamped_count as f32;
         let unclamped_weight: f32 = weights
             .iter()
@@ -582,8 +586,7 @@ fn printer_cell(column: &CustomResourceColumnDefinition, value: &Value, now: Tim
             |selected| match (column.type_.as_str(), selected.as_str()) {
                 ("date", Some(text)) => text
                     .parse::<Timestamp>()
-                    .map(|time| format_age(time, now))
-                    .unwrap_or_else(|_| text.to_string()),
+                    .map_or_else(|_| text.to_string(), |time| format_age(time, now)),
                 _ => scalar_text(selected),
             },
         )
@@ -631,8 +634,13 @@ pub fn age_cadence(since: Timestamp, now: Timestamp) -> Duration {
 /// How long until the age next crosses an [`age_cadence`] boundary. A
 /// tick timed by the youngest age lands as that age's text changes; older
 /// ages, on other phases, may show up to a cadence late, as in Freelens.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the result lies in (0, cadence], and a cadence is at most a minute"
+)]
 pub fn next_age_change(since: Timestamp, now: Timestamp) -> Duration {
-    let cadence = age_cadence(since, now).as_nanos() as i128;
+    let cadence = age_cadence(since, now).as_nanos().cast_signed();
     let age = now.duration_since(since).as_nanos();
     Duration::from_nanos((cadence - age.rem_euclid(cadence)) as u64)
 }

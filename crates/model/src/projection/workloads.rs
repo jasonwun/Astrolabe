@@ -2,6 +2,7 @@
 //! P3 projections follow Freelens 14a491f, `workloads-*` components.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job, JobSpec};
@@ -392,7 +393,7 @@ fn long_running(pod: &Pod) -> impl Iterator<Item = &Container> {
     })
 }
 
-/// The names of the containers Exec can run in; see [`long_running`].
+/// The names of the containers Exec can run in; see `long_running`.
 pub fn running_containers(pod: &Pod) -> Vec<String> {
     long_running(pod)
         .map(|container| container.name.clone())
@@ -507,12 +508,12 @@ pub fn statefulset_detail(statefulset: &StatefulSet, now: Timestamp) -> DetailMo
     }
     push_template_fields(
         &mut summary,
-        &template.node_selector,
-        template
+        template.node_selector.as_ref(),
+        &template
             .containers
             .iter()
             .map(|container| container.image.clone().unwrap_or_default())
-            .collect(),
+            .collect::<Vec<_>>(),
         &template,
     );
     let status = statefulset.status.clone().unwrap_or_default();
@@ -529,8 +530,8 @@ pub fn statefulset_detail(statefulset: &StatefulSet, now: Timestamp) -> DetailMo
 
 fn push_template_fields(
     summary: &mut Vec<(String, String)>,
-    node_selector: &Option<BTreeMap<String, String>>,
-    images: Vec<String>,
+    node_selector: Option<&BTreeMap<String, String>>,
+    images: &[String],
     spec: &astrolabe_kube::k8s_openapi::api::core::v1::PodSpec,
 ) {
     push_node_selector(summary, node_selector);
@@ -542,10 +543,10 @@ fn push_template_fields(
 
 fn push_node_selector(
     summary: &mut Vec<(String, String)>,
-    node_selector: &Option<BTreeMap<String, String>>,
+    node_selector: Option<&BTreeMap<String, String>>,
 ) {
     let nodes = node_selector
-        .iter()
+        .into_iter()
         .flatten()
         .map(|(key, value)| format!("{key}={value}"))
         .collect::<Vec<_>>()
@@ -574,7 +575,7 @@ fn push_pod_policies(
                 text.push_str(effect);
             }
             if let Some(seconds) = toleration.toleration_seconds {
-                text.push_str(&format!(" for {seconds}s"));
+                let _ = write!(text, " for {seconds}s");
             }
             text
         })
@@ -750,8 +751,8 @@ fn push_pod_template_fields(
                 .filter(move |_| include_init),
         )
         .map(|container| container.image.clone().unwrap_or_default())
-        .collect();
-    push_template_fields(summary, &spec.node_selector, images, spec);
+        .collect::<Vec<_>>();
+    push_template_fields(summary, spec.node_selector.as_ref(), &images, spec);
 }
 
 pub fn project_jobs(jobs: &[&Job], now: Timestamp) -> ResourceTable {
@@ -834,8 +835,7 @@ fn job_duration(job: &Job, now: Timestamp) -> String {
         .status
         .as_ref()
         .and_then(|status| status.completion_time.as_ref())
-        .map(|time| time.0)
-        .unwrap_or(now);
+        .map_or(now, |time| time.0);
     format_age(start.0, end)
 }
 
@@ -850,7 +850,7 @@ pub fn job_detail(job: &Job, now: Timestamp) -> DetailModel {
         }
     }
     if let Some(template) = &spec.template.spec {
-        push_node_selector(&mut summary, &template.node_selector);
+        push_node_selector(&mut summary, template.node_selector.as_ref());
     }
     summary.push(("Status".to_string(), job_status(job).to_string()));
     summary.extend(job_spec_fields(&spec));
@@ -906,7 +906,7 @@ const CRONJOB_COLUMNS: &[Column<CronJob>] = &[
             .status
             .as_ref()
             .and_then(|status| status.active.as_ref())
-            .map(|jobs| jobs.len())
+            .map(Vec::len)
             .unwrap_or_default()
             .to_string()
     }),
@@ -915,8 +915,7 @@ const CRONJOB_COLUMNS: &[Column<CronJob>] = &[
             .status
             .as_ref()
             .and_then(|status| status.last_schedule_time.as_ref())
-            .map(|time| format_age(time.0, now))
-            .unwrap_or_else(|| "-".to_string())
+            .map_or_else(|| "-".to_string(), |time| format_age(time.0, now))
     }),
     Column::AGE,
 ];

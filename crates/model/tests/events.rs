@@ -19,6 +19,10 @@ fn typed_event(name: &str, extra: serde_json::Value) -> Event {
 }
 
 /// Synthetic Event (plausible shape, not captured from a server).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a json! literal"
+)]
 fn event_json(name: &str, extra: serde_json::Value) -> serde_json::Value {
     let mut value = serde_json::json!({
         "apiVersion": "v1", "kind": "Event",

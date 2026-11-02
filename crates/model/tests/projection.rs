@@ -1,3 +1,8 @@
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -254,7 +259,7 @@ mod custom {
         assert_eq!(next, std::time::Duration::from_secs(1));
 
         // Nothing aged: a minute.
-        let (_, next) = track_ages(now(), || ());
+        let ((), next) = track_ages(now(), || ());
         assert_eq!(next, std::time::Duration::from_secs(60));
     }
 

@@ -1,6 +1,11 @@
 //! ConfigMaps and Secrets on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::projection::SummaryTable;

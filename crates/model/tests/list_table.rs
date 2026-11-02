@@ -1,6 +1,11 @@
 //! A list is built from one definition per column (#99): its header, its
 //! weight and its cell cannot drift apart.
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use std::collections::BTreeMap;
 
 use astrolabe_kube::k8s_openapi::api::core::v1::ConfigMap;

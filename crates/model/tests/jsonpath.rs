@@ -1,3 +1,8 @@
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_model::jsonpath::evaluate;
 use serde_json::{Value, json};
 
