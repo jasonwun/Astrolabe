@@ -187,6 +187,22 @@ and `SessionState` as existing types, and its C-CTOR line allowed only
 `new`, `with_…` and `from_…`, which made #147's `Cluster::connect` look
 like a finding; the guideline also allows domain verbs (#150 retro).
 
+## Deliberate violations of a check script
+
+A PR that adds or changes a rule in a `dev/*.sh` check shows the rule
+failing on a deliberate violation in each form the code would write it:
+a full path, a one-line `use a::{.., X}`, and spacing variants such as
+`::now (`. It also shows the near misses that must pass (`ClusterId`
+beside a forbidden `Cluster`, a comment line) and the clean tree passing
+after the last edit to the script. Evidence of the full-path form alone
+is a finding.
+
+Origin: #148's first evidence tried only full paths;
+`use astrolabe_kube::{Cluster, ClusterId}` slipped past and the Spec
+reviewer found it. A later fix added `jq -e`, which exits 4 on a
+dependency-free crate and failed the clean tree; only the rerun of the
+clean case caught it (#148 retro).
+
 ## Tests that claim the Registration's path
 
 A test of a built-in kind's list or detail calls the Registration
