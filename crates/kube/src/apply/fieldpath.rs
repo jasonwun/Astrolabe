@@ -120,7 +120,13 @@ fn parse_element(element: &str, out: &mut Vec<Segment>) -> Result<(), FieldPathE
     }
     let mut rest = &element[bracket_at..];
     while !rest.is_empty() {
-        let Some(close) = find_closing_bracket(rest) else {
+        // After a `]`, only another `[` may follow (`a[0][1]`).
+        let close = if rest.starts_with('[') {
+            find_closing_bracket(rest)
+        } else {
+            None
+        };
+        let Some(close) = close else {
             return Err(FieldPathError::MalformedBracket(element.to_string()));
         };
         let inner = &rest[1..close];
@@ -326,6 +332,17 @@ mod tests {
             parse_field_path("spec.containers[=nginx]"),
             Err(FieldPathError::MalformedBracket(_))
         ));
+    }
+
+    #[test]
+    fn rejects_text_after_a_closing_bracket() {
+        for raw in ["a[0]x", "a[0]]", "a[name=\"x\"]y"] {
+            assert_eq!(
+                parse_field_path(raw),
+                Err(FieldPathError::MalformedBracket(raw.to_string())),
+                "{raw}"
+            );
+        }
     }
 
     #[test]
