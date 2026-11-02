@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/app", "crates/kube", "crates/terminal", "spikes/*"]
+members = [
+  "crates/app",
+  "crates/kube",
+  "crates/model",
+  "crates/terminal",
+  "spikes/*",
+]
 
 [workspace.package]
 edition = "2024"
@@ -11,6 +17,15 @@ publish = false
 # k8s-openapi are exact (`=`) pins; kube follows the survey conclusion
 # ("4.0", ws + rustls-tls). `Cargo.lock` is committed on top. Upgrades
 # are explicit actions — see README "Dependency upgrades".
+# The pedantic bar for the layered crates (#147). Only crates that set
+# `lints.workspace = true` see it; the app and terminal crates do not yet.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# Noise for this codebase: most pure getters would need the attribute, and
+# GLOSSARY names repeat in their module's name by design.
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+
 [workspace.dependencies]
 gpui-kit = "=0.8.1"
 alacritty_terminal = "=0.26.0"
@@ -42,6 +57,9 @@ tree-sitter = "0.26"
 
 [workspace.dependencies.astrolabe-kube]
 path = "crates/kube"
+
+[workspace.dependencies.astrolabe-model]
+path = "crates/model"
 
 [workspace.dependencies.astrolabe-terminal]
 path = "crates/terminal"
