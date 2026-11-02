@@ -94,6 +94,21 @@ Origin: #112 split `resource_detail.rs` into three child modules; review
 had to tell moved lines from changed ones by eye across a 1,000-line
 diff (#112 retro).
 
+A type that moves to another crate takes its inherent `impl` with it.
+When the ticket keeps some of its methods behind, Rust's orphan rule
+leaves one way: an extension trait in the old crate, with the same
+method bodies. That trait's declaration and `impl .. for` header are
+part of the move too; the PR body names them as residue and says why.
+A comment that names the ticket that will remove the trait is checked
+against that ticket's title. When the move deletes a file, grep the
+docs for its name and update each hit, examples included.
+
+Origin: #151 moved `Operation` to `astrolabe-kube` but kept its text in
+the app. The `OperationText` shell fell outside the rule above, and the
+Standards reviewer had to judge it. Its doc named #152, the wrong
+ticket; #153 moves the text. `docs/agents/testing.md` still named the
+deleted `store.rs` (#151 retro).
+
 ## Cluster-dependent copy and choices
 
 UI copy or choices that describe what the cluster will do (a delete's
