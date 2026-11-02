@@ -12,11 +12,11 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
-
-use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
-use crate::projection::{
+use astrolabe_model::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use astrolabe_model::projection::{
     DetailModel, ResourceTable, custom_resource_detail, definition_detail, namespace_detail,
 };
+
 use crate::session::{CustomKindId, Session};
 
 /// What a detail tab shows: one object, addressed in its list's store.

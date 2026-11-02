@@ -1,8 +1,8 @@
 //! P3 built-in workload projections, aligned with Freelens 14a491f.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::ReplicaCounts;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::ReplicaCounts;
 use support::{detail, list};
 
 mod support;
@@ -254,7 +254,7 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
         .items
         .iter()
         .map(|item| {
-            let astrolabe::projection::DetailItem::Field(field) = item else {
+            let astrolabe_model::projection::DetailItem::Field(field) = item else {
                 panic!("template field expected")
             };
             (field.label.as_str(), field.values[0].text.as_str())
@@ -283,7 +283,7 @@ fn a_zero_second_ttl_reads_zero_seconds() {
     });
     let detail = detail(BuiltinKind::CronJobs, cronjob, now());
     let ttl = detail.sections[0].items.iter().find_map(|item| {
-        let astrolabe::projection::DetailItem::Field(field) = item else {
+        let astrolabe_model::projection::DetailItem::Field(field) = item else {
             return None;
         };
         (field.label == "TTL Seconds After Finished").then(|| field.values[0].text.as_str())

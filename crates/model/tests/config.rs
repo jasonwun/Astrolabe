@@ -1,10 +1,10 @@
 //! ConfigMaps and Secrets on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::SummaryTable;
-use astrolabe::projection::config::{Revealable, SecretKey};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::SummaryTable;
+use astrolabe_model::projection::config::{Revealable, SecretKey};
 use support::{detail, list};
 
 mod support;

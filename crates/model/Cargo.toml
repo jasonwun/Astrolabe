@@ -6,6 +6,10 @@ publish.workspace = true
 # Direct dependencies are limited to the allowlist in dev/layer-check.sh;
 # astrolabe-kube is for value types only.
 [dependencies]
+astrolabe-kube.workspace = true
+cronspeak.workspace = true
+serde_json.workspace = true
+serde-saphyr.workspace = true
 
 [lints]
 workspace = true

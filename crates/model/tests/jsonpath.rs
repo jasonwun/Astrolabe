@@ -1,4 +1,4 @@
-use astrolabe::jsonpath::evaluate;
+use astrolabe_model::jsonpath::evaluate;
 use serde_json::{Value, json};
 
 fn object() -> Value {

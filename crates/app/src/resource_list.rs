@@ -7,6 +7,11 @@ use std::rc::Rc;
 
 use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::builtin::{BuiltinKind, Registration};
+use astrolabe_model::projection::{
+    ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
+    project_namespaces, track_ages,
+};
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
@@ -16,14 +21,9 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::builtin::{BuiltinKind, Registration};
 use crate::clock;
 use crate::detail::{DetailTarget, forbidden_message};
 use crate::perf;
-use crate::projection::{
-    ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
-    project_namespaces, track_ages,
-};
 use crate::session::{CustomKindId, Session};
 use crate::workspace::STALE_MESSAGE;
 

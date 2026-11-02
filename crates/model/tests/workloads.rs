@@ -1,14 +1,14 @@
 //! Pods and Deployments on the generic list/detail pipeline (#17).
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::workloads::{
-    ForwardPort, pod_ports, running_containers, selector_matches,
-};
-use astrolabe::projection::{Containers, Forward, ForwardTo, ReplicaCounts, SummaryTable};
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::workloads::{
+    ForwardPort, pod_ports, running_containers, selector_matches,
+};
+use astrolabe_model::projection::{Containers, Forward, ForwardTo, ReplicaCounts, SummaryTable};
 use std::collections::BTreeMap;
 use support::{detail, list};
 

@@ -3,17 +3,14 @@
 //! `astrolabe-kube` (cluster I/O) and `astrolabe-terminal` (terminal engine
 //! + view) plug in here.
 
-pub mod builtin;
 pub mod clock;
 mod cluster_io;
 pub mod detail;
 pub mod exec;
-pub mod jsonpath;
 pub mod keymap;
 pub mod kube_bridge;
 pub mod logs;
 pub mod perf;
-pub mod projection;
 mod resource_detail;
 mod resource_list;
 pub mod session;

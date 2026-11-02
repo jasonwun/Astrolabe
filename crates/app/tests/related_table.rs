@@ -5,10 +5,10 @@
 
 mod support;
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{MIN_COLUMN_WIDTH, column_widths};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::{MIN_COLUMN_WIDTH, column_widths};
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Bounds, Pixels, TestAppContext, Window, point, px, size};

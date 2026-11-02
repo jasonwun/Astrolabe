@@ -11,11 +11,11 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
 use astrolabe_kube::object::{ObjectKey, Operation};
+use astrolabe_model::builtin::BuiltinKind;
 use futures::{Stream, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
 
-use crate::builtin::BuiltinKind;
 use crate::cluster_io::ClusterIo;
 pub use crate::cluster_io::{
     ExecOutput, ExecSession, ForwardEvent, LogChunk, LogStream, PortForward, ScriptedCluster,
@@ -257,51 +257,6 @@ impl<K: ResourceExt> Watched<K> {
     /// The latest failure was an RBAC denial.
     pub fn forbidden(&self) -> bool {
         self.forbidden
-    }
-}
-
-/// An Operation's on-screen text (#151 keeps it in the app until #153).
-pub trait OperationText {
-    /// Shown while the server has not answered.
-    fn pending(&self) -> &'static str;
-    /// Shown once the server accepted it.
-    fn done(&self) -> String;
-    /// What failed, as in "{verb} failed: {error}".
-    fn verb(&self) -> &'static str;
-}
-
-impl OperationText for Operation {
-    fn pending(&self) -> &'static str {
-        match self {
-            Self::Scale { .. } => "Scaling…",
-            Self::RolloutRestart { .. } => "Restarting…",
-            Self::SetSuspend { suspend: true, .. } => "Suspending…",
-            Self::SetSuspend { suspend: false, .. } => "Resuming…",
-            Self::TriggerCronJob { .. } => "Triggering…",
-            Self::Delete { .. } => "Deleting…",
-        }
-    }
-
-    fn done(&self) -> String {
-        match self {
-            Self::Scale { replicas, .. } => format!("Scaled to {replicas}"),
-            Self::RolloutRestart { .. } => "Restart requested".to_string(),
-            Self::SetSuspend { suspend: true, .. } => "Suspended".to_string(),
-            Self::SetSuspend { suspend: false, .. } => "Resumed".to_string(),
-            Self::TriggerCronJob { .. } => "Job creation requested".to_string(),
-            Self::Delete { .. } => "Deletion requested".to_string(),
-        }
-    }
-
-    fn verb(&self) -> &'static str {
-        match self {
-            Self::Scale { .. } => "Scale",
-            Self::RolloutRestart { .. } => "Restart",
-            Self::SetSuspend { suspend: true, .. } => "Suspend",
-            Self::SetSuspend { suspend: false, .. } => "Resume",
-            Self::TriggerCronJob { .. } => "Trigger",
-            Self::Delete { .. } => "Delete",
-        }
     }
 }
 

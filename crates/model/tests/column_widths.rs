@@ -1,10 +1,10 @@
 //! A list's columns share the panel width by weight, as Freelens's do (#68).
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{
+use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::{
     MIN_COLUMN_WIDTH, ResourceTable, column_widths, default_column_weights,
 };
-use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 /// An empty list through the HorizontalPodAutoscalers Registration.
 fn hpa_list() -> ResourceTable {

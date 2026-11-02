@@ -1,9 +1,9 @@
 //! HorizontalPodAutoscalers on the generic list/detail pipeline (#20), with
 //! Freelens 14a491f's columns and detail fields.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{DetailItem, DetailSection, SummaryTable};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::{DetailItem, DetailSection, SummaryTable};
 use support::{detail, list};
 
 mod support;

@@ -1,11 +1,11 @@
 //! The Events list component (#17): kubectl's columns, newest first, and
 //! the involvedObject filter a related section applies.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::events::event_involves;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Event, Pod};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::events::event_involves;
 use support::list;
 
 mod support;

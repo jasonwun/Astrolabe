@@ -2,12 +2,12 @@
 //! asks for a container, a shell or a port, and the session's forwards.
 
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::projection::{DetailModel, Forward, ForwardTo};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use super::{DetailTarget, OpenExec, OpenLogs, ResourceDetailPanel, button};
-use crate::projection::{DetailModel, Forward, ForwardTo};
 use crate::session::{ExecRequest, ForwardRequest, ForwardState, ForwardTarget, LogRequest};
 
 /// A Pod action that runs in one container; Forward also serves Services.

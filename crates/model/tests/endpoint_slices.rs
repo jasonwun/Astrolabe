@@ -4,8 +4,8 @@
 //! Synthetic objects (plausible shapes, never captured from a real
 //! apiserver).
 
-use astrolabe::builtin::BuiltinKind;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
 use support::{detail, list, object};
 
 mod support;

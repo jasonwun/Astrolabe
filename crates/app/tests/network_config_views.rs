@@ -4,11 +4,11 @@
 
 mod support;
 
-use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{ForwardRequest, ForwardTarget, WatchError};
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};

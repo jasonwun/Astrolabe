@@ -6,9 +6,9 @@ mod support;
 
 use std::time::Duration;
 
-use astrolabe::builtin::BuiltinKind;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;

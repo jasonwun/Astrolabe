@@ -1,10 +1,10 @@
 //! The complete built-in Registration contract. New kinds join this matrix
 //! with their list columns, full action set and optional related kind.
 
-use astrolabe::builtin::{Action, BuiltinKind};
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_model::builtin::{Action, BuiltinKind};
 use support::object;
 
 mod support;

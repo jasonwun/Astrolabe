@@ -1,14 +1,14 @@
 //! Services and Ingresses on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::network::service_ports;
-use astrolabe::projection::workloads::ForwardPort;
-use astrolabe::projection::{
-    DetailField, DetailItem, DetailSection, DetailValue, Forward, ForwardTo, SummaryTable,
-};
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::network::service_ports;
+use astrolabe_model::projection::workloads::ForwardPort;
+use astrolabe_model::projection::{
+    DetailField, DetailItem, DetailSection, DetailValue, Forward, ForwardTo, SummaryTable,
+};
 use support::{detail, list};
 
 mod support;
