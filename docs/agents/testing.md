@@ -120,13 +120,13 @@ worktrees may run the same recipe at once.
 
 ```sh
 git worktree add ../cov-base-<issue> origin/main
-(cd ../cov-base-<issue> && cargo llvm-cov --workspace --summary-only) | grep -E '^crates/app/src/(session|store)\.rs '
-cargo llvm-cov --workspace --summary-only | grep -E '^crates/app/src/(session|store)\.rs '
+(cd ../cov-base-<issue> && cargo llvm-cov --workspace --summary-only) | grep -E '^crates/app/src/(session|detail)\.rs '
+cargo llvm-cov --workspace --summary-only | grep -E '^crates/app/src/(session|detail)\.rs '
 git worktree remove ../cov-base-<issue>
 ```
 
 A bar over several files (e.g. "the merged module vs `session.rs` +
-`store.rs` on `main`") compares summed counts: add the files' regions and
+`detail.rs` on `main`") compares summed counts: add the files' regions and
 missed regions, then take the percentage.
 
 ## Mutation testing

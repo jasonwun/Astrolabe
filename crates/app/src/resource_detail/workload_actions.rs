@@ -1,5 +1,6 @@
 //! The Scale form; the panel's `run` sends what it asks for.
 
+use astrolabe_kube::object::Operation;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -7,7 +8,6 @@ use gpui_kit::*;
 
 use super::{ResourceDetailPanel, button};
 use crate::projection::ReplicaCounts;
-use crate::session::Operation;
 
 impl ResourceDetailPanel {
     pub(super) fn open_scale(&mut self, window: &mut Window, cx: &mut Context<Self>) {

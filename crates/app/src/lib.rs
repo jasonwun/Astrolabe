@@ -18,7 +18,6 @@ mod resource_detail;
 mod resource_list;
 pub mod session;
 mod session_view;
-pub mod store;
 pub mod workspace;
 pub mod yaml_editor;
 

@@ -4,10 +4,10 @@
 use std::collections::BTreeMap;
 
 use astrolabe::projection::{Column, ListColumn, ResourceRow, list_table};
-use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::ConfigMap;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::object::ObjectKey;
 
 const COLUMNS: &[Column<ConfigMap>] = &[
     Column {

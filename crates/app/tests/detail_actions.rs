@@ -5,11 +5,11 @@
 mod support;
 
 use astrolabe::builtin::{Action, BuiltinKind};
-use astrolabe::session::{ObjectRef, Operation};
-use astrolabe::store::ObjectKey;
+use astrolabe::session::OperationText as _;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
 
 fn web() -> ObjectRef {
     ObjectRef {

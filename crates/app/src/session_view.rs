@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use astrolabe_kube::object::ObjectKey;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::dock::{DockArea, DockPlacement, DockSkin, PanelId, panel_handle};
@@ -16,7 +17,6 @@ use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
 use crate::session::{
     ConnectionHealth, CustomKindId, ExecRequest, LogRequest, ScriptedCluster, Session,
 };
-use crate::store::ObjectKey;
 use crate::workspace::{LaunchTab, STALE_MESSAGE};
 use crate::yaml_editor::YamlEditorView;
 

@@ -5,10 +5,10 @@ use astrolabe::projection::workloads::{
     ForwardPort, pod_ports, running_containers, selector_matches,
 };
 use astrolabe::projection::{Containers, Forward, ForwardTo, ReplicaCounts, SummaryTable};
-use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::Pod;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::object::ObjectKey;
 use std::collections::BTreeMap;
 use support::{detail, list};
 

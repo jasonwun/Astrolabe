@@ -1,8 +1,8 @@
 use astrolabe::projection::{ResourceRow, project_namespaces};
-use astrolabe::store::ObjectKey;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_kube::object::ObjectKey;
 
 mod support;
 
@@ -129,11 +129,11 @@ mod custom {
         ResourceRow, age_cadence, custom_resource_detail, definition_detail, format_age,
         next_age_change, project_custom_resources, project_definitions, track_ages,
     };
-    use astrolabe::store::ObjectKey;
     use astrolabe_kube::crd::{CustomKind, catalog};
     use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
     use astrolabe_kube::k8s_openapi::jiff::{SignedDuration, Timestamp};
     use astrolabe_kube::kube::core::DynamicObject;
+    use astrolabe_kube::object::ObjectKey;
 
     use crate::support::object;
 

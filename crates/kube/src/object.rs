@@ -1,6 +1,10 @@
+//! The address of an object in a cluster, and the one-shot changes sent to
+//! it.
+
 use std::fmt;
 
-use astrolabe_kube::kube::core::ResourceExt;
+use kube::core::ResourceExt;
+use kube::discovery::ApiResource;
 
 /// An object's identity within one resource's snapshot: its namespace (`None`
 /// when cluster-scoped) and name. Displays as `namespace/name` or `name`.
@@ -34,4 +38,21 @@ impl fmt::Display for ObjectKey {
             None => f.write_str(&self.name),
         }
     }
+}
+
+/// One object of one resource: what an operation addresses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectRef {
+    pub resource: ApiResource,
+    pub key: ObjectKey,
+}
+
+/// A one-shot change to one object, sent from a detail tab's toolbar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Operation {
+    Scale { object: ObjectRef, replicas: i32 },
+    RolloutRestart { object: ObjectRef },
+    SetSuspend { object: ObjectRef, suspend: bool },
+    TriggerCronJob { object: ObjectRef },
+    Delete { object: ObjectRef },
 }

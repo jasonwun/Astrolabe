@@ -10,6 +10,7 @@ use std::time::Duration;
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
+use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::ExecInput;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt as _, SinkExt, Stream, StreamExt, channel::mpsc};
@@ -18,7 +19,7 @@ use tokio::sync::oneshot;
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
 use crate::session::{
     CrdWatchMessage, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, NamespaceWatchMessage,
-    ObjectWatchMessage, Operation, WatchError, WatchKey, WatchMessage,
+    ObjectWatchMessage, WatchError, WatchKey, WatchMessage,
 };
 
 /// Retry interval for a watch the apiserver refused with 403.

@@ -1,4 +1,4 @@
-use astrolabe::store::ObjectKey;
+use astrolabe_kube::object::ObjectKey;
 
 #[test]
 fn object_keys_render_as_namespace_slash_name() {
