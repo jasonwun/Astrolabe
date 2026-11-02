@@ -1,7 +1,7 @@
-//! Astrolabe desktop application: session entities live here (per
-//! the workspace decision, they are main-thread-resident GPUI entities — no
-//! trait boundary). `astrolabe-kube` (cluster I/O) and `astrolabe-terminal`
-//! (terminal engine + view) plug in here.
+//! Astrolabe desktop application, the UI layer: GPUI views and the Session
+//! entity, a main-thread GPUI entity (docs/adr/0002).
+//! `astrolabe-kube` (cluster I/O) and `astrolabe-terminal` (terminal engine
+//! + view) plug in here.
 
 pub mod builtin;
 pub mod clock;
