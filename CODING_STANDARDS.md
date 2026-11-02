@@ -245,15 +245,19 @@ no `Context`, window or timer. Carrying out a `Command`, spawning tasks,
 owning timers, calling `cx.notify()`, and laying out what a model query
 returned are the UI layer's job and are not findings. A UI test that
 asserts such a rule, where a plain `#[test]` on the model layer could,
-is a finding too: UI tests cover rendering and interaction.
+is a finding too: UI tests cover rendering and interaction. Copy or
+choices derived from an object's fields ("Cluster-dependent copy and
+choices" above) are such a decision, so the derivation sits in the
+model layer and the view shows its result.
 
 A finding names the function and the decision, and says where it goes:
 a `SessionState` input, query or `Command`, or a free function in
-`astrolabe-model`, plus the plain `#[test]` that would pin it. Rules
-that already sit in Session move under #147's tickets and are not
-findings on an unrelated diff; the YAML editor's own rules and the
-Workspace's launch preselection stay in the UI layer for now (#147,
-Out of Scope).
+`astrolabe-model` (the crate and types #147 introduces), plus the plain
+`#[test]` that would pin it. A diff that only touches code beside a rule
+already in Session is not a finding for that rule, which #147's tickets
+move; a diff that changes the rule itself moves it, or names the #147
+ticket that will. The YAML editor's own rules and the Workspace's launch
+preselection stay in the UI layer for now (#147, Out of Scope).
 
 Origin: #147 — relist, the 403 backoff, the Discovery debounce, detail
 resolution and the Forward list's states were written inside Session,
@@ -263,7 +267,8 @@ ran a hand-written TCP apiserver (ADR-0002).
 ## API shape
 
 A `pub` item the diff adds or changes follows the Rust API Guidelines
-checks that Clippy cannot make:
+checks that Clippy cannot make. Types this entry names but `crates/`
+lacks (`ClusterError`, `ApplyMode`) are #147's planned ones:
 
 - **C-CONV.** `as_` is free and borrows, `to_` costs (it clones or
   computes), `into_` consumes `self`. Clippy's `wrong_self_convention`
@@ -273,32 +278,37 @@ checks that Clippy cannot make:
   `get_name()`; `get` alone is kept for the one obvious thing a type
   holds (as `Cell::get`). A `get_` prefix is a finding.
 - **C-CTOR.** A type is built by an inherent `new`, `with_…` or
-  `from_…`, or a `From` impl, not a free `make_…` function. A handle
-  another crate must build (`LogStream`, `ClusterError::new(message)`)
-  has a public constructor, not a `pub` field or a test-only back door.
+  `from_…`, a `From` impl, or a domain verb where one reads better
+  (`Cluster::connect`, `File::open`), not a free `make_…` function. A
+  handle another crate must build (`ClusterError::new(message)`, and
+  `LogStream` once #147 moves it into `astrolabe-kube`) has a public
+  constructor, not a `pub` field or a test-only back door.
 - **C-GOOD-ERR.** An error type implements `Display` and
-  `std::error::Error` and lets the caller tell its kinds apart without
-  matching on text. `Result<_, String>` or `Result<_, ()>` across the
-  cluster or model interface is a finding: the seam's error is
-  `ClusterError`.
+  `std::error::Error`, is `Send + Sync`, and lets the caller tell its
+  kinds apart without matching on text. `Result<_, String>` or
+  `Result<_, ()>` on a cluster or model interface is a finding: the
+  cluster seam's error is `ClusterError`, and the model layer defines
+  its own typed errors.
 - **No boolean flag parameters.** A parameter whose `true`/`false`
   picks a behaviour (`apply(snapshot, force: bool)`) is a two-variant
   enum (`ApplyMode`), so the call site reads as what it does. A setter
   whose `bool` is the value it stores (`set_visible(bool)`) is not a
-  flag. Clippy's `fn_params_excessive_bools` flags only more than three
-  `bool` parameters, so one or two are the reviewer's to catch.
+  flag. Clippy's `fn_params_excessive_bools` is pedantic, so it runs
+  only where #147 enables pedantic (`astrolabe-model`, `astrolabe-kube`),
+  and at its default limit flags only more than three `bool`
+  parameters; one or two are the reviewer's to catch.
 
-Names and comments follow the Clean Code subset #147 adopted. A type,
-function or variable naming a domain concept uses the `GLOSSARY.md`
-term, not one of its _Avoid_ synonyms (`connection` for a Cluster,
-`resync` for a Relist); `docs/agents/domain.md` asks the same of issue
-and test names. A comment says why: the constraint, incident or
+Names and comments in any code the diff adds or changes, `pub` or not,
+follow the Clean Code subset #147 adopted. A type, function or variable
+naming a domain concept uses the `GLOSSARY.md` term, not one of its
+_Avoid_ synonyms (`connection` for a Cluster, `resync` for a Relist);
+`docs/agents/domain.md` asks the same of issue and test names. A comment says why: the constraint, incident or
 upstream behaviour behind the code. One that restates what the next
 line does is a finding. "Small functions that do one thing" is not
 adopted: a long function behind a small interface is not a finding.
 
 A finding names the item, the check it fails, and the corrected
-signature.
+signature, name or comment.
 
 Origin: #147 set the style bar for the layering refactor as rustfmt,
 the Rust API Guidelines plus Clippy, and this Clean Code subset; at the
