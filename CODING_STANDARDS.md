@@ -290,6 +290,26 @@ resolution and the Forward list's states were written inside Session,
 so each was testable only through `gpui_kit::test`, and the relist test
 ran a hand-written TCP apiserver (ADR-0002).
 
+## `# Errors` sections and kind names in docs
+
+A `# Errors` section names each way the function fails. To check it,
+walk every early return and `?` in the body and in the helpers it
+calls. A case the text leaves out, or one it gets wrong, is a finding.
+Pointing at the error enum alone does not count as a section.
+
+A Kubernetes kind name in a doc comment reads as prose (Pod, ConfigMap,
+CronJob). When clippy's `doc_markdown` flags one, add the kind to
+`doc-valid-idents` in `clippy.toml`; don't wrap it in backticks.
+Backticks stay for code: fields, paths, types.
+
+Origin: #149's first `parse_field_path` section said any doubled dot
+fails, but a leading `..` parses. It also missed text after a closing
+bracket. Its
+`client_for_context` section left out a kubeconfig that fails to parse.
+The Spec reviewer found both. `cargo clippy --fix` backticked
+`ConfigMaps` and `CronJob` while other comments kept them as prose, and
+the Standards reviewer flagged the mix (#149 retro).
+
 ## API shape
 
 A `pub` item the diff adds or changes follows the Rust API Guidelines
