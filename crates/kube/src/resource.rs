@@ -96,14 +96,14 @@ async fn merge_patch(
     Ok(())
 }
 
-/// The one place an object's namespace picks its URL: a namespaced object
-/// is addressed in its namespace, a cluster-scoped one (no namespace)
-/// across the cluster. `ObjectKey` carries `None` only for cluster-scoped
-/// objects, so no namespace is ever made up here.
 fn api(client: &Client, object: &ObjectRef) -> Api<DynamicObject> {
     api_in(client, &object.resource, object.key.namespace.as_deref())
 }
 
+/// The one place a namespace picks a request's URL: a namespaced object is
+/// addressed in its namespace, a cluster-scoped one (no namespace) across
+/// the cluster. `ObjectKey` carries `None` only for cluster-scoped objects,
+/// so no namespace is ever made up here.
 fn api_in(client: &Client, resource: &ApiResource, namespace: Option<&str>) -> Api<DynamicObject> {
     match namespace {
         Some(namespace) => Api::namespaced_with(client.clone(), namespace, resource),
@@ -112,13 +112,15 @@ fn api_in(client: &Client, resource: &ApiResource, namespace: Option<&str>) -> A
 }
 
 /// Create one Job from a CronJob's current template, as `kubectl create job
-/// --from=cronjob/...` does.
+/// --from=cronjob/...` does. `object` addresses a CronJob, so it carries a
+/// namespace; the Job is created in the same one.
 ///
 /// # Errors
 ///
 /// A [`kube::Error`] when getting the CronJob or creating the Job fails,
-/// and a 400 `BadRequest` [`kube::Error::Api`] when the CronJob's Job
-/// template has no spec.
+/// a [`kube::Error::SerdeError`] when the object read does not decode as a
+/// CronJob, and a 400 `BadRequest` [`kube::Error::Api`] when the CronJob's
+/// Job template has no spec.
 pub async fn trigger_cron_job(client: &Client, object: &ObjectRef) -> kube::Result<()> {
     let name = &object.key.name;
     let cronjob: CronJob = convert(&api(client, object).get(name).await?)?;
@@ -167,9 +169,9 @@ pub async fn trigger_cron_job(client: &Client, object: &ObjectRef) -> kube::Resu
 }
 
 /// Re-express an object between its typed and dynamic forms: both requests
-/// go through [`api`]'s dynamic `Api`, so the CronJob arrives and the Job
-/// leaves as a `DynamicObject`.
-fn convert<From: Serialize, To: DeserializeOwned>(object: &From) -> kube::Result<To> {
+/// go through [`api_in`]'s dynamic `Api`, so the CronJob arrives and the
+/// Job leaves as a `DynamicObject`.
+fn convert<T: Serialize, U: DeserializeOwned>(object: &T) -> kube::Result<U> {
     serde_json::to_value(object)
         .and_then(serde_json::from_value)
         .map_err(kube::Error::SerdeError)

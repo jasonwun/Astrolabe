@@ -1,6 +1,6 @@
 # Kubernetes kind names read as prose in doc comments, like Pod or Job.
 # ".." keeps clippy's default list.
-doc-valid-idents = ["ConfigMap", "ConfigMaps", "CronJob", "CronTab", ".."]
+doc-valid-idents = ["ConfigMap", "ConfigMaps", "CronJob", ".."]
 
 disallowed-methods = [
   { path = "gpui::App::open_window", reason = "use gpui_kit::open_window, which adds the theme Root (#52)" },

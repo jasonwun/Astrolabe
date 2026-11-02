@@ -333,8 +333,8 @@ async fn triggering_a_cronjob_without_a_job_spec_is_a_bad_request() {
     );
 }
 
-/// A cluster-scoped CronTab variant: the same kind served without a
-/// namespace, as a cluster-scoped custom resource is.
+/// The `crontabs()` fixture served cluster-scoped, as a cluster-scoped
+/// custom resource is.
 fn clustertabs() -> ApiResource {
     ApiResource {
         plural: "clustertabs".to_string(),
@@ -343,19 +343,25 @@ fn clustertabs() -> ApiResource {
     }
 }
 
-#[tokio::test]
-async fn every_operation_addresses_a_namespaced_object_in_its_namespace() {
+/// Scale, restart, suspend and delete `object`, and return the requests'
+/// method and path lines.
+async fn every_operation_on(object: &ObjectRef) -> Vec<String> {
     let (client, seen) = mock_client(200, SCALE);
-    let tabs = || object(crontabs(), Some("team-a"), "nightly");
     let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
 
-    scale(&client, &tabs(), 2).await.unwrap();
-    rollout_restart(&client, &tabs(), at).await.unwrap();
-    suspend(&client, &tabs(), true).await.unwrap();
-    delete(&client, &tabs()).await.unwrap();
+    scale(&client, object, 2).await.unwrap();
+    rollout_restart(&client, object, at).await.unwrap();
+    suspend(&client, object, true).await.unwrap();
+    delete(&client, object).await.unwrap();
+    lines(&seen)
+}
+
+#[tokio::test]
+async fn every_operation_addresses_a_namespaced_object_in_its_namespace() {
+    let nightly = object(crontabs(), Some("team-a"), "nightly");
 
     assert_eq!(
-        lines(&seen),
+        every_operation_on(&nightly).await,
         [
             "PATCH /apis/stable.example.com/v1/namespaces/team-a/crontabs/nightly/scale",
             "PATCH /apis/stable.example.com/v1/namespaces/team-a/crontabs/nightly",
@@ -367,17 +373,10 @@ async fn every_operation_addresses_a_namespaced_object_in_its_namespace() {
 
 #[tokio::test]
 async fn every_operation_addresses_a_cluster_scoped_object_without_a_namespace() {
-    let (client, seen) = mock_client(200, SCALE);
-    let tabs = || object(clustertabs(), None, "global");
-    let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
-
-    scale(&client, &tabs(), 2).await.unwrap();
-    rollout_restart(&client, &tabs(), at).await.unwrap();
-    suspend(&client, &tabs(), true).await.unwrap();
-    delete(&client, &tabs()).await.unwrap();
+    let global = object(clustertabs(), None, "global");
 
     assert_eq!(
-        lines(&seen),
+        every_operation_on(&global).await,
         [
             "PATCH /apis/stable.example.com/v1/clustertabs/global/scale",
             "PATCH /apis/stable.example.com/v1/clustertabs/global",
