@@ -17,6 +17,12 @@ pub const LOG_TAIL_LINES: i64 = 1000;
 
 /// `kubectl logs -f --tail=LOG_TAIL_LINES -c container`: the stream yields
 /// raw byte chunks as the server sends them, ANSI sequences intact.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the log request fails, e.g. the Pod or container
+/// does not exist. A read failure after that ends the stream with an
+/// `std::io::Error` item.
 pub async fn logs(
     client: &Client,
     namespace: &str,
@@ -68,6 +74,18 @@ pub enum ExecError {
 /// remote TTY and its output to `output` until the remote side closes,
 /// then resolves with the command's exit code. When `input` ends, the
 /// remote stdin is closed (EOF) and the output is still read to the end.
+///
+/// # Errors
+///
+/// [`ExecError::Connect`] when the exec request fails,
+/// [`ExecError::Stream`] when reading or writing the remote streams fails,
+/// and [`ExecError::Failed`] when the server ends the command with a
+/// failure that is not an exit code (see [`exit_code`]).
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "the expects hold by construction: interactive_tty attaches stdin, stdout \
+              and a TTY, and stdin is written only while the select guard holds it"
+)]
 pub async fn exec(
     client: &Client,
     namespace: &str,
@@ -114,6 +132,12 @@ pub async fn exec(
 
 /// The exit code a remotecommand v4 status reports, as client-go's
 /// `errorDecoderV4` reads it; no status at all is success.
+///
+/// # Errors
+///
+/// The server's message for a `Failure` that is not `NonZeroExitCode`, and
+/// a protocol error for a `NonZeroExitCode` status without a parseable
+/// `ExitCode` cause or for a status that is neither `Success` nor `Failure`.
 pub fn exit_code(status: Option<&Status>) -> Result<u8, String> {
     let Some(status) = status else {
         return Ok(0);
@@ -143,6 +167,10 @@ pub fn exit_code(status: Option<&Status>) -> Result<u8, String> {
 
 /// A listener on `localhost:port`, or on a free port when that one cannot
 /// be bound (taken, or privileged).
+///
+/// # Errors
+///
+/// The [`std::io::Error`] from binding a free port, once `port` failed too.
 pub async fn bind_local(port: u16) -> std::io::Result<TcpListener> {
     match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
         Ok(listener) => Ok(listener),
@@ -155,6 +183,11 @@ pub async fn bind_local(port: u16) -> std::io::Result<TcpListener> {
 /// connection's failure goes to `on_error` while the listener keeps
 /// accepting. Runs until the listener fails; dropping the future closes
 /// every open connection.
+///
+/// # Errors
+///
+/// The [`std::io::Error`] that ends the run: the listener's `accept`
+/// failing. A connection's own failure is not one; it goes to `on_error`.
 pub async fn port_forward(
     client: &Client,
     namespace: &str,
@@ -175,6 +208,10 @@ pub async fn port_forward(
 /// Accept on `listener` until it fails, forwarding each connection to the
 /// Pod and port `target` resolves for it; a failure, resolution included,
 /// goes to `on_error`. Dropping the future closes every open connection.
+///
+/// # Errors
+///
+/// The [`std::io::Error`] from the listener's `accept`, which ends the run.
 pub(crate) async fn serve_forwards<T>(
     listener: TcpListener,
     on_error: impl Fn(String) + Send + Sync + 'static,

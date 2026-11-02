@@ -25,6 +25,13 @@ pub struct ResolvedForward {
 /// the most active of `pods` (the selector's matches), which must be
 /// Running. Of `ActivePods`' criteria, ready time and restart counts are
 /// not compared, and of equally active Pods the first listed wins.
+///
+/// # Errors
+///
+/// A message, worded as kubectl's, when the Service has no selector, no
+/// Pod matches it, the chosen Pod is not Running, the Service has no port
+/// `port`, the Pod declares no container port its named target port names,
+/// or the container port is out of range.
 pub fn forward_target(
     service: &Service,
     pods: &[Pod],
@@ -35,7 +42,7 @@ pub fn forward_target(
     if spec
         .selector
         .as_ref()
-        .is_none_or(|selector| selector.is_empty())
+        .is_none_or(std::collections::BTreeMap::is_empty)
     {
         return Err(format!(
             "invalid service '{name}': Service is defined without a selector"
@@ -137,6 +144,12 @@ fn named_port(pod: &Pod, name: &str) -> Result<i32, String> {
 /// ([`forward_target`] over a GET of the Service and a LIST of its
 /// selector's Pods), so a forward outlives the Pod it first reached. A
 /// connection's failure, resolution included, goes to `on_error`.
+///
+/// # Errors
+///
+/// The [`std::io::Error`] that ends the run: the listener's `accept`
+/// failing. A connection's own failure is not one, resolution included;
+/// it goes to `on_error`.
 pub async fn port_forward(
     client: &Client,
     namespace: &str,

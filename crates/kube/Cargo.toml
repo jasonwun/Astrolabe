@@ -22,3 +22,6 @@ http.workspace = true
 # rate timer.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 tower.workspace = true
+
+[lints]
+workspace = true

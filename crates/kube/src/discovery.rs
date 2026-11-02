@@ -67,6 +67,11 @@ impl ServedResources {
 /// kube-client 4.2.0 / kube-core 4.2.0, and a v1.25.16 kind apiserver via
 /// `curl` through `kubectl proxy` with that Accept header). Every real
 /// server serves the core group, so its absence is the "unsupported" signal.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when per-group discovery fails; a failed aggregated
+/// request only falls back to it.
 pub async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
         Ok(discovery) if discovery.has_group(ApiGroup::CORE_GROUP) => {
@@ -74,7 +79,7 @@ pub async fn discover(client: &Client) -> kube::Result<ServedResources> {
         }
         Ok(_) => tracing::debug!("aggregated discovery unsupported; using per-group discovery"),
         Err(error) => {
-            tracing::debug!(error = %error, "aggregated discovery failed; using per-group discovery")
+            tracing::debug!(error = %error, "aggregated discovery failed; using per-group discovery");
         }
     }
     let discovery = Discovery::new(client.clone()).run().await?;

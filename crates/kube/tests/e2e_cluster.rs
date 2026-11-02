@@ -411,7 +411,7 @@ async fn crd_kind_is_discovered_watched_and_deleted() {
     let group = format!("{ns}.astrolabe.dev");
     let crd_name = format!("widgets.{group}");
     let crd_doc = format!(
-        r#"apiVersion: apiextensions.k8s.io/v1
+        r"apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   name: {crd_name}
@@ -429,7 +429,7 @@ spec:
         x-kubernetes-preserve-unknown-fields: true
     additionalPrinterColumns:
     - {{name: Size, type: string, jsonPath: .spec.size}}
-"#
+"
     );
     let report = apply_documents(&client, &join_docs(&[ns_doc(&ns), crd_doc]), false)
         .await

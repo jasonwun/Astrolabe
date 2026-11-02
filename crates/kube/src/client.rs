@@ -6,10 +6,22 @@
 /// honored, including token refresh. Caveat: the *first* plugin invocation
 /// is a blocking subprocess call inside config loading — never call this
 /// on the UI thread; run it on a background thread/runtime.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when no kubeconfig or in-cluster config can be
+/// inferred, or the client cannot be built from it.
 pub async fn default_client() -> kube::Result<kube::Client> {
     kube::Client::try_default().await
 }
 
+/// Build a client for kubeconfig context `context`, whatever the
+/// kubeconfig's `current-context` names.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the kubeconfig cannot be read or parsed, has no
+/// context named `context`, or the client cannot be built from it.
 pub async fn client_for_context(context: &str) -> kube::Result<kube::Client> {
     let options = kube::config::KubeConfigOptions {
         context: Some(context.to_string()),
@@ -20,6 +32,11 @@ pub async fn client_for_context(context: &str) -> kube::Result<kube::Client> {
 }
 
 /// Load context names with the current context first. Call off the UI thread.
+///
+/// # Errors
+///
+/// A [`kube::config::KubeconfigError`] when the kubeconfig cannot be found,
+/// read or parsed.
 pub fn context_names() -> Result<Vec<String>, kube::config::KubeconfigError> {
     let config = kube::config::Kubeconfig::read()?;
     let mut names: Vec<String> = config

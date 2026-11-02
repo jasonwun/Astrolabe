@@ -130,9 +130,7 @@ fn parse_conflict_message(message: &str) -> Vec<ManagerConflict> {
     let mut rest = message;
     while let Some(marker_at) = find_conflict_marker(rest) {
         let block = &rest[marker_at..];
-        let end = find_conflict_marker(&block[1..])
-            .map(|i| 1 + i)
-            .unwrap_or(block.len());
+        let end = find_conflict_marker(&block[1..]).map_or(block.len(), |i| 1 + i);
         if let Some(conflict) = parse_conflict_block(block[..end].trim()) {
             conflicts.push(conflict);
         }
@@ -280,7 +278,7 @@ mod tests {
         );
         match parse_status(&s) {
             ApplyError::Validation(causes) => {
-                assert!(causes.iter().all(|c| c.is_strict_decoding()));
+                assert!(causes.iter().all(FieldCause::is_strict_decoding));
             }
             other => panic!("expected Validation, got {other:?}"),
         }
@@ -410,7 +408,7 @@ mod tests {
     fn conflict_409_unparsable_message_yields_no_conflicts() {
         let s = status(409, "the server had a conflict, good luck", vec![]);
         match parse_status(&s) {
-            ApplyError::Conflict(conflicts) => assert!(conflicts.is_empty()),
+            ApplyError::Conflict(conflicts) => assert_eq!(conflicts, vec![]),
             other => panic!("expected Conflict, got {other:?}"),
         }
     }

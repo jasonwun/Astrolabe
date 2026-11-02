@@ -1,7 +1,7 @@
 //! Payload parse: split a (possibly multi-document) YAML buffer into
 //! per-document JSON values for `Patch::Apply`.
 //!
-//! Runs on every apply, successful or not (#10 resolution: serde_saphyr is
+//! Runs on every apply, successful or not (#10 resolution: `serde_saphyr` is
 //! the payload parser — the same crate family kube-client itself uses, so no
 //! new dependency family enters the tree). Line-number mapping is a separate
 //! parse that only runs on failure (`crate::apply::locate`).
@@ -31,7 +31,7 @@ impl DocPayload {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PayloadError {
     /// The buffer is not parseable YAML at all; `line` is the 1-based line
-    /// serde_saphyr reports, when available.
+    /// `serde_saphyr` reports, when available.
     #[error("invalid YAML: {message}")]
     InvalidYaml {
         message: String,
@@ -44,11 +44,17 @@ pub enum PayloadError {
 
 /// Parse a buffer into applyable documents. Empty documents (bare `---`
 /// separators, trailing newlines) are skipped without error.
+///
+/// # Errors
+///
+/// [`PayloadError::InvalidYaml`] when `buffer` is not YAML, and
+/// [`PayloadError::InvalidDocument`] when a document is not a mapping or
+/// lacks a non-empty string `apiVersion`, `kind` or `metadata.name`.
 pub fn parse_documents(buffer: &str) -> Result<Vec<DocPayload>, PayloadError> {
     let values: Vec<serde_json::Value> =
         serde_saphyr::from_multiple(buffer).map_err(|e| PayloadError::InvalidYaml {
             message: e.without_snippet().to_string(),
-            line: e.location().map(|l| l.line() as usize),
+            line: e.location().and_then(|l| usize::try_from(l.line()).ok()),
         })?;
 
     let mut docs = Vec::with_capacity(values.len());
@@ -152,9 +158,11 @@ mod tests {
                 .unwrap_err();
         match err {
             PayloadError::InvalidYaml { line, .. } => {
-                assert!(line.is_some(), "parse error should carry a line: {line:?}")
+                assert!(line.is_some(), "parse error should carry a line: {line:?}");
             }
-            other => panic!("expected InvalidYaml, got {other:?}"),
+            other @ PayloadError::InvalidDocument { .. } => {
+                panic!("expected InvalidYaml, got {other:?}")
+            }
         }
     }
 
@@ -172,16 +180,20 @@ mod tests {
         let err = parse_documents("apiVersion: v1\nmetadata:\n  name: x\n").unwrap_err();
         match err {
             PayloadError::InvalidDocument { message, .. } => {
-                assert!(message.contains("kind"), "unexpected: {message}")
+                assert!(message.contains("kind"), "unexpected: {message}");
             }
-            other => panic!("expected InvalidDocument, got {other:?}"),
+            other @ PayloadError::InvalidYaml { .. } => {
+                panic!("expected InvalidDocument, got {other:?}")
+            }
         }
         let err = parse_documents("apiVersion: v1\nkind: ConfigMap\n").unwrap_err();
         match err {
             PayloadError::InvalidDocument { message, .. } => {
-                assert!(message.contains("metadata.name"), "unexpected: {message}")
+                assert!(message.contains("metadata.name"), "unexpected: {message}");
             }
-            other => panic!("expected InvalidDocument, got {other:?}"),
+            other @ PayloadError::InvalidYaml { .. } => {
+                panic!("expected InvalidDocument, got {other:?}")
+            }
         }
     }
 }
