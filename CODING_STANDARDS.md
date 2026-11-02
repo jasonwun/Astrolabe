@@ -229,3 +229,79 @@ neither reviewer noticed (#111 retro). #136 added `support::list` /
 `support::detail` and no doc named them until its retro (#137); #117
 added `open_list` and named it in neither file until the Standards
 review asked (#117 retro).
+
+## Rules belong in the model layer
+
+A decision about Session's data that can be made without a `Context`
+lives in `astrolabe-model`, per ADR-0002
+(`docs/adr/0002-three-layers-session-on-main-thread.md`). In Session or
+a view the diff adds or changes, the reviewer looks for code that
+decides something from data alone: filtering or ordering a snapshot,
+whether a watch is Stale, whether a Definition change triggers
+Discovery, which Discovery run's answer wins, what a list or detail
+shows, a Forward's next state. Such code is a finding even when it sits
+inside a `cx.spawn` or a render function, if the decision itself reads
+no `Context`, window or timer. Carrying out a `Command`, spawning tasks,
+owning timers, calling `cx.notify()`, and laying out what a model query
+returned are the UI layer's job and are not findings. A UI test that
+asserts such a rule, where a plain `#[test]` on the model layer could,
+is a finding too: UI tests cover rendering and interaction.
+
+A finding names the function and the decision, and says where it goes:
+a `SessionState` input, query or `Command`, or a free function in
+`astrolabe-model`, plus the plain `#[test]` that would pin it. Rules
+that already sit in Session move under #147's tickets and are not
+findings on an unrelated diff; the YAML editor's own rules and the
+Workspace's launch preselection stay in the UI layer for now (#147,
+Out of Scope).
+
+Origin: #147 — relist, the 403 backoff, the Discovery debounce, detail
+resolution and the Forward list's states were written inside Session,
+so each was testable only through `gpui_kit::test`, and the relist test
+ran a hand-written TCP apiserver (ADR-0002).
+
+## API shape
+
+A `pub` item the diff adds or changes follows the Rust API Guidelines
+checks that Clippy cannot make:
+
+- **C-CONV.** `as_` is free and borrows, `to_` costs (it clones or
+  computes), `into_` consumes `self`. Clippy's `wrong_self_convention`
+  checks only the receiver; an `as_` that allocates, or a `to_` that is
+  a field borrow, is a finding.
+- **C-GETTER.** A getter is named after the field, `name()`, not
+  `get_name()`; `get` alone is kept for the one obvious thing a type
+  holds (as `Cell::get`). A `get_` prefix is a finding.
+- **C-CTOR.** A type is built by an inherent `new`, `with_…` or
+  `from_…`, or a `From` impl, not a free `make_…` function. A handle
+  another crate must build (`LogStream`, `ClusterError::new(message)`)
+  has a public constructor, not a `pub` field or a test-only back door.
+- **C-GOOD-ERR.** An error type implements `Display` and
+  `std::error::Error` and lets the caller tell its kinds apart without
+  matching on text. `Result<_, String>` or `Result<_, ()>` across the
+  cluster or model interface is a finding: the seam's error is
+  `ClusterError`.
+- **No boolean flag parameters.** A parameter whose `true`/`false`
+  picks a behaviour (`apply(snapshot, force: bool)`) is a two-variant
+  enum (`ApplyMode`), so the call site reads as what it does. A setter
+  whose `bool` is the value it stores (`set_visible(bool)`) is not a
+  flag. Clippy's `fn_params_excessive_bools` flags only more than three
+  `bool` parameters, so one or two are the reviewer's to catch.
+
+Names and comments follow the Clean Code subset #147 adopted. A type,
+function or variable naming a domain concept uses the `GLOSSARY.md`
+term, not one of its _Avoid_ synonyms (`connection` for a Cluster,
+`resync` for a Relist); `docs/agents/domain.md` asks the same of issue
+and test names. A comment says why: the constraint, incident or
+upstream behaviour behind the code. One that restates what the next
+line does is a finding. "Small functions that do one thing" is not
+adopted: a long function behind a small interface is not a finding.
+
+A finding names the item, the check it fails, and the corrected
+signature.
+
+Origin: #147 set the style bar for the layering refactor as rustfmt,
+the Rust API Guidelines plus Clippy, and this Clean Code subset; at the
+time errors crossed the seam as `String` (`Session::operate`,
+`DiscoveryCache::record`) and Apply took `force: bool`
+(`crates/kube/src/apply/run.rs`).
