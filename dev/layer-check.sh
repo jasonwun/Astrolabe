@@ -4,21 +4,25 @@
 # layer (crates/model) is synchronous and does no I/O:
 # - its direct dependencies (normal and build) are on the allowlist below;
 #   dev-dependencies are left out, as they never reach the layer's code;
-# - its sources name no `async fn`, `kube::Client`, `astrolabe_kube::Cluster`
-#   (the live handle; `ClusterId` and other value types are fine) and read
-#   no clock (`::now(`).
-# Comment lines are skipped, so a doc comment may name a forbidden item.
+# - its sources and tests name no `async fn`, `kube::Client`,
+#   `astrolabe_kube::Cluster` (the live handle; `ClusterId` and other value
+#   types are fine) and read no clock (`::now(`).
+# The search is line-based: it catches a full path or a one-line
+# `use a::{.., X, ..}`, not a `use` list split over several lines. Comment
+# lines are skipped, so a doc comment may name a forbidden item.
 set -euo pipefail
 
 model_allowlist=(astrolabe-kube serde_json regex cronspeak thiserror)
-model_src=crates/model/src
+model_dir=crates/model
 
 status=0
 
-# Prints each direct non-dev dependency of the named package.
+# Prints each direct non-dev dependency of the named package; fails when
+# the workspace has no such package.
 direct_deps() {
     cargo metadata --format-version 1 --no-deps |
-        jq -r --arg pkg "$1" '.packages[] | select(.name == $pkg)
+        jq -r --arg pkg "$1" '[.packages[] | select(.name == $pkg)]
+            | if length == 1 then .[0] else error("no package \($pkg)") end
             | .dependencies[] | select(.kind != "dev") | .name' |
         sort -u
 }
@@ -35,18 +39,22 @@ forbid() {
     fi
 }
 
-while read -r dep; do
-    [[ -z $dep ]] && continue
+# Captured first, so that a metadata failure stops the script under -e.
+model_deps=$(direct_deps astrolabe-model)
+for dep in $model_deps; do
     if [[ " ${model_allowlist[*]} " != *" $dep "* ]]; then
         echo "astrolabe-model depends on $dep, which is not on the allowlist" \
             "(${model_allowlist[*]})." >&2
         status=1
     fi
-done < <(direct_deps astrolabe-model)
+done
 
-forbid "$model_src" '\basync[[:space:]]+fn\b' '`async fn`'
-forbid "$model_src" '\bkube::Client\b' '`kube::Client`'
-forbid "$model_src" '\bastrolabe_kube::Cluster\b' '`astrolabe_kube::Cluster`'
-forbid "$model_src" '::now\(' 'the clock (`::now(`); pass the time in'
+# `path::X` or `path::{.., X, ..}` on one line.
+names() { echo "\\b$1::(\\{[^}]*\\b)?$2\\b"; }
+
+forbid "$model_dir" '\basync[[:space:]]+fn\b' '`async fn`'
+forbid "$model_dir" "$(names kube Client)" '`kube::Client`'
+forbid "$model_dir" "$(names astrolabe_kube Cluster)" '`astrolabe_kube::Cluster`'
+forbid "$model_dir" '::now[[:space:]]*\(' 'the clock (`::now(`); pass the time in'
 
 exit $status

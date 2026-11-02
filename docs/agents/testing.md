@@ -128,6 +128,9 @@ dev/mutants.sh -p astrolabe-kube -f crates/kube/src/resource.rs -j 4
 dev/mutants.sh -p astrolabe-model -j 4
 ```
 
+While `astrolabe-model` holds no code, its run finds no mutants and the
+wrapper fails; that is expected until the first code moves in.
+
 Use repository-relative paths with `-f`. `Found 0 mutants to test` means the
 filter missed its target, not that the bar passed; the wrapper turns that
 result into a failure.

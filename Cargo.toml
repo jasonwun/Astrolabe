@@ -12,13 +12,8 @@ members = [
 edition = "2024"
 publish = false
 
-# All third-party versions are declared here, single point of truth;
-# members only write `workspace = true`. gpui-kit / alacritty_terminal /
-# k8s-openapi are exact (`=`) pins; kube follows the survey conclusion
-# ("4.0", ws + rustls-tls). `Cargo.lock` is committed on top. Upgrades
-# are explicit actions — see README "Dependency upgrades".
 # The pedantic bar for the layered crates (#147). Only crates that set
-# `lints.workspace = true` see it; the app and terminal crates do not yet.
+# `lints.workspace = true` see it.
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 # Noise for this codebase: most pure getters would need the attribute, and
@@ -26,6 +21,11 @@ pedantic = { level = "warn", priority = -1 }
 must_use_candidate = "allow"
 module_name_repetitions = "allow"
 
+# All third-party versions are declared here, single point of truth;
+# members only write `workspace = true`. gpui-kit / alacritty_terminal /
+# k8s-openapi are exact (`=`) pins; kube follows the survey conclusion
+# ("4.0", ws + rustls-tls). `Cargo.lock` is committed on top. Upgrades
+# are explicit actions — see README "Dependency upgrades".
 [workspace.dependencies]
 gpui-kit = "=0.8.1"
 alacritty_terminal = "=0.26.0"

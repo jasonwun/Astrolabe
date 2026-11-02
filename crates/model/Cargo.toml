@@ -3,9 +3,8 @@ name = "astrolabe-model"
 edition.workspace = true
 publish.workspace = true
 
-# Direct dependencies are limited to the allowlist in dev/layer-check.sh:
-# astrolabe-kube (value types only), serde_json, regex, cronspeak,
-# thiserror.
+# Direct dependencies are limited to the allowlist in dev/layer-check.sh;
+# astrolabe-kube is for value types only.
 [dependencies]
 
 [lints]
