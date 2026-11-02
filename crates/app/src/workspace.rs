@@ -4,7 +4,9 @@ use futures::channel::mpsc;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
+use crate::builtin::BuiltinKind;
 use crate::kube_bridge::spawn_cluster;
+use crate::perf;
 use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, NamespaceWatchMessage, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
@@ -13,13 +15,51 @@ pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
 
 /// What the launch opens instead of the first cluster in `default`; empty
 /// leaves the launch as it is. Debug builds fill it from
-/// `ASTROLABE_CLUSTER` and `ASTROLABE_NAMESPACE` (`main.rs`).
+/// `ASTROLABE_CLUSTER`, `ASTROLABE_NAMESPACE` and `ASTROLABE_OPEN`
+/// (`main.rs`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Preselection {
     /// Opened and selected at launch when it is a discovered cluster.
     pub cluster: Option<String>,
     /// The namespace the session opened at launch starts in.
     pub namespace: Option<String>,
+    /// Tabs the session opened at launch shows, in order (#106).
+    pub open: Vec<LaunchTab>,
+}
+
+/// A tab the launch session opens, in its namespace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LaunchTab {
+    /// The list tab shows this kind.
+    List(BuiltinKind),
+    /// The detail tab of the object of this kind and name.
+    Detail(BuiltinKind, String),
+}
+
+impl LaunchTab {
+    /// `ASTROLABE_OPEN`'s comma-separated tabs: a built-in `Kind` shows its
+    /// list, `Kind/name` opens that object's detail. An unknown kind is
+    /// logged and skipped.
+    pub fn parse_all(spec: &str) -> Vec<Self> {
+        spec.split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .filter_map(|item| {
+                let (kind, name) = match item.split_once('/') {
+                    Some((kind, name)) => (kind, Some(name)),
+                    None => (item, None),
+                };
+                let Some(kind) = BuiltinKind::from_kind(kind) else {
+                    tracing::warn!(ASTROLABE_OPEN = %item, "not a built-in kind; skipping");
+                    return None;
+                };
+                Some(match name {
+                    Some(name) => Self::Detail(kind, name.to_string()),
+                    None => Self::List(kind),
+                })
+            })
+            .collect()
+    }
 }
 
 pub struct WorkspaceView {
@@ -125,7 +165,11 @@ impl WorkspaceView {
     /// namespace. An undiscovered preselected cluster falls back to the
     /// launch without preselection: the first cluster in `default`.
     fn select_launch_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Preselection { cluster, namespace } = std::mem::take(&mut self.preselection);
+        let Preselection {
+            cluster,
+            namespace,
+            open,
+        } = std::mem::take(&mut self.preselection);
         let (cluster, namespace) = match cluster {
             Some(cluster) if self.clusters.contains(&cluster) => (Some(cluster), namespace),
             Some(cluster) => {
@@ -138,7 +182,10 @@ impl WorkspaceView {
             None => (self.clusters.first().cloned(), namespace),
         };
         if let Some(cluster) = cluster {
-            self.open_cluster(cluster, namespace, window, cx);
+            self.open_cluster(cluster.clone(), namespace, window, cx);
+            if let Some(session) = self.sessions.get(&cluster) {
+                session.update(cx, |session, cx| session.open_tabs(open, window, cx));
+            }
         }
     }
 
@@ -309,6 +356,7 @@ impl WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        perf::count(perf::Event::Draw);
         h_flex().size_full().child(self.render_sidebar(cx)).child(
             div()
                 .flex_1()

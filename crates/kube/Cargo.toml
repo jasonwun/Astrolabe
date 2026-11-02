@@ -18,5 +18,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net"] }
 
 [dev-dependencies]
 http.workspace = true
-tokio = { workspace = true, features = ["macros"] }
+# The notify-cost churn example (#106): a multi-threaded runtime and its
+# rate timer.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 tower.workspace = true

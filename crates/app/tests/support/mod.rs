@@ -22,7 +22,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{TestAppContext, VisualTestContext};
+use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use tracing_subscriber::util::SubscriberInitExt as _;
 
 pub type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
@@ -246,12 +246,40 @@ impl Ui<'_> {
     }
 }
 
+/// Press and release the left button on the centre `id` was last drawn at,
+/// as a person clicks: for elements whose handlers listen for mouse events
+/// rather than `window.click`, such as dock tabs and their close buttons.
+pub fn mouse_click(cx: &mut VisualTestContext, id: &'static str) {
+    let bounds = cx
+        .debug_bounds(id)
+        .unwrap_or_else(|| panic!("{id} was not drawn"));
+    cx.simulate_mouse_down(bounds.center(), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(bounds.center(), MouseButton::Left, Modifiers::none());
+}
+
 /// Shared buffer behind a `tracing` subscriber, so tests can assert on the
 /// log lines a developer would see via RUST_LOG.
-#[derive(Clone, Default)]
-pub struct LogCapture(Arc<Mutex<Vec<u8>>>);
+#[derive(Clone)]
+pub struct LogCapture {
+    buffer: Arc<Mutex<Vec<u8>>>,
+    filter: &'static str,
+}
+
+impl Default for LogCapture {
+    fn default() -> Self {
+        Self::with_filter("astrolabe=debug,astrolabe_kube=debug,kube_runtime=debug")
+    }
+}
 
 impl LogCapture {
+    /// Capture what `filter` (RUST_LOG syntax) lets through.
+    pub fn with_filter(filter: &'static str) -> Self {
+        Self {
+            buffer: Arc::default(),
+            filter,
+        }
+    }
+
     /// Capture every thread's logs for the rest of the test binary; only
     /// the binary's first install captures anything.
     pub fn install(&self) {
@@ -264,12 +292,12 @@ impl LogCapture {
     }
 
     pub fn text(&self) -> String {
-        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        String::from_utf8(self.buffer.lock().unwrap().clone()).unwrap()
     }
 
     fn subscriber(&self) -> impl tracing::Subscriber + Send + Sync {
         tracing_subscriber::fmt()
-            .with_env_filter("astrolabe=debug,astrolabe_kube=debug,kube_runtime=debug")
+            .with_env_filter(self.filter)
             .with_ansi(false)
             .with_writer(self.clone())
             .finish()
@@ -278,7 +306,7 @@ impl LogCapture {
 
 impl Write for LogCapture {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
+        self.buffer.lock().unwrap().extend_from_slice(buf);
         Ok(buf.len())
     }
 

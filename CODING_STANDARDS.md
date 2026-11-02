@@ -203,8 +203,11 @@ retro).
 
 A view test opens a built-in kind's list with `support::open_list`, its
 detail with `support::open_detail`, and builds a `DynamicObject` with
-`support::object`; a test asserting on `tracing` output captures it with
-`support::LogCapture` (`dev/log-capture.sh` checks the last). A local
+`support::object`, and clicks a dock tab or its close button with
+`support::mouse_click`; a test asserting on `tracing` output captures it with
+`support::LogCapture`, or `LogCapture::with_filter` when it needs a
+filter other than the default `astrolabe=debug` one (`dev/log-capture.sh`
+checks the last). A local
 helper or an inline run that repeats `open_list`'s or `open_detail`'s steps
 (select the namespace, click the nav item, send the snapshot, click the
 row) is a finding, whatever its name.

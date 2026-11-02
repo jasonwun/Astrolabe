@@ -18,6 +18,7 @@ use gpui_kit::*;
 use crate::builtin::Action;
 use crate::clock;
 use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
+use crate::perf;
 use crate::projection::config::{HIDDEN, SecretKey};
 use crate::projection::{
     DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
@@ -661,8 +662,10 @@ impl Panel for ResourceDetailPanel {
 
 impl Render for ResourceDetailPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _cost = perf::time(perf::Work::DetailRender);
         let now = clock::now(cx);
         let (resolved, next_tick) = track_ages(now, || {
+            let _cost = perf::time(perf::Work::DetailResolve);
             detail::resolve(&self.target, self.session.read(cx), now)
         });
         self.tick = cx.spawn(async move |panel, cx| {

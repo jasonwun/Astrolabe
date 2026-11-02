@@ -3,11 +3,11 @@
 
 use astrolabe::builtin::BuiltinKind;
 use astrolabe::session::{NamespaceWatchMessage, ObjectWatchMessage, ScriptedCluster, WatchKey};
-use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe::workspace::{LaunchTab, Preselection, WorkspaceView};
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{TestAppContext, VisualTestContext};
-use support::{LogCapture, key_on, object, snapshot};
+use support::{LogCapture, key_on, mouse_click, object, snapshot};
 
 mod support;
 
@@ -47,6 +47,7 @@ fn preselect(cluster: &str, namespace: &str) -> Preselection {
     Preselection {
         cluster: Some(cluster.to_string()),
         namespace: Some(namespace.to_string()),
+        ..Preselection::default()
     }
 }
 
@@ -129,4 +130,90 @@ fn a_cluster_opened_after_launch_starts_in_default(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.try_find_by_label("Namespace: team-a").is_some());
     });
+}
+
+#[gpui_kit::test]
+fn launch_opens_the_preselected_list_and_detail_tabs(cx: &mut TestAppContext) {
+    let (mut config_maps, config_map_events) = mpsc::channel(32);
+    let (mut secrets, secret_events) = mpsc::channel(32);
+    let preselection = Preselection {
+        open: vec![
+            LaunchTab::List(BuiltinKind::ConfigMaps),
+            LaunchTab::Detail(BuiltinKind::Secrets, "db".to_string()),
+        ],
+        ..preselect("kind-b", "team-a")
+    };
+    let (cx, _senders) = launch(
+        cx,
+        preselection,
+        vec![
+            (
+                key_on("kind-b", BuiltinKind::ConfigMaps, "team-a"),
+                config_map_events,
+            ),
+            (
+                key_on("kind-b", BuiltinKind::Secrets, "team-a"),
+                secret_events,
+            ),
+        ],
+    );
+    snapshot(
+        &mut config_maps,
+        vec![object(serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "settings", "namespace": "team-a"},
+        }))],
+    );
+    snapshot(
+        &mut secrets,
+        vec![object(serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {"name": "db", "namespace": "team-a"},
+        }))],
+    );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let detail = window
+            .try_find("detail-tab")
+            .expect("the detail tab is shown");
+        assert_eq!(detail.label(), Some("Secret team-a/db"));
+    });
+    assert!(cx.debug_bounds("dock-tab-2").is_none(), "one detail tab");
+    mouse_click(cx, "dock-tab-0");
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("row-team-a/settings").is_some());
+    });
+}
+
+#[test]
+fn launch_tabs_parse_kinds_as_lists_and_kind_slash_name_as_details() {
+    // Unknown kinds log a warning: `an_unknown_launch_tab_kind_…` covers
+    // them, so this test leaves the callsite to that test's subscriber.
+    assert_eq!(
+        LaunchTab::parse_all("Deployment, Secret/db,,Service/web"),
+        vec![
+            LaunchTab::List(BuiltinKind::Deployments),
+            LaunchTab::Detail(BuiltinKind::Secrets, "db".to_string()),
+            LaunchTab::Detail(BuiltinKind::Services, "web".to_string()),
+        ]
+    );
+    assert_eq!(LaunchTab::parse_all(""), Vec::new());
+}
+
+#[test]
+fn an_unknown_launch_tab_kind_is_logged_and_skipped() {
+    let log = LogCapture::default();
+    let tabs = log.scoped(|| LaunchTab::parse_all("Nope/x,Secret/db"));
+    assert_eq!(
+        tabs,
+        vec![LaunchTab::Detail(BuiltinKind::Secrets, "db".to_string())]
+    );
+    let log = log.text();
+    assert!(log.contains("WARN"), "{log}");
+    assert!(log.contains("ASTROLABE_OPEN=Nope/x"), "{log}");
 }

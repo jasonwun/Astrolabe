@@ -16,7 +16,8 @@ use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
 use crate::session::{
     ConnectionHealth, CustomKindId, ExecRequest, LogRequest, ScriptedCluster, Session,
 };
-use crate::workspace::STALE_MESSAGE;
+use crate::store::ObjectKey;
+use crate::workspace::{LaunchTab, STALE_MESSAGE};
 use crate::yaml_editor::YamlEditorView;
 
 pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource navigation may be stale";
@@ -89,6 +90,21 @@ impl SessionView {
 
     pub fn health(&self, cx: &App) -> ConnectionHealth {
         self.session.read(cx).health()
+    }
+
+    /// Show the launch's tabs (#106): a list in the list tab, a detail in
+    /// a tab of its own, both in the session's namespace.
+    pub fn open_tabs(&mut self, tabs: Vec<LaunchTab>, window: &mut Window, cx: &mut Context<Self>) {
+        let namespace = self.session.read(cx).namespace().to_string();
+        for tab in tabs {
+            match tab {
+                LaunchTab::List(kind) => self.show(ListView::Builtin(kind), window, cx),
+                LaunchTab::Detail(kind, name) => {
+                    let key = ObjectKey::new(Some(namespace.clone()), name);
+                    self.open_detail(DetailTarget::Builtin { kind, key }, window, cx);
+                }
+            }
+        }
     }
 
     fn show(&mut self, view: ListView, window: &mut Window, cx: &mut Context<Self>) {

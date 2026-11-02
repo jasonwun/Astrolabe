@@ -18,6 +18,7 @@ use gpui_kit::*;
 use crate::builtin::{BuiltinKind, Registration};
 use crate::clock;
 use crate::detail::{DetailTarget, forbidden_message};
+use crate::perf;
 use crate::projection::{
     ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
     project_namespaces, track_ages,
@@ -167,6 +168,7 @@ impl ResourceListPanel {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        let _cost = perf::time(perf::Work::ListRefresh);
         let now = clock::now(cx);
         let session = self.session.read(cx);
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {

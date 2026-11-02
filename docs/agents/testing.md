@@ -87,6 +87,12 @@ watch resumption; that needs a real GUI stop/start against the dev cluster.
 Cleanup: close Astrolabe and leave the kind cluster running unless you
 intend to tear it down.
 
+### Notify-cost measurement (kind-astrolabe-dev)
+
+`dev/notify-cost.sh` measures what Session's whole-entity notify costs the
+main thread under watch churn, for a given number of open panels (#106).
+Setup, columns and how to read them: `docs/agents/notify-cost.md`.
+
 ## Coverage
 
 ```sh
