@@ -1,8 +1,8 @@
 //! The session's one I/O seam: every scripted-vs-live decision lives here,
 //! so `Session` starts watches, discovers, operates and hands out its client
-//! without knowing which kind of cluster it talks to. A concrete enum, not
-//! a trait (workspace decision: main-thread GPUI entities, no trait
-//! boundary).
+//! without knowing which kind of cluster it talks to. An enum, not a trait:
+//! this crate knows every adapter and no other crate adds one
+//! (docs/adr/0002).
 
 use std::collections::HashMap;
 use std::time::Duration;
