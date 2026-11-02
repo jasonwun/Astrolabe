@@ -107,6 +107,11 @@ Reference: `crates/app/src/resource_list.rs`.
   then dumps every registered path (thousands of tokens). Read the first
   line (`grep -A3 'stdout ----' | cut -c1-300`); to see what is
   registered, grep the dump for the missing id's neighbours (#89).
+- A view test cannot click an element after the state that renders it is
+  gone: `run_until_parked` redraws the window, and the click panics
+  "missing ElementId". To cover a click racing a change (the object left
+  its watch before Delete was confirmed), test the seam the handler reads
+  (`DetailTarget::object`) without a view (#96).
 - Snapshots carry element bounds, never laid-out text: a text element's
   bounds are its box, whatever the text's width or truncation. An
   ellipsis, a wrap, or text overflowing its box shows only in the manual

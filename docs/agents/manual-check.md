@@ -116,6 +116,16 @@ path of `<name>.png`, shrunk to one pixel per window point.
   check, state that it was not checked and why.
 - Every action already captures: pass it to `dev/shot.sh` and read the
   result rather than taking another snapshot.
+- A refused action fails `dev/shot.sh` with orca's message and writes no
+  capture; never pipe its stdout to `/dev/null`, or the previous capture
+  passes for this one. `window_not_focused` with "current: no focused
+  window", which `--restore-window` does not fix, means a macOS permission
+  dialog holds the focus; `dev/shot.sh` then prints each dialog's text.
+  These are security decisions: ask the user to answer them, or which
+  answer to click (#96).
+- A notice that only lasts while a request is in flight ("Scaling…") is
+  replaced by the result before a capture lands on kind. Capture the
+  result, and leave the in-flight text to a unit test (#96).
 - The launch's env vars already select `kind-astrolabe-dev` and this
   worktree's namespace: no clicks before the first screenshot. When a check
   must switch namespace by hand, capture the open selector before picking:
