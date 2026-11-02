@@ -20,8 +20,8 @@ pub async fn default_client() -> kube::Result<kube::Client> {
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when the kubeconfig cannot be read or parsed, has no context
-/// named `context`, or the client cannot be built from it.
+/// A [`kube::Error`] when the kubeconfig cannot be read or parsed, has no
+/// context named `context`, or the client cannot be built from it.
 pub async fn client_for_context(context: &str) -> kube::Result<kube::Client> {
     let options = kube::config::KubeConfigOptions {
         context: Some(context.to_string()),
