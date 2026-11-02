@@ -259,20 +259,59 @@ impl<K: ResourceExt> Watched<K> {
     }
 }
 
-/// One object of one resource: what a delete addresses.
+/// One object of one resource: what an operation addresses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ObjectRef {
     pub resource: ApiResource,
     pub key: ObjectKey,
 }
 
-/// A one-shot change to a registered workload.
+/// A one-shot change to one object, sent from a detail tab's toolbar.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operation {
     Scale { object: ObjectRef, replicas: i32 },
     RolloutRestart { object: ObjectRef },
     SetSuspend { object: ObjectRef, suspend: bool },
     TriggerCronJob { object: ObjectRef },
+    Delete { object: ObjectRef },
+}
+
+impl Operation {
+    /// Shown while the server has not answered.
+    pub fn pending(&self) -> &'static str {
+        match self {
+            Self::Scale { .. } => "Scaling…",
+            Self::RolloutRestart { .. } => "Restarting…",
+            Self::SetSuspend { suspend: true, .. } => "Suspending…",
+            Self::SetSuspend { suspend: false, .. } => "Resuming…",
+            Self::TriggerCronJob { .. } => "Triggering…",
+            Self::Delete { .. } => "Deleting…",
+        }
+    }
+
+    /// Shown once the server accepted it.
+    pub fn done(&self) -> String {
+        match self {
+            Self::Scale { replicas, .. } => format!("Scaled to {replicas}"),
+            Self::RolloutRestart { .. } => "Restart requested".to_string(),
+            Self::SetSuspend { suspend: true, .. } => "Suspended".to_string(),
+            Self::SetSuspend { suspend: false, .. } => "Resumed".to_string(),
+            Self::TriggerCronJob { .. } => "Job creation requested".to_string(),
+            Self::Delete { .. } => "Deletion requested".to_string(),
+        }
+    }
+
+    /// What failed, as in "{verb} failed: {error}".
+    pub fn verb(&self) -> &'static str {
+        match self {
+            Self::Scale { .. } => "Scale",
+            Self::RolloutRestart { .. } => "Restart",
+            Self::SetSuspend { suspend: true, .. } => "Suspend",
+            Self::SetSuspend { suspend: false, .. } => "Resume",
+            Self::TriggerCronJob { .. } => "Trigger",
+            Self::Delete { .. } => "Delete",
+        }
+    }
 }
 
 /// Follow `container`'s log in Pod `pod` (#17).
@@ -678,11 +717,6 @@ impl Session {
             None => {}
         }
         cx.notify();
-    }
-
-    /// Delete one object; resolves with the server's answer.
-    pub fn delete(&mut self, object: ObjectRef) -> oneshot::Receiver<Result<(), String>> {
-        self.io.delete(object)
     }
 
     /// Run one operation; resolves with the server's answer.

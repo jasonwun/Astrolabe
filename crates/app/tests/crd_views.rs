@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::session::{
-    ObjectRef, ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ObjectWatchMessage, Operation, ResourceKind, ScriptedCluster, WatchError, WatchKey,
 };
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
@@ -14,7 +14,7 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{TestAppContext, VisualTestContext};
-use support::object;
+use support::{deletion, object};
 
 mod support;
 
@@ -147,15 +147,13 @@ fn open(
                 }
             })))
         })
-        .delete({
+        .operate({
             let deleted = deleted.clone();
-            move |object: &ObjectRef| {
-                let resource = &object.resource;
-                deleted.borrow_mut().push((
-                    format!("{}/{}", resource.api_version, resource.kind),
-                    object.key.namespace.clone(),
-                    object.key.name.clone(),
-                ));
+            move |operation: &Operation| {
+                let Operation::Delete { object } = operation else {
+                    panic!("unexpected operation {operation:?}");
+                };
+                deleted.borrow_mut().push(deletion(object));
                 Ok(())
             }
         });

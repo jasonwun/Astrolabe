@@ -14,15 +14,16 @@ use gpui_kit::component::table::TableState;
 use gpui_kit::component::{Size, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use tokio::sync::oneshot;
 
 use crate::builtin::Action;
 use crate::clock;
 use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::projection::config::{HIDDEN, SecretKey};
-use crate::projection::{DetailField, DetailItem, ReplicaCounts, SummaryTable, track_ages};
+use crate::projection::{
+    DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
+};
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
-use crate::session::{ExecRequest, LogRequest, Session};
+use crate::session::{ExecRequest, LogRequest, ObjectRef, Operation, Session};
 use crate::store::ObjectKey;
 
 mod editor_panel;
@@ -148,19 +149,7 @@ impl ResourceDetailPanel {
 
     fn delete(&mut self, cx: &mut Context<Self>) {
         self.confirm_delete = false;
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.delete(resolved.object));
-        self.report(
-            result,
-            "Deleting…",
-            "Deletion requested".to_string(),
-            "Delete",
-            cx,
-        );
+        self.run(|object| Operation::Delete { object }, cx);
     }
 
     /// A Secret's keys, each value masked until revealed.
@@ -223,16 +212,22 @@ impl ResourceDetailPanel {
         cx.notify();
     }
 
-    /// Show `pending` until `result` resolves, then `done` or the failure
-    /// of `verb`.
-    fn report(
+    /// Send the operation `operation` builds for the shown object, showing
+    /// its pending text until the server answers, then its done text or
+    /// failure. Sends nothing, and returns false, once the object is gone.
+    fn run(
         &mut self,
-        result: oneshot::Receiver<Result<(), String>>,
-        pending: &str,
-        done: String,
-        verb: &'static str,
+        operation: impl FnOnce(ObjectRef) -> Operation,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        let Some(object) = self.target.object(self.session.read(cx)) else {
+            return false;
+        };
+        let operation = operation(object);
+        let (pending, done, verb) = (operation.pending(), operation.done(), operation.verb());
+        let result = self
+            .session
+            .update(cx, |session, _| session.operate(operation));
         self.show_notice(pending, cx);
         cx.spawn(async move |panel, cx| {
             let result = result
@@ -251,54 +246,68 @@ impl ResourceDetailPanel {
                 .ok();
         })
         .detach();
+        true
     }
 
     fn render_toolbar(
         &self,
         actions: &[Action],
-        suspended: bool,
+        model: &DetailModel,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
         let border = theme.border;
-        let button = |id: &'static str, label: &'static str| button(id, label, border);
+        let suspended = model.is_suspended();
         h_flex()
             .gap_2()
             .p_2()
             .border_b_1()
             .border_color(theme.border)
-            .children(actions.iter().map(|action| {
+            .children(actions.iter().map(|&action| {
+                let button = |id: &'static str| button(id, action.label(model), border);
                 match action {
-                    Action::Logs => button("detail-logs", "Logs").on_click(
+                    Action::Logs => button("detail-logs").on_click(
                         cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Logs, cx)),
                     ),
-                    Action::Exec => button("detail-exec", "Exec").on_click(
+                    Action::Exec => button("detail-exec").on_click(
                         cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Exec, cx)),
                     ),
-                    Action::PortForward => button("detail-forward", "Port Forward").on_click(
+                    Action::PortForward => button("detail-forward").on_click(
                         cx.listener(|panel, _, _, cx| panel.ask(PodAction::Forward, None, cx)),
                     ),
-                    Action::Scale => button("detail-scale", "Scale")
+                    Action::Scale => button("detail-scale")
                         .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
-                    Action::RolloutRestart => button("detail-restart", "Rollout Restart")
-                        .on_click(cx.listener(|panel, _, _, cx| panel.rollout_restart(cx))),
-                    Action::Suspend => button(
-                        "detail-suspend",
-                        if suspended { "Resume" } else { "Suspend" },
-                    )
-                    .on_click(
-                        cx.listener(move |panel, _, _, cx| panel.set_suspend(!suspended, cx)),
-                    ),
-                    Action::Trigger => button("detail-trigger", "Trigger")
-                        .on_click(cx.listener(|panel, _, _, cx| panel.trigger(cx))),
-                    Action::Edit => button("detail-edit", "Edit YAML")
+                    Action::RolloutRestart => {
+                        button("detail-restart").on_click(cx.listener(|panel, _, _, cx| {
+                            panel.run(|object| Operation::RolloutRestart { object }, cx);
+                        }))
+                    }
+                    Action::Suspend => {
+                        button("detail-suspend").on_click(cx.listener(move |panel, _, _, cx| {
+                            panel.run(
+                                |object| Operation::SetSuspend {
+                                    object,
+                                    suspend: !suspended,
+                                },
+                                cx,
+                            );
+                        }))
+                    }
+                    Action::Trigger => {
+                        button("detail-trigger").on_click(cx.listener(|panel, _, _, cx| {
+                            panel.run(|object| Operation::TriggerCronJob { object }, cx);
+                        }))
+                    }
+                    Action::Edit => button("detail-edit")
                         .on_click(cx.listener(|panel, _, _, cx| panel.edit(cx))),
-                    Action::Delete => button("detail-delete", "Delete")
-                        .text_color(theme.danger)
-                        .on_click(cx.listener(|panel, _, _, cx| {
-                            panel.confirm_delete = true;
-                            cx.notify();
-                        })),
+                    Action::Delete => {
+                        button("detail-delete")
+                            .text_color(theme.danger)
+                            .on_click(cx.listener(|panel, _, _, cx| {
+                                panel.confirm_delete = true;
+                                cx.notify();
+                            }))
+                    }
                 }
             }))
             .when_some(self.notice.clone(), |bar, notice| {
@@ -769,7 +778,7 @@ impl Render for ResourceDetailPanel {
             .aria_label(self.display_name())
             .test_support()
             .size_full()
-            .child(self.render_toolbar(resolved.actions, model.suspended.unwrap_or(false), cx))
+            .child(self.render_toolbar(resolved.actions, &model, cx))
             .when_some(self.picking.clone(), |this, picking| {
                 this.child(self.render_picker(picking, &model, cx))
             })

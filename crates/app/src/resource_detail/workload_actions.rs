@@ -1,5 +1,4 @@
-//! The workload toolbar actions: Scale, Rollout Restart, Suspend/Resume and
-//! Trigger.
+//! The Scale form; the panel's `run` sends what it asks for.
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::h_flex;
@@ -32,81 +31,9 @@ impl ResourceDetailPanel {
             Ok(replicas) if replicas >= 0 => replicas,
             _ => return self.show_notice("Replicas must be a whole number, 0 or more", cx),
         };
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::Scale {
-            object: resolved.object,
-            replicas,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.scale = None;
-        self.report(
-            result,
-            "Scaling…",
-            format!("Scaled to {replicas}"),
-            "Scale",
-            cx,
-        );
-    }
-
-    pub(super) fn rollout_restart(&mut self, cx: &mut Context<Self>) {
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::RolloutRestart {
-            object: resolved.object,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.report(
-            result,
-            "Restarting…",
-            "Restart requested".to_string(),
-            "Restart",
-            cx,
-        );
-    }
-
-    pub(super) fn set_suspend(&mut self, suspend: bool, cx: &mut Context<Self>) {
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::SetSuspend {
-            object: resolved.object,
-            suspend,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        let (pending, done, verb) = if suspend {
-            ("Suspending…", "Suspended", "Suspend")
-        } else {
-            ("Resuming…", "Resumed", "Resume")
-        };
-        self.report(result, pending, done.to_string(), verb, cx);
-    }
-
-    pub(super) fn trigger(&mut self, cx: &mut Context<Self>) {
-        let Some(resolved) = self.resolve(cx) else {
-            return;
-        };
-        let operation = Operation::TriggerCronJob {
-            object: resolved.object,
-        };
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.report(
-            result,
-            "Triggering…",
-            "Job creation requested".to_string(),
-            "Trigger",
-            cx,
-        );
+        if self.run(|object| Operation::Scale { object, replicas }, cx) {
+            self.scale = None;
+        }
     }
 
     pub(super) fn render_scale(

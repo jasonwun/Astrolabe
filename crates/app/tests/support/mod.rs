@@ -63,6 +63,16 @@ pub fn detail(kind: BuiltinKind, raw: serde_json::Value, now: Timestamp) -> Deta
 }
 
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
+
+/// What `Deleted` records of a Delete: `apiVersion/Kind`, namespace, name.
+pub fn deletion(object: &ObjectRef) -> (String, Option<String>, String) {
+    let resource = &object.resource;
+    (
+        format!("{}/{}", resource.api_version, resource.kind),
+        object.key.namespace.clone(),
+        object.key.name.clone(),
+    )
+}
 pub type Operated = Rc<RefCell<Vec<Operation>>>;
 pub type Logged = Rc<RefCell<Vec<LogRequest>>>;
 pub type Forwarded = Rc<RefCell<Vec<ForwardRequest>>>;
@@ -93,21 +103,14 @@ pub fn open(
     let execed: Execed = Rc::default();
     let forwarded: Forwarded = Rc::default();
     let mut cluster = ScriptedCluster::new(namespace_events)
-        .delete({
-            let deleted = deleted.clone();
-            move |object: &ObjectRef| {
-                let resource = &object.resource;
-                deleted.borrow_mut().push((
-                    format!("{}/{}", resource.api_version, resource.kind),
-                    object.key.namespace.clone(),
-                    object.key.name.clone(),
-                ));
-                Ok(())
-            }
-        })
         .operate({
+            let deleted = deleted.clone();
             let operated = operated.clone();
             move |operation: &Operation| {
+                if let Operation::Delete { object } = operation {
+                    deleted.borrow_mut().push(deletion(object));
+                    return Ok(());
+                }
                 operated.borrow_mut().push(operation.clone());
                 match operation {
                     Operation::Scale { replicas: 0, .. } => Err("scale refused".to_string()),
