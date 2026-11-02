@@ -1,7 +1,9 @@
 //! Astrolabe desktop application: GPUI entry point.
 
+#[cfg(debug_assertions)]
+use astrolabe::workspace::LaunchTab;
 use astrolabe::workspace::{Preselection, WorkspaceView};
-use astrolabe::{keymap, yaml_editor};
+use astrolabe::{keymap, perf, yaml_editor};
 use gpui_kit::*;
 
 fn main() {
@@ -11,6 +13,7 @@ fn main() {
         gpui_kit::init(cx);
         yaml_editor::register_yaml_language(cx);
         keymap::bind(cx);
+        perf::start(cx);
 
         // Not raw cx.open_window: the Root it adds paints the theme (#52).
         gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
@@ -37,8 +40,9 @@ fn init_tracing() {
 }
 
 /// Debug builds open `ASTROLABE_CLUSTER` in `ASTROLABE_NAMESPACE` at
-/// launch, so the manual UI check needs no clicks to get there (#111).
-/// Release builds ignore both. Empty counts as unset.
+/// launch, so the manual UI check needs no clicks to get there (#111),
+/// showing the tabs `ASTROLABE_OPEN` lists (#106). Release builds ignore
+/// all three. Empty counts as unset.
 #[cfg(debug_assertions)]
 fn preselection() -> Preselection {
     let var = |name| {
@@ -49,6 +53,9 @@ fn preselection() -> Preselection {
     Preselection {
         cluster: var("ASTROLABE_CLUSTER"),
         namespace: var("ASTROLABE_NAMESPACE"),
+        open: var("ASTROLABE_OPEN")
+            .map(|spec| LaunchTab::parse_all(&spec))
+            .unwrap_or_default(),
     }
 }
 

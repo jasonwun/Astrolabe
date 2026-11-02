@@ -12,6 +12,7 @@ pub mod jsonpath;
 pub mod keymap;
 pub mod kube_bridge;
 pub mod logs;
+pub mod perf;
 pub mod projection;
 mod resource_detail;
 mod resource_list;

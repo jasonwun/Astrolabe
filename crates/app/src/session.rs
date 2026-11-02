@@ -20,6 +20,7 @@ pub use crate::cluster_io::{
     ExecOutput, ExecSession, ForwardEvent, LogChunk, LogStream, PortForward, ScriptedCluster,
     SharedClient,
 };
+use crate::perf;
 use crate::store::ObjectKey;
 pub use astrolabe_kube::pod::ExecInput;
 
@@ -880,6 +881,7 @@ fn spawn_drain<K: ResourceExt + 'static>(
     let apply_to = watched.clone();
     let apply = move |session: &mut Session, message, cx: &mut Context<Session>| {
         if let Some(watch) = apply_to(session) {
+            perf::count(perf::Event::WatchEvent);
             let change = watch.apply(message);
             changed(session, change, cx);
         }
@@ -908,6 +910,7 @@ fn spawn_drain<K: ResourceExt + 'static>(
                     if ended {
                         closed(session);
                     }
+                    perf::count(perf::Event::Notify);
                     cx.notify();
                 })
                 .is_err()
