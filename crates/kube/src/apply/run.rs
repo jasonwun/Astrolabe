@@ -57,6 +57,12 @@ pub struct ApplyReport {
 ///
 /// `force` re-sends with `force=true` (the panel's explicit Force Apply
 /// button for 409s; never automatic).
+///
+/// # Errors
+///
+/// A [`payload::PayloadError`] when `snapshot` does not parse, before
+/// anything is sent. A document the server rejects is not an error: its
+/// outcome in the report carries it.
 pub async fn apply_documents(
     client: &Client,
     snapshot: &str,
@@ -83,6 +89,12 @@ pub async fn apply_documents(
 /// Dry-run precheck (#15): `dry_run` + strict validation. Same per-doc
 /// allSettled semantics; strict-decoding causes are flagged for warning
 /// rendering via [`FieldCause::is_strict_decoding`].
+///
+/// # Errors
+///
+/// A [`payload::PayloadError`] when `snapshot` does not parse, before
+/// anything is sent. A document the server rejects is not an error: its
+/// outcome in the report carries it.
 pub async fn precheck_documents(
     client: &Client,
     snapshot: &str,
@@ -257,7 +269,7 @@ data:
         let error = ApplyError::Global {
             message: "forbidden".into(),
         };
-        assert!(located_causes(&error, DOC, 0).is_empty());
+        assert_eq!(located_causes(&error, DOC, 0), vec![]);
     }
 
     // ---- send_all orchestration (allSettled) -------------------------
@@ -280,12 +292,12 @@ data:
     async fn send_all_collects_every_outcome_all_settled() {
         struct FakeApply;
         impl DocApply for FakeApply {
-            async fn apply(&self, doc: &DocPayload) -> Result<(), ApplyError> {
-                if doc.name == "second" {
+            fn apply(&self, doc: &DocPayload) -> impl Future<Output = Result<(), ApplyError>> {
+                std::future::ready(if doc.name == "second" {
                     Err(validation_error("data.bad", "Invalid value"))
                 } else {
                     Ok(())
-                }
+                })
             }
         }
         let docs = payload::parse_documents(TWO_DOCS).unwrap();
@@ -398,7 +410,7 @@ data:
             .unwrap_err();
         match err {
             ApplyError::Global { message } => {
-                assert!(message.contains("apiVersion"), "unexpected: {message}")
+                assert!(message.contains("apiVersion"), "unexpected: {message}");
             }
             other => panic!("expected Global, got {other:?}"),
         }

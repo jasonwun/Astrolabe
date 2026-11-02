@@ -45,8 +45,8 @@ pub fn is_forbidden(error: &watcher::Error) -> bool {
     match error {
         watcher::Error::InitialListFailed(kube::Error::Api(status))
         | watcher::Error::WatchStartFailed(kube::Error::Api(status))
-        | watcher::Error::WatchFailed(kube::Error::Api(status)) => status.code == 403,
-        watcher::Error::WatchError(status) => status.code == 403,
+        | watcher::Error::WatchFailed(kube::Error::Api(status))
+        | watcher::Error::WatchError(status) => status.code == 403,
         _ => false,
     }
 }

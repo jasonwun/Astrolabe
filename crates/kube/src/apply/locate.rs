@@ -61,14 +61,11 @@ pub struct Located {
 /// it lines up with [`crate::apply::DocPayload::index`] (which keeps the
 /// original enumeration while skipping empty documents).
 pub fn locate_field(snapshot: &str, doc_index: usize, path: &[Segment]) -> Located {
-    let docs = match MarkedYaml::load_from_str(snapshot) {
-        Ok(docs) => docs,
-        Err(_) => {
-            return Located {
-                location: Location::Global,
-                anchor_note: None,
-            };
-        }
+    let Ok(docs) = MarkedYaml::load_from_str(snapshot) else {
+        return Located {
+            location: Location::Global,
+            anchor_note: None,
+        };
     };
     let Some(root) = docs.get(doc_index) else {
         return Located {
@@ -136,7 +133,7 @@ struct Walker<'a, 'input> {
     anchor_note: Option<String>,
 }
 
-impl<'a, 'input> Walker<'a, 'input> {
+impl Walker<'_, '_> {
     /// Consume as many segments as one lookup step needs (a key lookup may
     /// re-join dotted keys, consuming several `Key` segments).
     fn step(&mut self, rest: &[Segment]) -> Result<usize, String> {

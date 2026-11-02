@@ -3,10 +3,10 @@
 //! resolves `port-forward svc/name`. Synthetic objects (plausible shapes,
 //! never captured from a real apiserver).
 
-use astrolabe_kube::k8s_openapi::api::core::v1::{Pod, Service};
+use astrolabe_kube::k8s_openapi::api::core::v1::{Container, Pod, Service};
 use astrolabe_kube::service::{ResolvedForward, forward_target};
 
-fn service(spec: serde_json::Value) -> Service {
+fn service(spec: &serde_json::Value) -> Service {
     serde_json::from_value(serde_json::json!({
         "metadata": {"name": "web", "namespace": "team-a"},
         "spec": spec
@@ -15,7 +15,7 @@ fn service(spec: serde_json::Value) -> Service {
 }
 
 fn web_service() -> Service {
-    service(serde_json::json!({
+    service(&serde_json::json!({
         "selector": {"app": "web"},
         "ports": [
             {"name": "http", "port": 80, "targetPort": 8080},
@@ -38,18 +38,18 @@ fn running(name: &str) -> Pod {
     .unwrap()
 }
 
-fn target(pod: &str, port: u16) -> Result<ResolvedForward, String> {
-    Ok(ResolvedForward {
+fn target(pod: &str, port: u16) -> ResolvedForward {
+    ResolvedForward {
         pod: pod.to_string(),
         port,
-    })
+    }
 }
 
 #[test]
 fn a_numeric_target_port_is_the_container_port() {
     assert_eq!(
         forward_target(&web_service(), &[running("web-1")], 80),
-        target("web-1", 8080)
+        Ok(target("web-1", 8080))
     );
 }
 
@@ -57,7 +57,7 @@ fn a_numeric_target_port_is_the_container_port() {
 fn an_omitted_target_port_is_the_service_port() {
     assert_eq!(
         forward_target(&web_service(), &[running("web-1")], 7000),
-        target("web-1", 7000)
+        Ok(target("web-1", 7000))
     );
 }
 
@@ -65,7 +65,7 @@ fn an_omitted_target_port_is_the_service_port() {
 fn a_named_target_port_is_looked_up_in_the_pod() {
     assert_eq!(
         forward_target(&web_service(), &[running("web-1")], 9000),
-        target("web-1", 9901)
+        Ok(target("web-1", 9901))
     );
 }
 
@@ -74,10 +74,10 @@ fn a_named_target_port_may_be_declared_by_an_init_container() {
     let mut pod = running("web-1");
     let spec = pod.spec.as_mut().unwrap();
     spec.init_containers = Some(std::mem::take(&mut spec.containers));
-    spec.containers = vec![Default::default()];
+    spec.containers = vec![Container::default()];
     assert_eq!(
         forward_target(&web_service(), &[pod], 9000),
-        target("web-1", 9901)
+        Ok(target("web-1", 9901))
     );
 }
 
@@ -97,7 +97,7 @@ fn a_headless_service_forwards_to_the_same_port() {
     headless.spec.as_mut().unwrap().cluster_ip = Some("None".to_string());
     assert_eq!(
         forward_target(&headless, &[running("web-1")], 9000),
-        target("web-1", 9000)
+        Ok(target("web-1", 9000))
     );
 }
 
@@ -107,7 +107,7 @@ fn a_headless_service_forwards_an_undeclared_port_as_is() {
     headless.spec.as_mut().unwrap().cluster_ip = Some("None".to_string());
     assert_eq!(
         forward_target(&headless, &[running("web-1")], 81),
-        target("web-1", 81)
+        Ok(target("web-1", 81))
     );
 }
 
@@ -121,7 +121,7 @@ fn an_undeclared_service_port_is_an_error() {
 
 #[test]
 fn a_service_without_a_selector_has_no_pod_to_forward_to() {
-    let bare = service(serde_json::json!({"ports": [{"port": 80}]}));
+    let bare = service(&serde_json::json!({"ports": [{"port": 80}]}));
     assert_eq!(
         forward_target(&bare, &[running("web-1")], 80),
         Err("invalid service 'web': Service is defined without a selector".to_string())
@@ -164,39 +164,41 @@ fn the_most_active_pod_is_chosen() {
                 {"type": "Ready", "status": "False"}
             ]))
             .unwrap(),
-        )
+        );
     };
     let pairs = [
         (
             with(running("unassigned"), |pod| {
-                pod.spec.as_mut().unwrap().node_name = None
+                pod.spec.as_mut().unwrap().node_name = None;
             }),
             "assigned",
         ),
         (
             with(running("pending"), |pod| {
-                pod.status.as_mut().unwrap().phase = Some("Pending".to_string())
+                pod.status.as_mut().unwrap().phase = Some("Pending".to_string());
             }),
             "running",
         ),
         (
             with(running("unknown"), |pod| {
-                pod.status.as_mut().unwrap().phase = Some("Unknown".to_string())
+                pod.status.as_mut().unwrap().phase = Some("Unknown".to_string());
             }),
             "running",
         ),
         (with(running("unready"), unready), "ready"),
         (
             with(running("deleting"), |pod| {
-                pod.metadata.deletion_timestamp =
-                    Some(serde_json::from_value(serde_json::json!("2026-10-22T11:30:00Z")).unwrap())
+                pod.metadata.deletion_timestamp = Some(
+                    serde_json::from_value(serde_json::json!("2026-10-22T11:30:00Z")).unwrap(),
+                );
             }),
             "live",
         ),
         (
             with(running("newer"), |pod| {
-                pod.metadata.creation_timestamp =
-                    Some(serde_json::from_value(serde_json::json!("2026-10-22T11:30:00Z")).unwrap())
+                pod.metadata.creation_timestamp = Some(
+                    serde_json::from_value(serde_json::json!("2026-10-22T11:30:00Z")).unwrap(),
+                );
             }),
             "older",
         ),
@@ -208,7 +210,7 @@ fn the_most_active_pod_is_chosen() {
         for pods in [[less.clone(), more.clone()], [more.clone(), less.clone()]] {
             assert_eq!(
                 forward_target(&web_service(), &pods, 80),
-                target(&expected, 8080),
+                Ok(target(&expected, 8080)),
                 "{expected} is more active than {less_name}"
             );
         }
@@ -220,7 +222,7 @@ fn of_equally_active_pods_the_first_listed_is_chosen() {
     let pods = [running("web-1"), running("web-2")];
     assert_eq!(
         forward_target(&web_service(), &pods, 80),
-        target("web-1", 8080)
+        Ok(target("web-1", 8080))
     );
 }
 
@@ -228,7 +230,7 @@ fn of_equally_active_pods_the_first_listed_is_chosen() {
 fn pending_is_less_active_than_unknown() {
     let phase = |name: &str, phase: &str| {
         with(running(name), |pod| {
-            pod.status.as_mut().unwrap().phase = Some(phase.to_string())
+            pod.status.as_mut().unwrap().phase = Some(phase.to_string());
         })
     };
     for pods in [
@@ -249,9 +251,9 @@ type Uris = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
 
 /// A mock apiserver answering the Service GET with `web_service()`, the
 /// Pod LIST with `pods`, and refusing the port-forward upgrade with 403.
-fn mock_client(pods: Vec<Pod>) -> (astrolabe_kube::kube::Client, Uris) {
+fn mock_client(pods: &[Pod]) -> (astrolabe_kube::kube::Client, Uris) {
     use astrolabe_kube::kube::client::Body;
-    let seen: Uris = Default::default();
+    let seen = Uris::default();
     let log = seen.clone();
     let list = serde_json::to_vec(&serde_json::json!({
         "apiVersion": "v1", "kind": "PodList", "metadata": {}, "items": pods
@@ -304,7 +306,7 @@ async fn first_failure(client: astrolabe_kube::kube::Client, port: u16) -> Strin
 
 #[tokio::test]
 async fn each_connection_forwards_to_the_resolved_pod_port() {
-    let (client, seen) = mock_client(vec![running("web-1")]);
+    let (client, seen) = mock_client(&[running("web-1")]);
 
     let error = first_failure(client, 80).await;
 
@@ -321,7 +323,7 @@ async fn each_connection_forwards_to_the_resolved_pod_port() {
 
 #[tokio::test]
 async fn a_connection_the_service_cannot_route_fails_alone() {
-    let (client, seen) = mock_client(Vec::new());
+    let (client, seen) = mock_client(&[]);
 
     let error = first_failure(client, 80).await;
 

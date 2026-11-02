@@ -10,6 +10,11 @@ use kube::{Api, Client};
 
 /// Delete one object with the server's default propagation, so dependents
 /// owned through `ownerReferences` are garbage-collected.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the request fails, e.g. the object is gone (404)
+/// or RBAC forbids the delete (403).
 pub async fn delete(
     client: &Client,
     resource: &ApiResource,
@@ -25,6 +30,11 @@ pub async fn delete(
 }
 
 /// Set a scalable workload's desired replicas through its `scale` subresource.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the patch fails, e.g. the object is gone (404),
+/// the kind has no `scale` subresource, or RBAC forbids the patch (403).
 pub async fn scale(
     client: &Client,
     resource: &ApiResource,
@@ -45,6 +55,11 @@ pub async fn scale(
 
 /// `kubectl rollout restart`: stamp the pod template with kubectl's
 /// `restartedAt` annotation, so the controller rolls out new Pods.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the patch fails, e.g. the object is gone (404)
+/// or RBAC forbids the patch (403).
 pub async fn rollout_restart(
     client: &Client,
     resource: &ApiResource,
@@ -65,7 +80,12 @@ pub async fn rollout_restart(
     .await
 }
 
-/// Set a CronJob's suspend flag.
+/// Set a `CronJob`'s suspend flag.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the patch fails, e.g. the object is gone (404)
+/// or RBAC forbids the patch (403).
 pub async fn suspend(
     client: &Client,
     resource: &ApiResource,
@@ -103,8 +123,14 @@ async fn merge_patch(
     Ok(())
 }
 
-/// Create one Job from a CronJob's current template, as `kubectl create job
+/// Create one Job from a `CronJob`'s current template, as `kubectl create job
 /// --from=cronjob/...` does.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when getting the `CronJob` or creating the Job fails,
+/// and a 400 `BadRequest` [`kube::Error::Api`] when the `CronJob`'s Job
+/// template has no spec.
 pub async fn trigger_cron_job(client: &Client, namespace: &str, name: &str) -> kube::Result<()> {
     let cronjobs: Api<CronJob> = Api::namespaced(client.clone(), namespace);
     let cronjob = cronjobs.get(name).await?;

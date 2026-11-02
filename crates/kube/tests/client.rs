@@ -33,7 +33,7 @@ impl Drop for KubeconfigGuard {
 
 fn config(current_context: &str) -> String {
     format!(
-        r#"apiVersion: v1
+        r"apiVersion: v1
 kind: Config
 current-context: {current_context}
 clusters:
@@ -56,7 +56,7 @@ contexts:
 users:
 - name: user
   user: {{}}
-"#
+"
     )
 }
 

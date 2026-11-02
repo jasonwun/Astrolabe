@@ -9,8 +9,8 @@
 //! ```
 //!
 //! `seed` server-side-applies COUNT each of Secrets `s-N`, Services
-//! `svc-N`, Deployments `d-N` (zero replicas) and ConfigMaps `cm-N`, the
-//! steady objects the other watches hold. `run` cycles the ConfigMaps
+//! `svc-N`, Deployments `d-N` (zero replicas) and `ConfigMaps` `cm-N`, the
+//! steady objects the other watches hold. `run` cycles the `ConfigMaps`
 //! `churn-N` through create, patch and delete at RATE operations a second
 //! for SECONDS, each operation one watch event, and prints the rate it
 //! achieved each second. The namespace must exist.
@@ -34,13 +34,13 @@ use tokio::sync::Semaphore;
 /// The field manager both subcommands apply as.
 const MANAGER: &str = "astrolabe-churn";
 
-/// How many `churn-N` ConfigMaps `run` cycles through. A name's next
+/// How many `churn-N` `ConfigMaps` `run` cycles through. A name's next
 /// operation comes POOL operations after its last, so at 100/s the
 /// create, patch and delete of one name are 3 s apart and never race.
 const POOL: u64 = 300;
 
 /// Requests in flight at most; above it `run` falls behind RATE and says so.
-const IN_FLIGHT: usize = 64;
+const IN_FLIGHT: u32 = 64;
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -185,7 +185,7 @@ struct Counts {
 
 async fn run(client: Client, namespace: &str, rate: u32, seconds: u64) -> Result<(), Error> {
     let api: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
-    let permits = Arc::new(Semaphore::new(IN_FLIGHT));
+    let permits = Arc::new(Semaphore::new(IN_FLIGHT as usize));
     let counts = Arc::new(Counts::default());
     let mut ticks = tokio::time::interval(Duration::from_secs_f64(1. / f64::from(rate.max(1))));
     let start = Instant::now();
@@ -236,12 +236,16 @@ async fn run(client: Client, namespace: &str, rate: u32, seconds: u64) -> Result
             next_print += Duration::from_secs(1);
         }
     }
-    let _ = permits.acquire_many(IN_FLIGHT as u32).await?;
+    let _ = permits.acquire_many(IN_FLIGHT).await?;
     let total = counts.done.load(Ordering::Relaxed);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "an operation count stays far below 2^52"
+    )]
+    let rate = total as f64 / start.elapsed().as_secs_f64();
     println!(
-        "{total} ops in {:.1}s ({:.1}/s), {} failed",
+        "{total} ops in {:.1}s ({rate:.1}/s), {} failed",
         start.elapsed().as_secs_f64(),
-        total as f64 / start.elapsed().as_secs_f64(),
         counts.failed.load(Ordering::Relaxed)
     );
     Ok(())
