@@ -5,6 +5,12 @@ sees: invisible text (#52) and a tab with no close button (#51) both passed
 the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
+A change to the workspace build counts even when `crates/app` is
+untouched: root `Cargo.toml`, `Cargo.lock`, workspace lints, a new
+crate. It runs "A change that must leave the UI as it was" below on the
+launch view and one list. #148 (an empty crate and a lint table) first
+skipped the check as invisible, and the user asked for it.
+
 Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the
 change adds (populated, empty, forbidden), each screenshot has been read
@@ -176,6 +182,10 @@ of context.
 
    Open the same tabs in both runs: an extra tab moves the table down
    10pt and every crop reads `DIFF`.
+
+   Start the script with a click on a sidebar entry. The pointer stays
+   where the previous run left it, and a row it hovers is highlighted:
+   #148's first comparison read `DIFF` on Namespaces for that alone.
 4. Read one pair per view, for the PR's Evidence.
 
 Clean up with `git worktree remove "$SCRATCH/base"`.
