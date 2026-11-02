@@ -11,6 +11,11 @@ crate. It runs "A change that must leave the UI as it was" below on the
 launch view and one list. #148 (an empty crate and a lint table) first
 skipped the check as invisible, and the user asked for it.
 
+A backend change counts when its output reaches a view: drive that view
+through the changed path. #172 (field-path parsing in `astrolabe-kube`)
+applied a Deployment with `image: ""` from the YAML editor and read the
+422's line mark.
+
 Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the
 change adds (populated, empty, forbidden), each screenshot has been read
@@ -110,6 +115,9 @@ path of `<name>.png`, shrunk to one pixel per window point.
 - In an Exec terminal, `orca computer type-text` arrives garbled
   (`seq 1 200` types `aaa a aaa`). Send each key with `press-key`
   (`space`, `Return` for the specials) (#73).
+- To fill the YAML editor, put the text on the clipboard and paste it:
+  `pbcopy < file.yaml`, then `dev/shot.sh "$D" pasted hotkey --key cmd+v`.
+  `press-key` takes no modifier chord; `hotkey` does (#172).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - A view that changes with time (ages): `dev/demo.yaml` objects keep
