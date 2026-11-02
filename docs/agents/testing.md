@@ -163,6 +163,18 @@ missed mutant:
 dev/mutants.sh -p astrolabe -f crates/app/src/workspace.rs -j 4   # ~4 min
 ```
 
+When the change touches a few lines of a large file, scope the run to the
+diff instead; `-f` mutates the whole file:
+
+```sh
+git diff origin/main -- crates/app > app.diff
+dev/mutants.sh -p astrolabe --in-diff app.diff -j 4
+```
+
+Origin: #152 changed `ClusterIo::operate` in `cluster_io.rs`. `-f` found
+107 mutants at about two minutes each, so the run was stopped; the diff
+held 4 (#152 retro).
+
 Paths a scripted test cannot reach stay missed: kubeconfig discovery
 (`discover_contexts`) and styling such as the selected row's colours.
 
