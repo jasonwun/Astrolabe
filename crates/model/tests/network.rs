@@ -44,7 +44,7 @@ fn node_port_service() -> Service {
     serde_json::from_value(node_port_object()).unwrap()
 }
 
-/// Synthetic `NodePort` Service (plausible shape, not captured from a server).
+/// Synthetic NodePort Service (plausible shape, not captured from a server).
 fn node_port_object() -> serde_json::Value {
     service_object(
         serde_json::json!({
