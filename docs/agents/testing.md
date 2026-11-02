@@ -28,6 +28,18 @@ the PR's Evidence block, pasted as is:
 Notes go outside the code block. Do not paste the full log. A named binary
 missing from the log fails the script; check the spelling.
 
+## Lint job, before each push
+
+Before pushing, run every step of `.github/workflows/ci.yml`'s `lint`
+job locally, not only fmt and clippy. That means `dev/comment-width.sh`,
+`dev/registration-path.sh`, `dev/log-capture.sh`, `dev/layer-check.sh`
+and the gpui tree check. Run them again after review fixes: a reworded
+doc comment can push a line past 80 columns.
+
+Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
+to an 82-column line. Only fmt and clippy ran locally, so CI's
+`comment-width.sh` caught it and cost a CI round (#149 retro).
+
 ## Move-only refactors
 
 ```sh
