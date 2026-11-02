@@ -42,7 +42,17 @@ fi
 if [ $# -eq 0 ]; then set -- get-app-state; fi
 mkdir -p "$dir"
 
-json=$(orca computer "$@" --app "pid:$(own_pid)" --json)
+pid=$(own_pid)
+if ! json=$(orca computer "$@" --app "pid:$pid" --json) || [ "$(jq -r .ok <<<"$json")" != true ]; then
+    # Say why, rather than exit 1 silently and leave the last capture
+    # looking like this one's (#96).
+    jq -r '.error.message // .' <<<"$json" >&2
+    if [ "$(jq -r .error.code <<<"$json")" = window_not_focused ]; then
+        # A macOS permission dialog holds the focus (#96).
+        osascript -e 'tell application "System Events" to tell process "UserNotificationCenter" to get value of static text 1 of every window' >&2 2>/dev/null || true
+    fi
+    exit 1
+fi
 path=$(jq -r .result.screenshot.path <<<"$json")
 scale=$(jq -r .result.screenshot.scale <<<"$json")
 
