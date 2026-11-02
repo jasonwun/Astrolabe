@@ -33,7 +33,7 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Read it as in **Read an issue** above.
-The spec is the body plus the latest `## Agent Brief` comment, when one exists; the brief wins on scope and out-of-scope. Pass both to any spec reviewer. When the spec aligns with Lens/Freelens, also pass the reviewer the fetched upstream files (`docs/agents/reference-products.md`) and have it check every column and field against them.
+The spec is the body plus the latest `## Agent Brief` comment, when one exists; the brief wins on the change's scope and out-of-scope. The repo's own checks (`AGENTS.md`, `docs/agents/manual-check.md`) still run when a brief marks them out of scope: #172's brief said no kind screenshot was needed, and the check ran anyway. Pass both to any spec reviewer. When the spec aligns with Lens/Freelens, also pass the reviewer the fetched upstream files (`docs/agents/reference-products.md`) and have it check every column and field against them.
 
 ## Wayfinding operations
 
