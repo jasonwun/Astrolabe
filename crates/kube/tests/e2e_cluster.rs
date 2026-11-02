@@ -22,6 +22,7 @@ use astrolabe_kube::kube::api::{Api, DeleteParams, ListParams, PostParams};
 use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
+use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_kube::pod::{self, ExecInput};
 use astrolabe_kube::{default_client, resource, service};
 use futures::StreamExt;
@@ -484,7 +485,11 @@ spec:
     .await
     .expect("timed out waiting for the Widget");
 
-    astrolabe_kube::resource::delete(&client, resource, Some(&ns), "w1")
+    let widget_ref = ObjectRef {
+        resource: resource.clone(),
+        key: ObjectKey::new(Some(ns.clone()), "w1"),
+    };
+    astrolabe_kube::resource::delete(&client, &widget_ref)
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -572,19 +577,18 @@ async fn scale_and_rollout_restart_a_deployment() {
     let ns = unique_ns();
     let first = running_nginx(&client, &ns).await;
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &ns);
-    let deployment = ApiResource::erase::<Deployment>(&());
+    let deployment = ObjectRef {
+        resource: ApiResource::erase::<Deployment>(&()),
+        key: ObjectKey::new(Some(ns.clone()), "nginx"),
+    };
 
-    resource::scale(&client, &deployment, &ns, "nginx", 2)
-        .await
-        .unwrap();
+    resource::scale(&client, &deployment, 2).await.unwrap();
     let scaled = deployments.get("nginx").await.unwrap();
     assert_eq!(scaled.spec.unwrap().replicas, Some(2));
-    resource::scale(&client, &deployment, &ns, "nginx", 1)
-        .await
-        .unwrap();
+    resource::scale(&client, &deployment, 1).await.unwrap();
 
     let at: Timestamp = "2026-01-02T03:04:05Z".parse().unwrap();
-    resource::rollout_restart(&client, &deployment, &ns, "nginx", at)
+    resource::rollout_restart(&client, &deployment, at)
         .await
         .unwrap();
     let restarted = deployments.get("nginx").await.unwrap();
