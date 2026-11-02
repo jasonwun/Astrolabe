@@ -172,10 +172,20 @@ line, or what a crate supplies matches what the diff's code prints or
 uses, per crate. A claim true of one benchmark but written for all of
 them is a finding.
 
+A doc line (`CODING_STANDARDS.md`, an ADR, an agent doc) that names a
+type, crate or function `crates/` lacks marks it as planned and names
+the issue that plans it ("`ClusterError`, planned in #147"). A line
+that restates an external guide, such as a Rust API Guideline, matches
+the guide's text: a rule stricter than its source is a finding unless
+it says why.
+
 Origin: #85's first draft said every scripted mode prints `load=` at
 start and end and that the editor and terminal benchmarks took their
 frame stats and load from `spikes/support`; neither was true yet (#85
-retro).
+retro). #150's first draft stated #147's `ClusterError`, `ApplyMode`
+and `SessionState` as existing types, and its C-CTOR line allowed only
+`new`, `with_…` and `from_…`, which made #147's `Cluster::connect` look
+like a finding; the guideline also allows domain verbs (#150 retro).
 
 ## Tests that claim the Registration's path
 
