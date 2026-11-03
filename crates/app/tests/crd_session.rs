@@ -6,6 +6,7 @@ use astrolabe::session::{
     ConnectionHealth, CustomKindId, DEFAULT_NAMESPACE, ObjectWatchMessage, ResourceKind,
     ScriptedCluster, Session, WatchError, WatchKey,
 };
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -89,7 +90,7 @@ struct Harness {
     namespaces: mpsc::Sender<Result<Event<Namespace>, WatchError>>,
     crds: mpsc::Sender<Result<Event<CustomResourceDefinition>, WatchError>>,
     discoveries: Rc<Cell<usize>>,
-    discovery: Rc<RefCell<Result<ServedResources, String>>>,
+    discovery: Rc<RefCell<Result<ServedResources, ClusterError>>>,
 }
 
 fn harness(
@@ -270,7 +271,7 @@ fn failed_rediscovery_keeps_kinds_served_behind_the_stale_banner(cx: &mut TestAp
     cx.run_until_parked();
     cx.read(|cx| assert!(!h.session.read(cx).show_stale_warning()));
 
-    *h.discovery.borrow_mut() = Err("connection refused".to_string());
+    *h.discovery.borrow_mut() = Err(ClusterError::new("connection refused"));
     h.crds
         .try_send(Ok(Event::Apply(crd(
             "stable.example.com",

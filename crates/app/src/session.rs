@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::crd::{self, CustomGroup, CustomKind, KindResource};
 use astrolabe_kube::discovery::{DiscoveryCache, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -12,7 +13,7 @@ use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
 use astrolabe_kube::object::{ObjectKey, Operation};
 use astrolabe_model::builtin::BuiltinKind;
-use futures::{Stream, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, Stream, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
 
@@ -469,14 +470,12 @@ impl Session {
         let mut result = self.io.discover();
         // Scripted clusters answer before `discover` returns: finish within
         // this update, as a live answer's arrival can't be awaited here.
-        if let Ok(result) = result.try_recv() {
+        if let Some(result) = (&mut result).now_or_never() {
             self.finish_discovery(run, result, cx);
             return;
         }
         cx.spawn(async move |this, cx| {
-            let result = result
-                .await
-                .unwrap_or_else(|_| Err("discovery task dropped".to_string()));
+            let result = result.await;
             this.update(cx, |session, cx| session.finish_discovery(run, result, cx))
                 .ok();
         })
@@ -486,7 +485,7 @@ impl Session {
     fn finish_discovery(
         &mut self,
         run: u64,
-        result: Result<ServedResources, String>,
+        result: Result<ServedResources, ClusterError>,
         cx: &mut Context<Self>,
     ) {
         // A newer run is in flight or done; its answer wins.
@@ -798,7 +797,7 @@ impl Session {
         &self.namespace
     }
 
-    pub fn discovery_failure(&self) -> Option<&str> {
+    pub fn discovery_failure(&self) -> Option<&ClusterError> {
         self.discovery.failure()
     }
 

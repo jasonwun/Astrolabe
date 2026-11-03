@@ -1,18 +1,20 @@
 //! The session's one I/O seam: every scripted-vs-live decision lives here,
 //! so `Session` starts watches, discovers, operates and hands out its client
-//! without knowing which kind of cluster it talks to. An enum, not a trait:
-//! this crate knows every adapter and no other crate adds one
-//! (docs/adr/0002).
+//! without knowing which kind of cluster it talks to. The live arm wraps
+//! `astrolabe_kube::cluster::Cluster`; no other app module names it. An
+//! enum, not a trait: this crate knows every adapter and no other crate
+//! adds one (docs/adr/0002).
 
 use std::collections::HashMap;
 use std::time::Duration;
 
+use astrolabe_kube::cluster::{Cluster, ClusterError};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::ExecInput;
-use futures::future::{BoxFuture, Shared};
+use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, SinkExt, Stream, StreamExt, channel::mpsc};
 use tokio::sync::oneshot;
 
@@ -21,11 +23,12 @@ use crate::session::{
     CrdWatchMessage, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, NamespaceWatchMessage,
     ObjectWatchMessage, WatchError, WatchKey, WatchMessage,
 };
+pub use astrolabe_kube::cluster::SharedClient;
 
 /// Retry interval for a watch the apiserver refused with 403.
 const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
 
-type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, String>>;
+type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
 type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
@@ -168,7 +171,7 @@ impl ScriptedCluster {
 
     pub fn discover(
         mut self,
-        discover: impl FnMut() -> Result<ServedResources, String> + 'static,
+        discover: impl FnMut() -> Result<ServedResources, ClusterError> + 'static,
     ) -> Self {
         self.discover = Box::new(discover);
         self
@@ -208,41 +211,23 @@ impl ScriptedCluster {
     }
 }
 
-/// The session's cluster client, connected once and shared by every
-/// watcher and one-shot operation.
-pub type SharedClient = Shared<BoxFuture<'static, Result<Client, String>>>;
-
 pub(crate) enum ClusterIo {
     Live {
-        cluster: String,
-        client: SharedClient,
+        /// The kubeconfig context, for logs.
+        context: String,
+        cluster: Cluster,
         tasks: Vec<tokio::task::JoinHandle<()>>,
     },
     Scripted(ScriptedCluster),
 }
 
 impl ClusterIo {
-    /// Connect to kubeconfig context `cluster`; watches and one-shot
-    /// operations wait on the shared connection.
-    pub(crate) fn connect(cluster: String) -> Self {
-        let client = {
-            let cluster = cluster.clone();
-            let connect = spawn_cluster(async move {
-                astrolabe_kube::client_for_context(&cluster)
-                    .await
-                    .map_err(|error| error.to_string())
-            });
-            async move {
-                connect
-                    .await
-                    .unwrap_or_else(|_| Err("cluster connect task dropped".to_string()))
-            }
-            .boxed()
-            .shared()
-        };
+    /// Connect to kubeconfig context `context`; every request waits on the
+    /// shared connect.
+    pub(crate) fn connect(context: String) -> Self {
         Self::Live {
-            cluster,
-            client,
+            cluster: Cluster::connect(&context),
+            context,
             tasks: Vec::new(),
         }
     }
@@ -263,30 +248,22 @@ impl ClusterIo {
         match self {
             Self::Scripted(cluster) => scripted(cluster),
             Self::Live {
+                context,
                 cluster,
-                client,
                 tasks,
             } => {
-                let (events, task) = spawn_watch(cluster.clone(), label, client.clone(), stream);
+                let (events, task) = spawn_watch(context.clone(), label, cluster.client(), stream);
                 tasks.push(task);
                 Some(events)
             }
         }
     }
 
-    /// API discovery; a scripted cluster answers before this returns.
-    pub(crate) fn discover(&mut self) -> oneshot::Receiver<Result<ServedResources, String>> {
+    /// API discovery; a scripted cluster's answer is ready at once.
+    pub(crate) fn discover(&mut self) -> BoxFuture<'static, Result<ServedResources, ClusterError>> {
         match self {
-            Self::Scripted(cluster) => answered((cluster.discover)()),
-            Self::Live { client, .. } => {
-                let client = client.clone();
-                spawn_cluster(async move {
-                    let client = client.await?;
-                    astrolabe_kube::discovery::discover(&client)
-                        .await
-                        .map_err(|error| error.to_string())
-                })
-            }
+            Self::Scripted(cluster) => future::ready((cluster.discover)()).boxed(),
+            Self::Live { cluster, .. } => cluster.discover().boxed(),
         }
     }
 
@@ -297,10 +274,10 @@ impl ClusterIo {
     ) -> oneshot::Receiver<Result<(), String>> {
         match self {
             Self::Scripted(cluster) => answered((cluster.operate)(&operation)),
-            Self::Live { client, .. } => {
-                let client = client.clone();
+            Self::Live { cluster, .. } => {
+                let client = cluster.client();
                 spawn_cluster(async move {
-                    let client = client.await?;
+                    let client = client.await.map_err(|error| error.to_string())?;
                     let result = match &operation {
                         Operation::Scale { object, replicas } => {
                             astrolabe_kube::resource::scale(&client, object, *replicas).await
@@ -341,15 +318,15 @@ impl ClusterIo {
                 }
                 LogStream { chunks, task: None }
             }
-            Self::Live { client, .. } => {
-                let client = client.clone();
+            Self::Live { cluster, .. } => {
+                let client = cluster.client();
                 let task = spawn_cluster_task(async move {
                     let failed = |error: String| {
                         let _ = sender.unbounded_send(Err(error));
                     };
                     let client = match client.await {
                         Ok(client) => client,
-                        Err(error) => return failed(error),
+                        Err(error) => return failed(error.to_string()),
                     };
                     let pod = &request.pod;
                     let stream = astrolabe_kube::pod::logs(
@@ -395,8 +372,8 @@ impl ClusterIo {
                     task: None,
                 }
             }
-            Self::Live { client, .. } => {
-                let client = client.clone();
+            Self::Live { cluster, .. } => {
+                let client = cluster.client();
                 let task = spawn_cluster_task(async move {
                     let exit = match client.await {
                         Ok(client) => {
@@ -415,7 +392,7 @@ impl ClusterIo {
                             .await
                             .map_err(|error| error.to_string())
                         }
-                        Err(error) => Err(error),
+                        Err(error) => Err(error.to_string()),
                     };
                     let _ = sender.unbounded_send(ExecOutput::Exited(exit));
                 });
@@ -439,15 +416,15 @@ impl ClusterIo {
                 }
                 PortForward { events, task: None }
             }
-            Self::Live { client, .. } => {
-                let client = client.clone();
+            Self::Live { cluster, .. } => {
+                let client = cluster.client();
                 let task = spawn_cluster_task(async move {
                     let failed = |error: String| {
                         let _ = sender.unbounded_send(ForwardEvent::Failed(error));
                     };
                     let client = match client.await {
                         Ok(client) => client,
-                        Err(error) => return failed(error),
+                        Err(error) => return failed(error.to_string()),
                     };
                     let port = request.port;
                     let listener = match astrolabe_kube::pod::bind_local(port).await {
@@ -503,7 +480,7 @@ impl ClusterIo {
     /// The live shared client; `None` for scripted clusters.
     pub(crate) fn client(&self) -> Option<SharedClient> {
         match self {
-            Self::Live { client, .. } => Some(client.clone()),
+            Self::Live { cluster, .. } => Some(cluster.client()),
             Self::Scripted(_) => None,
         }
     }
@@ -529,7 +506,7 @@ fn answered<T>(value: T) -> oneshot::Receiver<T> {
 /// watcher from a fresh LIST (#28): a silent watch resumption would emit no
 /// `InitDone`, leaving the UI stale.
 fn spawn_watch<K, S>(
-    cluster: String,
+    context: String,
     label: &'static str,
     client: SharedClient,
     stream: impl Fn(&Client) -> S + Send + 'static,
@@ -543,8 +520,8 @@ where
         let client = match client.await {
             Ok(client) => client,
             Err(error) => {
-                tracing::warn!(cluster = %cluster, error = %error, "{label} watch client setup failed");
-                let _ = sender.send(Err(WatchError::new(error))).await;
+                tracing::warn!(cluster = %context, error = %error, "{label} watch client setup failed");
+                let _ = sender.send(Err(WatchError::new(error.to_string()))).await;
                 return;
             }
         };
@@ -555,7 +532,7 @@ where
             let mut forbidden = false;
             while let Some(event) = events.next().await {
                 let event = event.map_err(|error| {
-                    tracing::warn!(cluster = %cluster, error = %error, "{label} watch failed");
+                    tracing::warn!(cluster = %context, error = %error, "{label} watch failed");
                     WatchError::from_watcher(&error)
                 });
                 let failed = event.is_err();
@@ -576,7 +553,7 @@ where
             {
                 return;
             }
-            tracing::info!(cluster = %cluster, "restarting {label} watch");
+            tracing::info!(cluster = %context, "restarting {label} watch");
             // RBAC denials do not clear by retrying fast; back off further.
             let delay = if forbidden {
                 FORBIDDEN_RETRY

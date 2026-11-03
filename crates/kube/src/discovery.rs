@@ -7,6 +7,8 @@ use kube::Client;
 use kube::core::GroupVersionKind;
 use kube::discovery::{ApiGroup, ApiResource, Discovery, Scope};
 
+use crate::cluster::ClusterError;
+
 /// One served kind at one version.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServedResource {
@@ -72,7 +74,7 @@ impl ServedResources {
 ///
 /// A [`kube::Error`] when per-group discovery fails; a failed aggregated
 /// request only falls back to it.
-pub async fn discover(client: &Client) -> kube::Result<ServedResources> {
+pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
         Ok(discovery) if discovery.has_group(ApiGroup::CORE_GROUP) => {
             return Ok(ServedResources::from_discovery(&discovery));
@@ -91,11 +93,11 @@ pub async fn discover(client: &Client) -> kube::Result<ServedResources> {
 #[derive(Debug, Default)]
 pub struct DiscoveryCache {
     served: Option<ServedResources>,
-    failure: Option<String>,
+    failure: Option<ClusterError>,
 }
 
 impl DiscoveryCache {
-    pub fn record(&mut self, result: Result<ServedResources, String>) {
+    pub fn record(&mut self, result: Result<ServedResources, ClusterError>) {
         match result {
             Ok(served) => {
                 self.served = Some(served);
@@ -109,7 +111,7 @@ impl DiscoveryCache {
         self.served.as_ref()
     }
 
-    pub fn failure(&self) -> Option<&str> {
-        self.failure.as_deref()
+    pub fn failure(&self) -> Option<&ClusterError> {
+        self.failure.as_ref()
     }
 }
