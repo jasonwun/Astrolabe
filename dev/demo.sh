@@ -30,6 +30,9 @@ apply)
     "${kubectl[@]}" create namespace "$ns" --dry-run=client -o yaml |
         "${kubectl[@]}" apply -f - >&2
     wait_for_service_account
+    "${kubectl[@]}" apply -f "$(dirname "$0")/demo-crd.yaml" >&2
+    "${kubectl[@]}" wait --for condition=established --timeout=60s \
+        crd/widgets.demo.astrolabe.dev >&2
     sed "s/astrolabe-demo\([,}]\)/$ns\1/g" "$(dirname "$0")/demo.yaml" | "${kubectl[@]}" apply -f - >&2
     ;;
 delete) "${kubectl[@]}" delete namespace "$ns" >&2 ;;
