@@ -202,6 +202,12 @@ and `SessionState` as existing types, and its C-CTOR line allowed only
 `new`, `with_…` and `from_…`, which made #147's `Cluster::connect` look
 like a finding; the guideline also allows domain verbs (#150 retro).
 
+When the diff renames or removes a function, type or file, grep the
+docs (`*.md`, `docs/`) for the old name and update each hit before
+review. Origin: #162 renamed `discover_contexts` to `list_clusters`, and
+`docs/agents/testing.md` still named the old one until the Standards
+reviewer found it (#162 retro).
+
 ## Deliberate violations of a check script
 
 A PR that adds or changes a rule in a `dev/*.sh` check shows the rule
@@ -364,7 +370,11 @@ checks that Clippy cannot make. `ApplyMode`, which this entry names but
   (`Cluster::connect`, `File::open`), not a free `make_…` function. A
   handle another crate must build (`ClusterError::new(message)`,
   `LogStream::new(chunks)`, `ExecSession::new(input, output)`) has a
-  public constructor, not a `pub` field or a test-only back door.
+  public constructor, not a `pub` field or a test-only back door. An
+  opaque type whose inside will change (`ClusterId`) names its
+  constructor after what callers give it (`ClusterId::named(name)`),
+  not after today's inside (`kubeconfig_context`): every caller of a
+  source-named constructor changes when a second source lands.
 - **C-GOOD-ERR.** An error type implements `Display` and
   `std::error::Error`, is `Send + Sync`, and lets the caller tell its
   kinds apart without matching on text. `Result<_, String>` or
@@ -397,6 +407,9 @@ the Rust API Guidelines plus Clippy, and this Clean Code subset; at the
 time errors crossed the seam as `String` (`Session::operate`,
 `DiscoveryCache::record`) and Apply took `force: bool`
 (`crates/kube/src/apply/run.rs`).
+#162's first `ClusterId` constructor was `kubeconfig_context`, which
+app tests called in ten places; the Spec reviewer found that a second
+source would then change app tests too (#162 retro).
 
 ## Requests moved behind the Cluster handle
 
