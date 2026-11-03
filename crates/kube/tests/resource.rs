@@ -1,16 +1,17 @@
-//! One-shot object operations against a mock apiserver (synthetic
-//! responses, never captured from a real apiserver).
+//! One-shot object operations through `Cluster::operate` against a mock
+//! apiserver (synthetic responses, never captured from a real apiserver):
+//! each Operation's request, and its failures as `ClusterError`.
 
 use std::sync::{Arc, Mutex};
 
+use astrolabe_kube::cluster::{Cluster, ClusterErrorKind};
 use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use astrolabe_kube::k8s_openapi::api::batch::v1::CronJob;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 use astrolabe_kube::kube::discovery::ApiResource;
-use astrolabe_kube::object::{ObjectKey, ObjectRef};
-use astrolabe_kube::resource::{delete, rollout_restart, scale, suspend, trigger_cron_job};
+use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
 
 /// One request the mock apiserver saw.
 #[derive(Debug)]
@@ -22,7 +23,9 @@ struct Seen {
 
 type Log = Arc<Mutex<Vec<Seen>>>;
 
-fn mock_client(status: u16, reply: &'static str) -> (Client, Log) {
+/// `Cluster` over an apiserver that answers every request with `status`
+/// and `reply`; a POST after a CronJob reply gets the created Job.
+fn mock_cluster(status: u16, reply: &'static str) -> (Cluster, Log) {
     let seen: Log = Arc::default();
     let log = seen.clone();
     let service = tower::service_fn(move |req: http::Request<Body>| {
@@ -55,7 +58,10 @@ fn mock_client(status: u16, reply: &'static str) -> (Client, Log) {
             )
         }
     });
-    (Client::new(service, "default"), seen)
+    (
+        Cluster::from_client(Client::new(service, "default"), "mock"),
+        seen,
+    )
 }
 
 fn lines(log: &Log) -> Vec<String> {
@@ -83,17 +89,36 @@ fn object(resource: ApiResource, namespace: Option<&str>, name: &str) -> ObjectR
     }
 }
 
+fn web() -> ObjectRef {
+    object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web")
+}
+
+fn nightly() -> ObjectRef {
+    object(
+        ApiResource::erase::<CronJob>(&()),
+        Some("team-a"),
+        "nightly",
+    )
+}
+
 const DELETED: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Success","code":200}"#;
 const FORBIDDEN: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"crontabs \"nightly\" is forbidden"}"#;
+const NOT_FOUND: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"deployments \"web\" not found"}"#;
 
 #[tokio::test]
 async fn delete_targets_the_namespaced_or_cluster_scoped_object() {
-    let (client, seen) = mock_client(200, DELETED);
+    let (cluster, seen) = mock_cluster(200, DELETED);
 
-    delete(&client, &object(crontabs(), Some("team-a"), "nightly"))
+    cluster
+        .operate(&Operation::Delete {
+            object: object(crontabs(), Some("team-a"), "nightly"),
+        })
         .await
         .unwrap();
-    delete(&client, &object(crontabs(), None, "global"))
+    cluster
+        .operate(&Operation::Delete {
+            object: object(crontabs(), None, "global"),
+        })
         .await
         .unwrap();
 
@@ -106,17 +131,6 @@ async fn delete_targets_the_namespaced_or_cluster_scoped_object() {
     );
 }
 
-#[tokio::test]
-async fn delete_reports_server_refusals() {
-    let (client, _) = mock_client(403, FORBIDDEN);
-
-    let error = delete(&client, &object(crontabs(), Some("team-a"), "nightly"))
-        .await
-        .unwrap_err();
-
-    assert!(error.to_string().contains("forbidden"), "{error}");
-}
-
 /// Synthetic Scale and Deployment replies (plausible shape, not captured
 /// from a server).
 const SCALE: &str = r#"{"apiVersion":"autoscaling/v1","kind":"Scale","metadata":{"name":"web","namespace":"team-a"},"spec":{"replicas":5}}"#;
@@ -124,15 +138,15 @@ const DEPLOYMENT: &str = r#"{"apiVersion":"apps/v1","kind":"Deployment","metadat
 
 #[tokio::test]
 async fn scale_patches_the_scale_subresource() {
-    let (client, seen) = mock_client(200, SCALE);
+    let (cluster, seen) = mock_cluster(200, SCALE);
 
-    scale(
-        &client,
-        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
-        5,
-    )
-    .await
-    .unwrap();
+    cluster
+        .operate(&Operation::Scale {
+            object: web(),
+            replicas: 5,
+        })
+        .await
+        .unwrap();
 
     let seen = seen.lock().unwrap();
     assert_eq!(
@@ -144,17 +158,13 @@ async fn scale_patches_the_scale_subresource() {
 }
 
 #[tokio::test]
-async fn rollout_restart_stamps_the_pod_template_as_kubectl_does() {
-    let (client, seen) = mock_client(200, DEPLOYMENT);
-    let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
+async fn rollout_restart_stamps_the_pod_template_with_the_current_time() {
+    let (cluster, seen) = mock_cluster(200, DEPLOYMENT);
 
-    rollout_restart(
-        &client,
-        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
-        at,
-    )
-    .await
-    .unwrap();
+    cluster
+        .operate(&Operation::RolloutRestart { object: web() })
+        .await
+        .unwrap();
 
     let seen = seen.lock().unwrap();
     assert_eq!(
@@ -162,71 +172,106 @@ async fn rollout_restart_stamps_the_pod_template_as_kubectl_does() {
         "PATCH /apis/apps/v1/namespaces/team-a/deployments/web"
     );
     assert_eq!(seen[0].content_type, "application/merge-patch+json");
+    let mut body = seen[0].body.clone();
+    let stamp =
+        body["spec"]["template"]["metadata"]["annotations"]["kubectl.kubernetes.io/restartedAt"]
+            .take();
     assert_eq!(
-        seen[0].body,
+        body,
         serde_json::json!({"spec": {"template": {"metadata": {"annotations": {
-            "kubectl.kubernetes.io/restartedAt": "2026-10-22T12:00:00Z"
+            "kubectl.kubernetes.io/restartedAt": null
         }}}}})
     );
+    // The stamp is the cluster layer's own clock reading, so only its
+    // plausibility is pinned: later than when this test was written.
+    let stamp: Timestamp = stamp
+        .as_str()
+        .expect("a restartedAt stamp")
+        .parse()
+        .unwrap();
+    assert!(stamp > "2026-11-01T00:00:00Z".parse().unwrap(), "{stamp}");
 }
 
 #[tokio::test]
-async fn scale_and_restart_report_server_refusals() {
-    let (client, _) = mock_client(403, FORBIDDEN);
-    let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
+async fn a_refused_operation_is_forbidden() {
+    let (cluster, _) = mock_cluster(403, FORBIDDEN);
 
-    let scaled = scale(
-        &client,
-        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
-        5,
-    )
-    .await
-    .unwrap_err();
-    let restarted = rollout_restart(
-        &client,
-        &object(ApiResource::erase::<Deployment>(&()), Some("team-a"), "web"),
-        at,
-    )
-    .await
-    .unwrap_err();
+    for operation in [
+        Operation::Delete {
+            object: object(crontabs(), Some("team-a"), "nightly"),
+        },
+        Operation::Scale {
+            object: web(),
+            replicas: 5,
+        },
+        Operation::RolloutRestart { object: web() },
+    ] {
+        let error = cluster.operate(&operation).await.unwrap_err();
 
-    assert!(scaled.to_string().contains("forbidden"), "{scaled}");
-    assert!(restarted.to_string().contains("forbidden"), "{restarted}");
+        assert_eq!(error.kind(), ClusterErrorKind::Forbidden, "{operation:?}");
+        assert!(error.to_string().contains("forbidden"), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn a_missing_object_is_other() {
+    let (cluster, _) = mock_cluster(404, NOT_FOUND);
+
+    let error = cluster
+        .operate(&Operation::Scale {
+            object: web(),
+            replicas: 1,
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ClusterErrorKind::Other);
+    assert!(error.to_string().contains("not found"), "{error}");
+}
+
+/// No kubeconfig names this context, on CI or a dev machine.
+const NO_SUCH_CONTEXT: &str = "astrolabe-test-no-such-context";
+
+/// GPUI's executor has no tokio reactor: an operation must resolve when
+/// awaited outside any tokio runtime, and a failed connect fails it.
+#[test]
+fn an_operation_on_a_failed_connect_is_a_connect_error() {
+    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+
+    let error = futures::executor::block_on(cluster.operate(&Operation::Delete { object: web() }))
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ClusterErrorKind::Connect);
 }
 
 #[tokio::test]
 async fn p3_scale_and_restart_target_the_registered_kind() {
-    let (client, seen) = mock_client(200, SCALE);
-    scale(
-        &client,
-        &object(ApiResource::erase::<StatefulSet>(&()), Some("team-a"), "db"),
-        5,
-    )
-    .await
-    .unwrap();
-    scale(
-        &client,
-        &object(
-            ApiResource::erase::<ReplicaSet>(&()),
-            Some("team-a"),
-            "web-abc",
-        ),
-        2,
-    )
-    .await
-    .unwrap();
-    let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
-    rollout_restart(
-        &client,
-        &object(
-            ApiResource::erase::<DaemonSet>(&()),
-            Some("team-a"),
-            "agent",
-        ),
-        at,
-    )
-    .await
-    .unwrap();
+    let (cluster, seen) = mock_cluster(200, SCALE);
+
+    for operation in [
+        Operation::Scale {
+            object: object(ApiResource::erase::<StatefulSet>(&()), Some("team-a"), "db"),
+            replicas: 5,
+        },
+        Operation::Scale {
+            object: object(
+                ApiResource::erase::<ReplicaSet>(&()),
+                Some("team-a"),
+                "web-abc",
+            ),
+            replicas: 2,
+        },
+        Operation::RolloutRestart {
+            object: object(
+                ApiResource::erase::<DaemonSet>(&()),
+                Some("team-a"),
+                "agent",
+            ),
+        },
+    ] {
+        cluster.operate(&operation).await.unwrap();
+    }
+
     assert_eq!(
         lines(&seen),
         [
@@ -241,29 +286,39 @@ const CRONJOB: &str = r#"{"apiVersion":"batch/v1","kind":"CronJob","metadata":{"
 const JOB: &str = r#"{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"nightly-manual-abc","namespace":"team-a"},"spec":{"template":{"spec":{"containers":[],"restartPolicy":"Never"}}}}"#;
 
 #[tokio::test]
-async fn cronjob_suspend_and_trigger_patch_and_create_the_right_objects() {
-    let (client, seen) = mock_client(200, CRONJOB);
-    suspend(
-        &client,
-        &object(
-            ApiResource::erase::<CronJob>(&()),
-            Some("team-a"),
-            "nightly",
-        ),
-        true,
-    )
-    .await
-    .unwrap();
-    trigger_cron_job(
-        &client,
-        &object(
-            ApiResource::erase::<CronJob>(&()),
-            Some("team-a"),
-            "nightly",
-        ),
-    )
-    .await
-    .unwrap();
+async fn set_suspend_patches_the_suspend_flag_both_ways() {
+    let (cluster, seen) = mock_cluster(200, CRONJOB);
+
+    for suspend in [true, false] {
+        cluster
+            .operate(&Operation::SetSuspend {
+                object: nightly(),
+                suspend,
+            })
+            .await
+            .unwrap();
+    }
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen[0].line,
+        "PATCH /apis/batch/v1/namespaces/team-a/cronjobs/nightly"
+    );
+    assert_eq!(seen[0].body, serde_json::json!({"spec": {"suspend": true}}));
+    assert_eq!(
+        seen[1].body,
+        serde_json::json!({"spec": {"suspend": false}})
+    );
+}
+
+#[tokio::test]
+async fn trigger_cron_job_creates_an_owned_job_from_the_template() {
+    let (cluster, seen) = mock_cluster(200, CRONJOB);
+
+    cluster
+        .operate(&Operation::TriggerCronJob { object: nightly() })
+        .await
+        .unwrap();
 
     let seen = seen.lock().unwrap();
     assert_eq!(
@@ -271,13 +326,11 @@ async fn cronjob_suspend_and_trigger_patch_and_create_the_right_objects() {
             .map(|request| request.line.as_str())
             .collect::<Vec<_>>(),
         [
-            "PATCH /apis/batch/v1/namespaces/team-a/cronjobs/nightly",
             "GET /apis/batch/v1/namespaces/team-a/cronjobs/nightly",
             "POST /apis/batch/v1/namespaces/team-a/jobs",
         ]
     );
-    assert_eq!(seen[0].body, serde_json::json!({"spec": {"suspend": true}}));
-    let created = &seen[2].body;
+    let created = &seen[1].body;
     assert_eq!(created["apiVersion"], "batch/v1");
     assert_eq!(created["kind"], "Job");
     assert_eq!(created["metadata"]["generateName"], "nightly-manual-");
@@ -309,24 +362,23 @@ async fn cronjob_suspend_and_trigger_patch_and_create_the_right_objects() {
 #[tokio::test]
 async fn triggering_a_cronjob_without_a_job_spec_is_a_bad_request() {
     const WITHOUT_SPEC: &str = r#"{"apiVersion":"batch/v1","kind":"CronJob","metadata":{"name":"broken","namespace":"team-a"},"spec":{"schedule":"0 0 * * *","jobTemplate":{}}}"#;
-    let (client, seen) = mock_client(200, WITHOUT_SPEC);
+    let (cluster, seen) = mock_cluster(200, WITHOUT_SPEC);
 
-    let error = trigger_cron_job(
-        &client,
-        &object(ApiResource::erase::<CronJob>(&()), Some("team-a"), "broken"),
-    )
-    .await
-    .unwrap_err();
+    let error = cluster
+        .operate(&Operation::TriggerCronJob {
+            object: object(ApiResource::erase::<CronJob>(&()), Some("team-a"), "broken"),
+        })
+        .await
+        .unwrap_err();
 
-    let astrolabe_kube::kube::Error::Api(status) = error else {
-        panic!("API error expected")
-    };
+    assert_eq!(error.kind(), ClusterErrorKind::Other);
+    // The text the detail tab shows after "Trigger failed: ".
     assert_eq!(
-        status.message,
-        "CronJob team-a/broken has no Job template spec"
+        error.to_string(),
+        "ApiError: CronJob team-a/broken has no Job template spec: BadRequest \
+         (Status { status: None, code: 400, message: \"CronJob team-a/broken has no Job \
+         template spec\", metadata: None, reason: \"BadRequest\", details: None })"
     );
-    assert_eq!(status.reason, "BadRequest");
-    assert_eq!(status.code, 400);
     assert_eq!(
         lines(&seen),
         ["GET /apis/batch/v1/namespaces/team-a/cronjobs/broken"]
@@ -346,13 +398,23 @@ fn clustertabs() -> ApiResource {
 /// Scale, restart, suspend and delete `object`, and return the requests'
 /// method and path lines.
 async fn every_operation_on(object: &ObjectRef) -> Vec<String> {
-    let (client, seen) = mock_client(200, SCALE);
-    let at: Timestamp = "2026-10-22T12:00:00Z".parse().unwrap();
+    let (cluster, seen) = mock_cluster(200, SCALE);
+    let object = || object.clone();
 
-    scale(&client, object, 2).await.unwrap();
-    rollout_restart(&client, object, at).await.unwrap();
-    suspend(&client, object, true).await.unwrap();
-    delete(&client, object).await.unwrap();
+    for operation in [
+        Operation::Scale {
+            object: object(),
+            replicas: 2,
+        },
+        Operation::RolloutRestart { object: object() },
+        Operation::SetSuspend {
+            object: object(),
+            suspend: true,
+        },
+        Operation::Delete { object: object() },
+    ] {
+        cluster.operate(&operation).await.unwrap();
+    }
     lines(&seen)
 }
 

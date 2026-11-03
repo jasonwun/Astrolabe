@@ -15,9 +15,9 @@ use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::{self, CustomGroup, CustomKind, KindResource};
 use astrolabe_model::discovery_cache::DiscoveryCache;
+use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
-use tokio::sync::oneshot;
 
 use crate::cluster_io::ClusterIo;
 pub use crate::cluster_io::{
@@ -601,7 +601,10 @@ impl Session {
     }
 
     /// Run one operation; resolves with the server's answer.
-    pub fn operate(&mut self, operation: Operation) -> oneshot::Receiver<Result<(), String>> {
+    pub fn operate(
+        &mut self,
+        operation: Operation,
+    ) -> BoxFuture<'static, Result<(), ClusterError>> {
         self.io.operate(operation)
     }
 

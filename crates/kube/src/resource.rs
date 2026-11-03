@@ -19,7 +19,7 @@ use crate::object::ObjectRef;
 ///
 /// A [`kube::Error`] when the request fails, e.g. the object is gone (404)
 /// or RBAC forbids the delete (403).
-pub async fn delete(client: &Client, object: &ObjectRef) -> kube::Result<()> {
+pub(crate) async fn delete(client: &Client, object: &ObjectRef) -> kube::Result<()> {
     api(client, object)
         .delete(&object.key.name, &DeleteParams::default())
         .await?;
@@ -32,7 +32,7 @@ pub async fn delete(client: &Client, object: &ObjectRef) -> kube::Result<()> {
 ///
 /// A [`kube::Error`] when the patch fails, e.g. the object is gone (404),
 /// the kind has no `scale` subresource, or RBAC forbids the patch (403).
-pub async fn scale(client: &Client, object: &ObjectRef, replicas: i32) -> kube::Result<()> {
+pub(crate) async fn scale(client: &Client, object: &ObjectRef, replicas: i32) -> kube::Result<()> {
     let patch = serde_json::json!({"spec": {"replicas": replicas}});
     api(client, object)
         .patch_scale(
@@ -51,7 +51,7 @@ pub async fn scale(client: &Client, object: &ObjectRef, replicas: i32) -> kube::
 ///
 /// A [`kube::Error`] when the patch fails, e.g. the object is gone (404)
 /// or RBAC forbids the patch (403).
-pub async fn rollout_restart(
+pub(crate) async fn rollout_restart(
     client: &Client,
     object: &ObjectRef,
     at: Timestamp,
@@ -72,7 +72,11 @@ pub async fn rollout_restart(
 ///
 /// A [`kube::Error`] when the patch fails, e.g. the object is gone (404)
 /// or RBAC forbids the patch (403).
-pub async fn suspend(client: &Client, object: &ObjectRef, suspended: bool) -> kube::Result<()> {
+pub(crate) async fn suspend(
+    client: &Client,
+    object: &ObjectRef,
+    suspended: bool,
+) -> kube::Result<()> {
     merge_patch(
         client,
         object,
@@ -121,7 +125,7 @@ fn api_in(client: &Client, resource: &ApiResource, namespace: Option<&str>) -> A
 /// a [`kube::Error::SerdeError`] when the object read does not decode as a
 /// CronJob, and a 400 `BadRequest` [`kube::Error::Api`] when the CronJob's
 /// Job template has no spec.
-pub async fn trigger_cron_job(client: &Client, object: &ObjectRef) -> kube::Result<()> {
+pub(crate) async fn trigger_cron_job(client: &Client, object: &ObjectRef) -> kube::Result<()> {
     let name = &object.key.name;
     let cronjob: CronJob = convert(&api(client, object).get(name).await?)?;
     let owner = OwnerReference {
