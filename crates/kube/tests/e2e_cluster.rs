@@ -25,7 +25,7 @@ use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
 use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
-use astrolabe_kube::pod::{self, ExecInput};
+use astrolabe_kube::pod::{self, ExecInput, ExecOutput, ExecRequest, LogRequest};
 use astrolabe_kube::{default_client, service};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -738,8 +738,11 @@ async fn pod_logs_exec_and_port_forward() {
     let ns = unique_ns();
     let pod_name = running_nginx(&client, &ns).await;
 
-    let logs = pod::logs(&client, &ns, &pod_name, "nginx").await.unwrap();
-    futures::pin_mut!(logs);
+    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let mut logs = cluster.logs(LogRequest {
+        pod: ObjectKey::new(Some(ns.clone()), &pod_name),
+        container: "nginx".to_string(),
+    });
     tokio::time::timeout(Duration::from_secs(20), async {
         let mut seen = Vec::new();
         while !String::from_utf8_lossy(&seen).contains("ready for start up") {
@@ -748,8 +751,14 @@ async fn pod_logs_exec_and_port_forward() {
     })
     .await
     .expect("timed out waiting for nginx's start-up log line");
+    drop(logs);
 
-    let (input, input_rx) = futures::channel::mpsc::unbounded();
+    let mut session = cluster.exec(ExecRequest {
+        pod: ObjectKey::new(Some(ns.clone()), &pod_name),
+        container: "nginx".to_string(),
+        shell: "sh".to_string(),
+    });
+    let input = session.input();
     input
         .unbounded_send(ExecInput::Resize { cols: 80, rows: 24 })
         .unwrap();
@@ -757,18 +766,14 @@ async fn pod_logs_exec_and_port_forward() {
         .unbounded_send(ExecInput::Bytes(b"echo e2e-$((40 + 2)); exit 3\n".to_vec()))
         .unwrap();
     let mut output = Vec::new();
-    let code = tokio::time::timeout(
-        Duration::from_secs(20),
-        pod::exec(
-            &client,
-            &ns,
-            &pod_name,
-            "nginx",
-            &["sh".to_string()],
-            input_rx,
-            |bytes| output.extend(bytes),
-        ),
-    )
+    let code = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match session.next().await.expect("the session reports its exit") {
+                ExecOutput::Bytes(bytes) => output.extend(bytes),
+                ExecOutput::Exited(exit) => break exit,
+            }
+        }
+    })
     .await
     .expect("timed out waiting for the shell to exit")
     .unwrap();

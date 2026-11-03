@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
+use astrolabe_kube::pod::{ExecRequest, LogRequest};
 use astrolabe_model::builtin::Action;
 use astrolabe_model::operation_text;
 use astrolabe_model::projection::config::{HIDDEN, SecretKey};
@@ -26,7 +27,7 @@ use crate::clock;
 use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::perf;
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
-use crate::session::{ExecRequest, LogRequest, Session};
+use crate::session::Session;
 
 mod editor_panel;
 mod pod_actions;

@@ -11,13 +11,15 @@ use astrolabe_kube::cluster::{Cluster, ClusterError};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::Operation;
-use astrolabe_kube::pod::ExecInput;
+use astrolabe_kube::pod::{
+    ExecInput, ExecOutput, ExecRequest, ExecSession, LogChunk, LogRequest, LogStream,
+};
 use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
 use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 
 use crate::kube_bridge::spawn_cluster_task;
-use crate::session::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest, WatchKey};
+use crate::session::{ForwardRequest, ForwardTarget, WatchKey};
 pub use astrolabe_kube::cluster::SharedClient;
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
@@ -25,66 +27,6 @@ type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), ClusterError>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
 type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
 type ExecFn = Box<dyn FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput>>;
-
-/// A piece of a log stream, or why the stream stopped.
-pub type LogChunk = Result<Vec<u8>, String>;
-
-/// A followed container log; dropping it stops the stream.
-pub struct LogStream {
-    chunks: mpsc::UnboundedReceiver<LogChunk>,
-    task: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl LogStream {
-    /// The next chunk; `None` once the server closed the stream.
-    pub async fn next(&mut self) -> Option<LogChunk> {
-        self.chunks.next().await
-    }
-}
-
-impl Drop for LogStream {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-    }
-}
-
-/// What an exec session sends back.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ExecOutput {
-    /// Remote TTY output.
-    Bytes(Vec<u8>),
-    /// The command's exit code, or why the session failed; the last item.
-    Exited(Result<u8, String>),
-}
-
-/// A running `kubectl exec -it`; dropping it ends the session.
-pub struct ExecSession {
-    input: mpsc::UnboundedSender<ExecInput>,
-    output: mpsc::UnboundedReceiver<ExecOutput>,
-    task: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl ExecSession {
-    /// Where keystrokes and resizes go; closing it sends EOF.
-    pub fn input(&self) -> mpsc::UnboundedSender<ExecInput> {
-        self.input.clone()
-    }
-
-    /// The next output; `None` once the session is gone.
-    pub async fn next(&mut self) -> Option<ExecOutput> {
-        self.output.next().await
-    }
-}
-
-impl Drop for ExecSession {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-    }
-}
 
 /// What a port-forward reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -264,100 +206,34 @@ impl ClusterIo {
         }
     }
 
-    /// Follow one container's log.
+    /// Follow one container's log; a scripted cluster's chunks are all
+    /// sent at once.
     pub(crate) fn logs(&mut self, request: LogRequest) -> LogStream {
-        let (sender, chunks) = mpsc::unbounded();
         match self {
             Self::Scripted(cluster) => {
+                let (sender, chunks) = mpsc::unbounded();
                 for chunk in (cluster.logs)(&request) {
                     let _ = sender.unbounded_send(chunk);
                 }
-                LogStream { chunks, task: None }
+                LogStream::new(chunks)
             }
-            Self::Live(cluster) => {
-                let client = cluster.client();
-                let task = spawn_cluster_task(async move {
-                    let failed = |error: String| {
-                        let _ = sender.unbounded_send(Err(error));
-                    };
-                    let client = match client.await {
-                        Ok(client) => client,
-                        Err(error) => return failed(error.to_string()),
-                    };
-                    let pod = &request.pod;
-                    let stream = astrolabe_kube::pod::logs(
-                        &client,
-                        pod.namespace.as_deref().unwrap_or_default(),
-                        &pod.name,
-                        &request.container,
-                    )
-                    .await;
-                    let stream = match stream {
-                        Ok(stream) => stream,
-                        Err(error) => return failed(error.to_string()),
-                    };
-                    futures::pin_mut!(stream);
-                    while let Some(chunk) = stream.next().await {
-                        let chunk = chunk.map_err(|error| error.to_string());
-                        let stop = chunk.is_err();
-                        if sender.unbounded_send(chunk).is_err() || stop {
-                            return;
-                        }
-                    }
-                });
-                LogStream {
-                    chunks,
-                    task: Some(task),
-                }
-            }
+            Self::Live(cluster) => cluster.logs(request),
         }
     }
 
-    /// Open an interactive shell in one container.
+    /// Open an interactive shell in one container; a scripted cluster's
+    /// output is all sent at once.
     pub(crate) fn exec(&mut self, request: ExecRequest) -> ExecSession {
-        let (input, inputs) = mpsc::unbounded();
-        let (sender, output) = mpsc::unbounded();
         match self {
             Self::Scripted(cluster) => {
+                let (input, inputs) = mpsc::unbounded();
+                let (sender, output) = mpsc::unbounded();
                 for item in (cluster.exec)(&request, inputs) {
                     let _ = sender.unbounded_send(item);
                 }
-                ExecSession {
-                    input,
-                    output,
-                    task: None,
-                }
+                ExecSession::new(input, output)
             }
-            Self::Live(cluster) => {
-                let client = cluster.client();
-                let task = spawn_cluster_task(async move {
-                    let exit = match client.await {
-                        Ok(client) => {
-                            let pod = &request.pod;
-                            astrolabe_kube::pod::exec(
-                                &client,
-                                pod.namespace.as_deref().unwrap_or_default(),
-                                &pod.name,
-                                &request.container,
-                                std::slice::from_ref(&request.shell),
-                                inputs,
-                                |bytes| {
-                                    let _ = sender.unbounded_send(ExecOutput::Bytes(bytes));
-                                },
-                            )
-                            .await
-                            .map_err(|error| error.to_string())
-                        }
-                        Err(error) => Err(error.to_string()),
-                    };
-                    let _ = sender.unbounded_send(ExecOutput::Exited(exit));
-                });
-                ExecSession {
-                    input,
-                    output,
-                    task: Some(task),
-                }
-            }
+            Self::Live(cluster) => cluster.exec(request),
         }
     }
 

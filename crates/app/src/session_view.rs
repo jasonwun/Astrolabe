@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_kube::pod::{ExecRequest, LogRequest};
 use astrolabe_model::builtin::BuiltinKind;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
@@ -14,9 +15,7 @@ use crate::exec::ExecPanel;
 use crate::logs::LogsPanel;
 use crate::resource_detail::{EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel};
 use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
-use crate::session::{
-    ConnectionHealth, CustomKindId, ExecRequest, LogRequest, ScriptedCluster, Session,
-};
+use crate::session::{ConnectionHealth, CustomKindId, ScriptedCluster, Session};
 use crate::workspace::{LaunchTab, STALE_MESSAGE};
 use crate::yaml_editor::YamlEditorView;
 
