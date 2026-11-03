@@ -63,7 +63,7 @@ fn refusing_server(
 async fn discover_lists_the_served_kinds() {
     let cluster = mock_cluster(aggregated_server);
 
-    let served = cluster.discover().await.unwrap().unwrap();
+    let served = cluster.discover().await.unwrap();
 
     let crontab = served
         .resolve("stable.example.com", "v1", "CronTab")
@@ -76,7 +76,7 @@ async fn discover_lists_the_served_kinds() {
 async fn a_refused_discovery_is_forbidden() {
     let cluster = mock_cluster(refusing_server(403, "Forbidden"));
 
-    let error = cluster.discover().await.unwrap().unwrap_err();
+    let error = cluster.discover().await.unwrap_err();
 
     assert!(error.is_forbidden(), "{error}");
     assert_eq!(error.kind(), ClusterErrorKind::Forbidden);
@@ -90,7 +90,7 @@ async fn a_refused_discovery_is_forbidden() {
 async fn a_failed_discovery_is_other() {
     let cluster = mock_cluster(refusing_server(500, "InternalError"));
 
-    let error = cluster.discover().await.unwrap().unwrap_err();
+    let error = cluster.discover().await.unwrap_err();
 
     assert!(!error.is_forbidden(), "{error}");
     assert_eq!(error.kind(), ClusterErrorKind::Other);
@@ -108,8 +108,8 @@ const NO_SUCH_CONTEXT: &str = "astrolabe-test-no-such-context";
 async fn connect_returns_at_once_and_its_failure_surfaces_per_request() {
     let cluster = Cluster::connect(NO_SUCH_CONTEXT);
 
-    let first = cluster.discover().await.unwrap().unwrap_err();
-    let second = cluster.discover().await.unwrap().unwrap_err();
+    let first = cluster.discover().await.unwrap_err();
+    let second = cluster.discover().await.unwrap_err();
 
     assert_eq!(first.kind(), ClusterErrorKind::Connect);
     assert!(!first.is_forbidden());
@@ -122,9 +122,7 @@ async fn connect_returns_at_once_and_its_failure_surfaces_per_request() {
 fn discover_resolves_outside_a_tokio_runtime() {
     let cluster = Cluster::connect(NO_SUCH_CONTEXT);
 
-    let error = futures::executor::block_on(cluster.discover())
-        .unwrap()
-        .unwrap_err();
+    let error = futures::executor::block_on(cluster.discover()).unwrap_err();
 
     assert_eq!(error.kind(), ClusterErrorKind::Connect);
 }

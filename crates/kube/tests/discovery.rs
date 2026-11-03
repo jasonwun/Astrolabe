@@ -4,8 +4,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use astrolabe_kube::cluster::ClusterError;
-use astrolabe_kube::discovery::{DiscoveryCache, discover};
+use astrolabe_kube::cluster::{Cluster, ClusterError};
+use astrolabe_kube::discovery::{DiscoveryCache, ServedResources};
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 
@@ -27,6 +27,11 @@ fn not_found() -> http::Response<Body> {
             br#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"not found"}"#.to_vec(),
         ))
         .unwrap()
+}
+
+/// Discovery through the `Cluster` handle, the only way to discover.
+async fn discover(client: &Client) -> Result<ServedResources, ClusterError> {
+    Cluster::from_client(client.clone()).discover().await
 }
 
 /// `Client` over a canned handler; the log records `path [aggregated]` for
@@ -159,7 +164,7 @@ async fn unresolvable_kinds_and_versions_are_not_served() {
 #[tokio::test]
 async fn failed_refresh_keeps_the_previous_result() {
     let (client, _) = mock_client(aggregated_server);
-    let first = discover(&client).await.map_err(ClusterError::from);
+    let first = discover(&client).await;
     let mut cache = DiscoveryCache::default();
     assert!(cache.served().is_none());
 
@@ -179,6 +184,6 @@ async fn failed_refresh_keeps_the_previous_result() {
     );
 
     let (client, _) = mock_client(legacy_server);
-    cache.record(discover(&client).await.map_err(ClusterError::from));
+    cache.record(discover(&client).await);
     assert!(cache.failure().is_none());
 }

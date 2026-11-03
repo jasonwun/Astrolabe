@@ -74,7 +74,7 @@ impl ServedResources {
 ///
 /// A [`kube::Error`] when per-group discovery fails; a failed aggregated
 /// request only falls back to it.
-pub async fn discover(client: &Client) -> kube::Result<ServedResources> {
+pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
         Ok(discovery) if discovery.has_group(ApiGroup::CORE_GROUP) => {
             return Ok(ServedResources::from_discovery(&discovery));

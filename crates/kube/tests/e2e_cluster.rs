@@ -103,7 +103,7 @@ async fn cluster_connects_and_discovers() {
     assert!(!contexts.is_empty(), "kubeconfig must contain a context");
     let cluster = Cluster::connect(&contexts[0]);
 
-    let served = cluster.discover().await.unwrap().unwrap();
+    let served = cluster.discover().await.unwrap();
 
     let namespace = served
         .resolve("", "v1", "Namespace")
@@ -462,7 +462,10 @@ spec:
     // Discovery serves the kind only once the CRD is established.
     let served = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            let served = astrolabe_kube::discovery::discover(&client).await.unwrap();
+            let served = Cluster::from_client(client.clone())
+                .discover()
+                .await
+                .unwrap();
             if served.resolve(&group, "v1", "Widget").is_some() {
                 break served;
             }

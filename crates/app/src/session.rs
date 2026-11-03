@@ -13,7 +13,7 @@ use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::kube::{Client, ResourceExt};
 use astrolabe_kube::object::{ObjectKey, Operation};
 use astrolabe_model::builtin::BuiltinKind;
-use futures::{Stream, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, Stream, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
 
@@ -470,14 +470,12 @@ impl Session {
         let mut result = self.io.discover();
         // Scripted clusters answer before `discover` returns: finish within
         // this update, as a live answer's arrival can't be awaited here.
-        if let Ok(result) = result.try_recv() {
+        if let Some(result) = (&mut result).now_or_never() {
             self.finish_discovery(run, result, cx);
             return;
         }
         cx.spawn(async move |this, cx| {
-            let result = result
-                .await
-                .unwrap_or_else(|_| Err(ClusterError::new("discovery task dropped")));
+            let result = result.await;
             this.update(cx, |session, cx| session.finish_discovery(run, result, cx))
                 .ok();
         })

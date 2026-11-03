@@ -14,7 +14,8 @@ use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::runtime::watcher::{self, Event};
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::ExecInput;
-use futures::{SinkExt, Stream, StreamExt, channel::mpsc};
+use futures::future::{self, BoxFuture};
+use futures::{FutureExt as _, SinkExt, Stream, StreamExt, channel::mpsc};
 use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
@@ -213,7 +214,7 @@ impl ScriptedCluster {
 pub(crate) enum ClusterIo {
     Live {
         /// The kubeconfig context, for logs.
-        name: String,
+        context: String,
         cluster: Cluster,
         tasks: Vec<tokio::task::JoinHandle<()>>,
     },
@@ -221,12 +222,12 @@ pub(crate) enum ClusterIo {
 }
 
 impl ClusterIo {
-    /// Connect to kubeconfig context `name`; every request waits on the
+    /// Connect to kubeconfig context `context`; every request waits on the
     /// shared connect.
-    pub(crate) fn connect(name: String) -> Self {
+    pub(crate) fn connect(context: String) -> Self {
         Self::Live {
-            cluster: Cluster::connect(&name),
-            name,
+            cluster: Cluster::connect(&context),
+            context,
             tasks: Vec::new(),
         }
     }
@@ -247,22 +248,22 @@ impl ClusterIo {
         match self {
             Self::Scripted(cluster) => scripted(cluster),
             Self::Live {
-                name,
+                context,
                 cluster,
                 tasks,
             } => {
-                let (events, task) = spawn_watch(name.clone(), label, cluster.client(), stream);
+                let (events, task) = spawn_watch(context.clone(), label, cluster.client(), stream);
                 tasks.push(task);
                 Some(events)
             }
         }
     }
 
-    /// API discovery; a scripted cluster answers before this returns.
-    pub(crate) fn discover(&mut self) -> oneshot::Receiver<Result<ServedResources, ClusterError>> {
+    /// API discovery; a scripted cluster's answer is ready at once.
+    pub(crate) fn discover(&mut self) -> BoxFuture<'static, Result<ServedResources, ClusterError>> {
         match self {
-            Self::Scripted(cluster) => answered((cluster.discover)()),
-            Self::Live { cluster, .. } => cluster.discover(),
+            Self::Scripted(cluster) => future::ready((cluster.discover)()).boxed(),
+            Self::Live { cluster, .. } => cluster.discover().boxed(),
         }
     }
 
@@ -505,7 +506,7 @@ fn answered<T>(value: T) -> oneshot::Receiver<T> {
 /// watcher from a fresh LIST (#28): a silent watch resumption would emit no
 /// `InitDone`, leaving the UI stale.
 fn spawn_watch<K, S>(
-    name: String,
+    context: String,
     label: &'static str,
     client: SharedClient,
     stream: impl Fn(&Client) -> S + Send + 'static,
@@ -519,7 +520,7 @@ where
         let client = match client.await {
             Ok(client) => client,
             Err(error) => {
-                tracing::warn!(cluster = %name, error = %error, "{label} watch client setup failed");
+                tracing::warn!(cluster = %context, error = %error, "{label} watch client setup failed");
                 let _ = sender.send(Err(WatchError::new(error.to_string()))).await;
                 return;
             }
@@ -531,7 +532,7 @@ where
             let mut forbidden = false;
             while let Some(event) = events.next().await {
                 let event = event.map_err(|error| {
-                    tracing::warn!(cluster = %name, error = %error, "{label} watch failed");
+                    tracing::warn!(cluster = %context, error = %error, "{label} watch failed");
                     WatchError::from_watcher(&error)
                 });
                 let failed = event.is_err();
@@ -552,7 +553,7 @@ where
             {
                 return;
             }
-            tracing::info!(cluster = %name, "restarting {label} watch");
+            tracing::info!(cluster = %context, "restarting {label} watch");
             // RBAC denials do not clear by retrying fast; back off further.
             let delay = if forbidden {
                 FORBIDDEN_RETRY

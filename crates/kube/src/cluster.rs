@@ -1,8 +1,10 @@
-//! The live Cluster handle (#147): every request the app makes of a
-//! Cluster goes through [`Cluster`] and fails with a [`ClusterError`].
+//! The live Cluster handle (#147): requests to a Cluster go through
+//! [`Cluster`] and fail with a [`ClusterError`]. Discovery does today;
+//! watches, operations, logs, exec, port-forward and Apply follow in
+//! #156–#160.
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
-//! has no tokio reactor; each answers through a receiver that any executor
+//! has no tokio reactor; each answers through a future that any executor
 //! can await.
 
 use std::future::Future;
@@ -31,24 +33,28 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-/// Run `future` on the cluster runtime; the receiver resolves with its
-/// output and errs only if the task panicked.
-fn spawn<R: Send + 'static>(
-    future: impl Future<Output = R> + Send + 'static,
-) -> oneshot::Receiver<R> {
+/// Start `request` on the cluster runtime now; the returned future
+/// resolves with its answer, or with `panicked` if the task panicked.
+fn spawn<T: Send + 'static>(
+    request: impl Future<Output = Result<T, ClusterError>> + Send + 'static,
+    panicked: ClusterError,
+) -> impl Future<Output = Result<T, ClusterError>> + Send + 'static {
     let (sender, receiver) = oneshot::channel();
     runtime().spawn(async move {
-        let _ = sender.send(future.await);
+        let _ = sender.send(request.await);
     });
-    receiver
+    async move { receiver.await.unwrap_or(Err(panicked)) }
 }
 
 /// What kind of failure a [`ClusterError`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ClusterErrorKind {
-    /// The client for the Cluster could not be built: its kubeconfig is
-    /// missing or wrong, or a credential plugin failed.
+    /// The client for the Cluster could not be built on first connect: its
+    /// kubeconfig is missing or wrong, or a credential plugin's first run
+    /// failed. An apiserver that cannot be reached, or a later token
+    /// refresh that fails, fails each request as
+    /// [`Other`](ClusterErrorKind::Other) instead.
     Connect,
     /// The apiserver refused the request (HTTP 403), which some views show
     /// as an empty state instead of a connection problem.
@@ -79,10 +85,10 @@ impl ClusterError {
         }
     }
 
-    fn connect(error: &kube::Error) -> Self {
+    fn connect(message: impl Into<String>) -> Self {
         Self {
             kind: ClusterErrorKind::Connect,
-            message: error.to_string(),
+            message: message.into(),
         }
     }
 
@@ -134,19 +140,14 @@ impl Cluster {
         let context = context.to_owned();
         // A credential plugin's first run blocks inside config loading, so
         // the connect runs on the cluster runtime, never the caller's thread.
-        let connect = spawn(async move {
-            crate::client_for_context(&context)
-                .await
-                .map_err(|error| ClusterError::connect(&error))
-        });
-        let client = async move {
-            connect.await.unwrap_or_else(|_| {
-                Err(ClusterError {
-                    kind: ClusterErrorKind::Connect,
-                    message: "cluster connect task panicked".to_owned(),
-                })
-            })
-        };
+        let client = spawn(
+            async move {
+                crate::client_for_context(&context)
+                    .await
+                    .map_err(|error| ClusterError::connect(error.to_string()))
+            },
+            ClusterError::connect("cluster connect task panicked"),
+        );
         Self {
             client: client.boxed().shared(),
         }
@@ -160,22 +161,29 @@ impl Cluster {
         }
     }
 
-    /// API Discovery.
-    ///
-    /// The receiver errs only if the request's task panicked.
+    /// API Discovery, started at once on the cluster runtime.
     ///
     /// # Errors
     ///
-    /// The answer is a [`Connect`](ClusterErrorKind::Connect) error when the
-    /// client could not be built, and otherwise the per-group discovery's
-    /// failure, [`Forbidden`](ClusterErrorKind::Forbidden) on a 403.
+    /// The answer fails with:
+    /// - [`Connect`](ClusterErrorKind::Connect) when the client could not be
+    ///   built, or its connect task panicked;
+    /// - [`Forbidden`](ClusterErrorKind::Forbidden) when per-group discovery
+    ///   (the fallback after any aggregated failure) gets a 403;
+    /// - [`Other`](ClusterErrorKind::Other) when it fails any other way, or
+    ///   the request's task panicked.
     ///
     /// # Panics
     ///
     /// When the cluster runtime cannot be created on first use.
-    pub fn discover(&self) -> oneshot::Receiver<Result<ServedResources, ClusterError>> {
+    pub fn discover(
+        &self,
+    ) -> impl Future<Output = Result<ServedResources, ClusterError>> + Send + 'static {
         let client = self.client.clone();
-        spawn(async move { Ok(discovery::discover(&client.await?).await?) })
+        spawn(
+            async move { Ok(discovery::discover(&client.await?).await?) },
+            ClusterError::new("discovery task panicked"),
+        )
     }
 
     /// The shared client, for the requests that do not go through this
