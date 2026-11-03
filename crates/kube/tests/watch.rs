@@ -47,13 +47,17 @@ async fn dropping_the_cluster_stops_its_watches() {
     let cluster = mock_cluster(&apiserver);
     let mut watch = cluster.watch_namespaces();
     assert_list(&mut watch, &["default"]).await;
+    // A later watch prunes finished ones and must keep the running first.
+    let mut later = cluster.watch_namespaces();
 
     drop(cluster);
 
     // Bounded, so a watch that outlives its handle fails instead of
     // hanging: the paused clock reaches the bound once nothing else runs.
-    let ended = tokio::time::timeout(Duration::from_secs(60), watch.next()).await;
-    assert!(matches!(ended, Ok(None)), "the watch outlived its handle");
+    for watch in [&mut watch, &mut later] {
+        let ended = tokio::time::timeout(Duration::from_secs(60), watch.next()).await;
+        assert!(matches!(ended, Ok(None)), "the watch outlived its handle");
+    }
 }
 
 /// No kubeconfig names this context, on CI or a dev machine.
