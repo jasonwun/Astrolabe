@@ -24,7 +24,7 @@ Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agen
 
 ### Testing
 
-Coverage, mutation testing, cluster e2e, and the PR's test Evidence: `docs/agents/testing.md`. Before a dependency-upgrade PR: `docs/agents/spike-regression.md`. Review-time judgement rules: `CODING_STANDARDS.md`.
+Coverage, mutation testing, cluster e2e, and the PR's test Evidence: `docs/agents/testing.md`. Before a dependency-upgrade PR: `docs/agents/spike-regression.md`. Review-time judgement rules, and before moving a request behind `Cluster` (#158–#160): `CODING_STANDARDS.md`.
 
 ### GPUI views and UI tests
 
