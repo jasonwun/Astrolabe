@@ -1,6 +1,7 @@
 //! The live Cluster handle (#147): requests to a Cluster go through
 //! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches,
-//! operations, Apply, Precheck, logs, exec and port-forward do.
+//! operations, Apply, Precheck, logs, exec and port-forward do; only the
+//! Workspace YAML editor's current-context connect does not yet (#161).
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future, receiver or
@@ -75,8 +76,7 @@ fn spawn_on<T: Send + 'static>(
 
 /// Run `request` on the cluster runtime, for the requests that do not go
 /// through [`Cluster`] yet: the Workspace YAML editor's current-context
-/// client and its Apply and Precheck, which #161 moves behind a Session's
-/// Cluster and so removes this. The answer is `None` if the task panicked.
+/// connect, which #161 moves onto a Session's Cluster and so removes this. The answer is `None` if the task panicked.
 ///
 /// # Panics
 ///
@@ -338,27 +338,22 @@ impl Cluster {
     ///
     /// # Errors
     ///
-    /// The answer fails, with nothing sent, with:
     /// - [`Connect`](ClusterErrorKind::Connect) when the client could not be
-    ///   built, or its connect task panicked;
+    ///   built, or its connect task panicked: nothing is sent;
     /// - [`Other`](ClusterErrorKind::Other) when `snapshot` does not parse
-    ///   as YAML documents, or the request's task panicked.
+    ///   as YAML documents (nothing is sent), or the request's task
+    ///   panicked.
     pub fn apply(
         &self,
         snapshot: &str,
         mode: ApplyMode,
     ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
-        let client = self.client.clone();
-        let snapshot = snapshot.to_owned();
-        spawn(
-            &self.runtime,
-            async move {
-                let client = client.await?;
-                apply::apply_documents(&client, &snapshot, mode)
-                    .await
-                    .map_err(|error| ClusterError::new(error.to_string()))
+        self.send_snapshot(
+            snapshot,
+            "apply task panicked",
+            move |client, snapshot| async move {
+                apply::apply_documents(&client, &snapshot, mode).await
             },
-            ClusterError::new("apply task panicked"),
         )
     }
 
@@ -374,17 +369,35 @@ impl Cluster {
         &self,
         snapshot: &str,
     ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
+        self.send_snapshot(
+            snapshot,
+            "precheck task panicked",
+            |client, snapshot| async move { apply::precheck_documents(&client, &snapshot).await },
+        )
+    }
+
+    /// Run `request` on `snapshot` once the client connects, on the cluster
+    /// runtime: Apply's and Precheck's shared shape.
+    fn send_snapshot<F>(
+        &self,
+        snapshot: &str,
+        panicked: &'static str,
+        request: impl FnOnce(Client, String) -> F + Send + 'static,
+    ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static
+    where
+        F: Future<Output = Result<ApplyReport, apply::PayloadError>> + Send + 'static,
+    {
         let client = self.client.clone();
         let snapshot = snapshot.to_owned();
         spawn(
             &self.runtime,
             async move {
                 let client = client.await?;
-                apply::precheck_documents(&client, &snapshot)
+                request(client, snapshot)
                     .await
                     .map_err(|error| ClusterError::new(error.to_string()))
             },
-            ClusterError::new("precheck task panicked"),
+            ClusterError::new(panicked),
         )
     }
 

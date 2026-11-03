@@ -12,7 +12,7 @@ use std::ops::Range;
 use std::time::Duration;
 
 use astrolabe_kube::apply::{self, ApplyError, ApplyMode, ApplyReport, Location};
-use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind, run_on_cluster_runtime};
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind, run_on_cluster_runtime};
 use astrolabe_kube::kube;
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
@@ -90,13 +90,13 @@ enum PrecheckStatus {
 /// Where the editor's Apply and Precheck go.
 enum Target {
     /// Nowhere: the editor says "no cluster".
-    None,
+    Detached,
     /// A Session's Cluster: the detail tab's Edit YAML.
     Session(Entity<Session>),
-    /// The current kubeconfig context's client, once its connect resolves;
-    /// `Err` carries the connect failure. The Workspace editor's, until
-    /// #161 moves it onto the selected Cluster's Session.
-    CurrentContext(Option<Result<kube::Client, String>>),
+    /// The current kubeconfig context's Cluster, once its connect
+    /// resolves; `Err` carries the connect failure. The Workspace editor's,
+    /// until #161 moves it onto the selected Cluster's Session.
+    CurrentContext(Option<Result<Cluster, String>>),
 }
 
 /// Why a request had nowhere to go.
@@ -106,8 +106,8 @@ enum Unsent {
     ConnectFailed(String),
 }
 
-/// A report, or why there is none.
-type Answer = BoxFuture<'static, Result<ApplyReport, ClusterError>>;
+/// The report an Apply or Precheck answers with, or why there is none.
+type ApplyAnswer = BoxFuture<'static, Result<ApplyReport, ClusterError>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaletteCommand {
@@ -223,7 +223,7 @@ impl YamlEditorView {
         Self {
             state,
             window_handle: window.window_handle(),
-            target: Target::None,
+            target: Target::Detached,
             buffer_version: 0,
             precheck_version: None,
             precheck_status: PrecheckStatus::Idle,
@@ -249,40 +249,32 @@ impl YamlEditorView {
 
     // ------------------------------------------------------------ cluster I/O
 
-    /// Send an Apply of `snapshot` to the target.
     fn send_apply(
         &self,
         snapshot: &str,
         mode: ApplyMode,
         cx: &mut Context<Self>,
-    ) -> Result<Answer, Unsent> {
+    ) -> Result<ApplyAnswer, Unsent> {
         match &self.target {
             Target::Session(session) => {
                 Ok(session.update(cx, |session, _| session.apply(snapshot, mode)))
             }
-            target => {
-                let client = target.ready_client()?;
-                let snapshot = snapshot.to_owned();
-                Ok(on_cluster_runtime("apply", async move {
-                    apply::apply_documents(&client, &snapshot, mode).await
-                }))
+            Target::CurrentContext(cluster) => {
+                Ok(connected(cluster.as_ref())?.apply(snapshot, mode).boxed())
             }
+            Target::Detached => Err(Unsent::NoCluster),
         }
     }
 
-    /// Send a Precheck of `snapshot` to the target.
-    fn send_precheck(&self, snapshot: &str, cx: &mut Context<Self>) -> Result<Answer, Unsent> {
+    fn send_precheck(&self, snapshot: &str, cx: &mut Context<Self>) -> Result<ApplyAnswer, Unsent> {
         match &self.target {
             Target::Session(session) => {
                 Ok(session.update(cx, |session, _| session.precheck(snapshot)))
             }
-            target => {
-                let client = target.ready_client()?;
-                let snapshot = snapshot.to_owned();
-                Ok(on_cluster_runtime("precheck", async move {
-                    apply::precheck_documents(&client, &snapshot).await
-                }))
+            Target::CurrentContext(cluster) => {
+                Ok(connected(cluster.as_ref())?.precheck(snapshot).boxed())
             }
+            Target::Detached => Err(Unsent::NoCluster),
         }
     }
 
@@ -298,7 +290,9 @@ impl YamlEditorView {
                     Ok(_) => "connected".to_string(),
                     Err(e) => format!("no cluster: {e}"),
                 };
-                this.target = Target::CurrentContext(Some(result));
+                this.target = Target::CurrentContext(Some(
+                    result.map(|client| Cluster::from_client(client, "current context")),
+                ));
                 cx.notify();
             })
             .ok();
@@ -314,13 +308,7 @@ impl YamlEditorView {
         let applied = match self.send_apply(&snapshot, mode, cx) {
             Ok(applied) => applied,
             Err(unsent) => {
-                self.global_notice = Some(match unsent {
-                    Unsent::NoCluster => "cannot apply: no cluster".to_string(),
-                    Unsent::Connecting => "cannot apply: still connecting to cluster".to_string(),
-                    Unsent::ConnectFailed(e) => {
-                        format!("cannot apply: no cluster connection ({e})")
-                    }
-                });
+                self.global_notice = Some(unsent.notice("apply"));
                 cx.notify();
                 return;
             }
@@ -360,12 +348,7 @@ impl YamlEditorView {
             Ok(report) => report,
             Err(e) => {
                 self.pending_snapshot = None;
-                self.global_notice = Some(match e.kind() {
-                    ClusterErrorKind::Connect => {
-                        format!("cannot apply: no cluster connection ({e})")
-                    }
-                    _ => e.to_string(),
-                });
+                self.global_notice = Some(failure_notice("apply", &e));
                 self.status_line = "apply failed".to_string();
                 cx.notify();
                 return;
@@ -464,7 +447,7 @@ impl YamlEditorView {
             Ok(checked) => checked,
             Err(unsent) => {
                 if manual {
-                    self.global_notice = Some("cannot precheck: no cluster connection".to_string());
+                    self.global_notice = Some(unsent.notice("precheck"));
                 } else if matches!(unsent, Unsent::ConnectFailed(_)) {
                     self.precheck_status = PrecheckStatus::Unavailable;
                 }
@@ -503,13 +486,10 @@ impl YamlEditorView {
         let report = match result {
             Ok(report) => report,
             Err(e) => {
-                if !manual {
-                    self.precheck_status = PrecheckStatus::Unavailable;
-                } else if e.kind() == ClusterErrorKind::Connect {
-                    self.global_notice =
-                        Some(format!("cannot precheck: no cluster connection ({e})"));
+                if manual {
+                    self.global_notice = Some(failure_notice("precheck", &e));
                 } else {
-                    self.global_notice = Some(e.to_string());
+                    self.precheck_status = PrecheckStatus::Unavailable;
                 }
                 cx.notify();
                 return;
@@ -929,33 +909,32 @@ impl Render for YamlEditorView {
 
 // ---------------------------------------------------------------- helpers
 
-impl Target {
-    /// The current context's client, when it has connected.
-    fn ready_client(&self) -> Result<kube::Client, Unsent> {
+/// The current context's Cluster, once it has connected.
+fn connected(cluster: Option<&Result<Cluster, String>>) -> Result<&Cluster, Unsent> {
+    match cluster {
+        Some(Ok(cluster)) => Ok(cluster),
+        Some(Err(e)) => Err(Unsent::ConnectFailed(e.clone())),
+        None => Err(Unsent::Connecting),
+    }
+}
+
+impl Unsent {
+    /// The notice for a `verb` ("apply", "precheck") that had nowhere to go.
+    fn notice(&self, verb: &str) -> String {
         match self {
-            Self::CurrentContext(Some(Ok(client))) => Ok(client.clone()),
-            Self::CurrentContext(Some(Err(e))) => Err(Unsent::ConnectFailed(e.clone())),
-            Self::CurrentContext(None) => Err(Unsent::Connecting),
-            Self::None | Self::Session(_) => Err(Unsent::NoCluster),
+            Self::NoCluster => format!("cannot {verb}: no cluster"),
+            Self::Connecting => format!("cannot {verb}: still connecting to cluster"),
+            Self::ConnectFailed(e) => format!("cannot {verb}: cluster unreachable ({e})"),
         }
     }
 }
 
-/// Run an Apply or Precheck that does not go through a Session on the
-/// cluster runtime, its failures as a [`ClusterError`] like a Session's.
-fn on_cluster_runtime(
-    what: &'static str,
-    request: impl std::future::Future<Output = Result<ApplyReport, apply::PayloadError>>
-    + Send
-    + 'static,
-) -> Answer {
-    run_on_cluster_runtime(request)
-        .map(move |answer| match answer {
-            Some(Ok(report)) => Ok(report),
-            Some(Err(error)) => Err(ClusterError::new(error.to_string())),
-            None => Err(ClusterError::new(format!("{what} task dropped"))),
-        })
-        .boxed()
+/// The notice for a `verb` ("apply", "precheck") the Cluster failed.
+fn failure_notice(verb: &str, error: &ClusterError) -> String {
+    match error.kind() {
+        ClusterErrorKind::Connect => format!("cannot {verb}: cluster unreachable ({error})"),
+        _ => error.to_string(),
+    }
 }
 
 fn located_line(located: &apply::Located) -> Option<usize> {

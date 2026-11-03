@@ -20,14 +20,6 @@ fn open_editor(ui: &mut Ui<'_>) {
     ui.settle();
 }
 
-fn label(ui: &mut Ui<'_>, id: &'static str) -> Option<String> {
-    ui.frame(|window, _| {
-        window
-            .try_find(id)
-            .and_then(|element| element.label().map(str::to_owned))
-    })
-}
-
 #[gpui_kit::test]
 fn a_conflicting_apply_offers_force_apply_which_goes_through(cx: &mut TestAppContext) {
     let mut ui = open(cx, Vec::new());
@@ -37,20 +29,17 @@ fn a_conflicting_apply_offers_force_apply_which_goes_through(cx: &mut TestAppCon
     ui.settle();
 
     assert_eq!(*ui.applied.borrow(), [ApplyMode::Normal]);
+    assert_eq!(ui.label("yaml-status"), "apply failed: 1 problem(s)");
     assert_eq!(
-        label(&mut ui, "yaml-status").as_deref(),
-        Some("apply failed: 1 problem(s)")
-    );
-    assert_eq!(
-        label(&mut ui, "yaml-problems").as_deref(),
-        Some("1 problem(s) from last apply — conflicts with kubectl")
+        ui.label("yaml-problems"),
+        "1 problem(s) from last apply — conflicts with kubectl"
     );
 
     ui.frame(|window, cx| window.click("force-apply", cx));
     ui.settle();
 
     assert_eq!(*ui.applied.borrow(), [ApplyMode::Normal, ApplyMode::Force]);
-    assert_eq!(label(&mut ui, "yaml-status").as_deref(), Some("applied"));
+    assert_eq!(ui.label("yaml-status"), "applied");
     assert!(ui.frame(|window, _| window.try_find("force-apply").is_none()));
     assert!(ui.frame(|window, _| window.try_find("yaml-problems").is_none()));
 }
@@ -64,8 +53,8 @@ fn a_precheck_notes_the_fields_apply_will_ignore(cx: &mut TestAppContext) {
     ui.settle();
 
     assert_eq!(
-        label(&mut ui, "yaml-precheck").as_deref(),
-        Some("1 unknown/duplicate field(s) — apply will ignore them")
+        ui.label("yaml-precheck"),
+        "1 unknown/duplicate field(s) — apply will ignore them"
     );
     assert!(ui.applied.borrow().is_empty());
 }

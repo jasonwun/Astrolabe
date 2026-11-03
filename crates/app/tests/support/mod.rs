@@ -315,6 +315,23 @@ impl Ui<'_> {
         snapshot(&mut self.namespaces, namespaces);
     }
 
+    /// The accessible label of `id`, as the last frame drew it; empty when
+    /// `id` has none.
+    ///
+    /// # Panics
+    ///
+    /// When `id` is not rendered.
+    pub fn label(&mut self, id: &'static str) -> String {
+        self.frame(|window, _| {
+            window
+                .try_find(id)
+                .unwrap_or_else(|| panic!("{id} not rendered"))
+                .label()
+                .unwrap_or_default()
+                .to_string()
+        })
+    }
+
     pub fn frame<R>(
         &mut self,
         f: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> R,

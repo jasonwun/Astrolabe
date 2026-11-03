@@ -13,9 +13,7 @@
 
 use std::time::Duration;
 
-use astrolabe_kube::apply::{
-    ApplyError, ApplyMode, ApplyReport, Location, apply_documents, precheck_documents,
-};
+use astrolabe_kube::apply::{ApplyError, ApplyMode, ApplyReport, Location};
 use astrolabe_kube::cluster::Cluster;
 use astrolabe_kube::default_client;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
@@ -100,7 +98,8 @@ fn line_of(snapshot: &str, needle: &str) -> usize {
 
 /// Apply `snapshot` the plain way, as the editor's Apply button does.
 async fn apply(client: &kube::Client, snapshot: &str) -> ApplyReport {
-    apply_documents(client, snapshot, ApplyMode::Normal)
+    Cluster::from_client(client.clone(), "e2e")
+        .apply(snapshot, ApplyMode::Normal)
         .await
         .unwrap()
 }
@@ -354,7 +353,8 @@ async fn apply_409_then_force_apply() {
     );
 
     // Force Apply takes ownership and succeeds.
-    let report = apply_documents(&client, &snapshot, ApplyMode::Force)
+    let report = Cluster::from_client(client.clone(), "e2e")
+        .apply(&snapshot, ApplyMode::Force)
         .await
         .unwrap();
     assert!(
@@ -389,7 +389,10 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
     for (label, report) in [
         (
             "precheck",
-            precheck_documents(&client, &snapshot).await.unwrap(),
+            Cluster::from_client(client.clone(), "e2e")
+                .precheck(&snapshot)
+                .await
+                .unwrap(),
         ),
         ("apply", apply(&client, &snapshot).await),
     ] {

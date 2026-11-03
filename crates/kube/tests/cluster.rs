@@ -169,6 +169,9 @@ const CONFIGMAP_YAML: &str =
     "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  key: value\n";
 const CONFLICT: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":409,"reason":"Conflict",
     "message":"Apply failed with 1 conflict: conflict with \"kubectl\" using v1: .data.key"}"#;
+const UNKNOWN_FIELD: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":422,"reason":"Invalid",
+    "message":"ConfigMap \"cm\" is invalid","details":{"causes":[
+    {"reason":"FieldValueInvalid","message":"unknown field \"data.key\"","field":"data.key"}]}}"#;
 const PATCH_PATH: &str = "/api/v1/namespaces/default/configmaps/cm";
 
 /// The `PATCH` requests' query strings, in the order the mock saw them.
@@ -203,6 +206,10 @@ fn applied() -> http::Response<Body> {
 
 fn conflicted() -> http::Response<Body> {
     reply(409, CONFLICT)
+}
+
+fn unknown_field() -> http::Response<Body> {
+    reply(422, UNKNOWN_FIELD)
 }
 
 fn queries(patches: &Patches) -> Vec<String> {
@@ -285,6 +292,23 @@ async fn a_precheck_reports_what_the_apply_would_hit() {
 
     assert!(!report.ok);
     assert!(report.outcomes[0].result.is_err());
+}
+
+#[tokio::test]
+async fn a_precheck_flags_an_unknown_field_as_strict_decoding() {
+    let (cluster, _) = configmap_cluster(unknown_field);
+
+    let report = cluster.precheck(CONFIGMAP_YAML).await.unwrap();
+
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    match &error.error {
+        ApplyError::Validation(causes) => {
+            assert_eq!(causes.len(), 1);
+            assert_eq!(causes[0].raw_field, "data.key");
+            assert!(causes[0].is_strict_decoding());
+        }
+        other => panic!("expected a validation failure, got {other:?}"),
+    }
 }
 
 #[tokio::test]

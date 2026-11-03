@@ -64,14 +64,15 @@ pub enum ApplyMode {
     Force,
 }
 
-/// Apply every document of `snapshot` with SSA (allSettled).
+/// Apply every document of `snapshot` with SSA (allSettled); callers go
+/// through [`Cluster::apply`](crate::cluster::Cluster::apply).
 ///
 /// # Errors
 ///
 /// A [`payload::PayloadError`] when `snapshot` does not parse, before
 /// anything is sent. A document the server rejects is not an error: its
 /// outcome in the report carries it.
-pub async fn apply_documents(
+pub(crate) async fn apply_documents(
     client: &Client,
     snapshot: &str,
     mode: ApplyMode,
@@ -96,14 +97,15 @@ pub async fn apply_documents(
 
 /// Dry-run precheck (#15): `dry_run` + strict validation. Same per-doc
 /// allSettled semantics; strict-decoding causes are flagged for warning
-/// rendering via [`FieldCause::is_strict_decoding`].
+/// rendering via [`FieldCause::is_strict_decoding`]. Callers go through
+/// [`Cluster::precheck`](crate::cluster::Cluster::precheck).
 ///
 /// # Errors
 ///
 /// A [`payload::PayloadError`] when `snapshot` does not parse, before
 /// anything is sent. A document the server rejects is not an error: its
 /// outcome in the report carries it.
-pub async fn precheck_documents(
+pub(crate) async fn precheck_documents(
     client: &Client,
     snapshot: &str,
 ) -> Result<ApplyReport, payload::PayloadError> {
