@@ -50,6 +50,22 @@ Run it before review on a ticket that only moves code; the residue
 should be `mod`/`use` lines, new modules' `//!` docs and rustfmt
 re-wraps. What else counts is in `CODING_STANDARDS.md`.
 
+A test left in the lower crate that uses a moved item keeps its
+assertions: the lower crate takes the upper one as a dev-dependency, and
+the test changes only its `use` path. Integration tests (`tests/*.rs`)
+link the same library the upper crate builds on, so the types match; the
+library itself still does not depend on the upper crate. Do not rewrite
+the assertions to avoid the import, and do not move a cluster e2e into
+`astrolabe-model`: `dev/layer-check.sh` forbids `async fn` and
+`astrolabe_kube::Cluster` in its tests.
+
+Origin: #154 moved the Catalog to `astrolabe-model`. The first version
+rewrote `crd_kind_is_discovered_watched_and_deleted`'s Catalog
+assertions as `ServedResources::resolve` checks, one of which only read
+back the test's own manifest. Both reviewers flagged it; the Spec
+reviewer's fix (an e2e in the model crate) would have failed the layer
+check (#154 retro).
+
 ## Cluster e2e
 
 `crates/kube/tests/e2e_cluster.rs` is `#[ignore]`d by default; it needs a
