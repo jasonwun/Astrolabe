@@ -3,7 +3,10 @@
 //! resolves `port-forward svc/name`. Synthetic objects (plausible shapes,
 //! never captured from a real apiserver).
 
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Container, Pod, Service};
+use astrolabe_kube::object::ObjectKey;
+use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
 use astrolabe_kube::service::{ResolvedForward, forward_target};
 
 fn service(spec: &serde_json::Value) -> Service {
@@ -87,7 +90,9 @@ fn a_named_target_port_the_pod_lacks_is_an_error() {
     pod.spec.as_mut().unwrap().containers[0].ports = None;
     assert_eq!(
         forward_target(&web_service(), &[pod], 9000),
-        Err("Pod 'web-1' does not have a named port 'admin'".to_string())
+        Err(ClusterError::new(
+            "Pod 'web-1' does not have a named port 'admin'"
+        ))
     );
 }
 
@@ -115,7 +120,9 @@ fn a_headless_service_forwards_an_undeclared_port_as_is() {
 fn an_undeclared_service_port_is_an_error() {
     assert_eq!(
         forward_target(&web_service(), &[running("web-1")], 81),
-        Err("Service web does not have a service port 81".to_string())
+        Err(ClusterError::new(
+            "Service web does not have a service port 81"
+        ))
     );
 }
 
@@ -124,7 +131,9 @@ fn a_service_without_a_selector_has_no_pod_to_forward_to() {
     let bare = service(&serde_json::json!({"ports": [{"port": 80}]}));
     assert_eq!(
         forward_target(&bare, &[running("web-1")], 80),
-        Err("invalid service 'web': Service is defined without a selector".to_string())
+        Err(ClusterError::new(
+            "invalid service 'web': Service is defined without a selector"
+        ))
     );
 }
 
@@ -132,7 +141,7 @@ fn a_service_without_a_selector_has_no_pod_to_forward_to() {
 fn no_matching_pod_is_an_error() {
     assert_eq!(
         forward_target(&web_service(), &[], 80),
-        Err("no Pods match Service web's selector".to_string())
+        Err(ClusterError::new("no Pods match Service web's selector"))
     );
 }
 
@@ -142,9 +151,9 @@ fn the_chosen_pod_must_be_running() {
     pending.status.as_mut().unwrap().phase = Some("Pending".to_string());
     assert_eq!(
         forward_target(&web_service(), &[pending], 80),
-        Err(
-            "unable to forward port because pod is not running. Current status=Pending".to_string()
-        )
+        Err(ClusterError::new(
+            "unable to forward port because pod is not running. Current status=Pending"
+        ))
     );
 }
 
@@ -239,10 +248,9 @@ fn pending_is_less_active_than_unknown() {
     ] {
         assert_eq!(
             forward_target(&web_service(), &pods, 80),
-            Err(
+            Err(ClusterError::new(
                 "unable to forward port because pod is not running. Current status=Unknown"
-                    .to_string()
-            )
+            ))
         );
     }
 }
@@ -282,25 +290,29 @@ fn mock_client(pods: &[Pod]) -> (astrolabe_kube::kube::Client, Uris) {
     (astrolabe_kube::kube::Client::new(service, "default"), seen)
 }
 
-/// Forward through `client` and report the first connection's failure.
-async fn first_failure(client: astrolabe_kube::kube::Client, port: u16) -> String {
+/// Forward Service `web`'s `port` through `client` and report the first
+/// connection's failure.
+async fn first_failure(client: astrolabe_kube::kube::Client, port: u16) -> ClusterError {
     use std::time::Duration;
-    let listener = astrolabe_kube::pod::bind_local(0).await.unwrap();
-    let local = listener.local_addr().unwrap();
-    let (failures, mut failed) = tokio::sync::mpsc::unbounded_channel();
-    let forward = tokio::spawn(async move {
-        astrolabe_kube::service::port_forward(&client, "team-a", "web", port, listener, move |e| {
-            let _ = failures.send(e);
-        })
-        .await
+    let cluster = Cluster::from_client(client, "mock");
+    let mut forward = cluster.port_forward(ForwardRequest {
+        target: ForwardTarget::Service(ObjectKey::new(Some("team-a".into()), "web")),
+        port,
     });
-    let _connection = tokio::net::TcpStream::connect(local).await.unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(5), failed.recv())
+    let mut next = async || {
+        tokio::time::timeout(Duration::from_secs(5), forward.next())
+            .await
+            .expect("the forward reports")
+    };
+    let Some(ForwardEvent::Listening(local)) = next().await else {
+        panic!("the forward listens first");
+    };
+    let _connection = tokio::net::TcpStream::connect(("127.0.0.1", local))
         .await
-        .expect("a failed connection is reported")
         .unwrap();
-    assert!(!forward.is_finished());
-    forward.abort();
+    let Some(ForwardEvent::ConnectionFailed(error)) = next().await else {
+        panic!("a failed connection is reported");
+    };
     error
 }
 
@@ -310,7 +322,8 @@ async fn each_connection_forwards_to_the_resolved_pod_port() {
 
     let error = first_failure(client, 80).await;
 
-    assert!(error.contains("403 Forbidden"), "{error}");
+    assert!(error.to_string().contains("403 Forbidden"), "{error}");
+    assert_eq!(error.kind(), ClusterErrorKind::Forbidden);
     assert_eq!(
         *seen.lock().unwrap(),
         [
@@ -327,7 +340,8 @@ async fn a_connection_the_service_cannot_route_fails_alone() {
 
     let error = first_failure(client, 80).await;
 
-    assert_eq!(error, "no Pods match Service web's selector");
+    assert_eq!(error.to_string(), "no Pods match Service web's selector");
+    assert_eq!(error.kind(), ClusterErrorKind::Other);
     assert_eq!(
         seen.lock().unwrap().len(),
         2,

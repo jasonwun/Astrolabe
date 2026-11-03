@@ -1,7 +1,7 @@
 //! The live Cluster handle (#147): requests to a Cluster go through
 //! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches,
-//! operations, logs and exec do today; port-forward and Apply follow in
-//! #159–#160.
+//! operations, logs, exec and port-forward do today; Apply follows in
+//! #160.
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future, receiver or
@@ -26,8 +26,12 @@ use tokio::task::AbortHandle;
 
 use crate::discovery::{self, ServedResources};
 use crate::object::Operation;
-use crate::pod::{self, ExecOutput, ExecRequest, ExecSession, LogRequest, LogStream};
+use crate::pod::{
+    self, ExecOutput, ExecRequest, ExecSession, ForwardEvent, ForwardRequest, ForwardTarget,
+    LogRequest, LogStream, PortForward,
+};
 use crate::resource;
+use crate::service;
 use crate::watch::{self, WatchMessage};
 
 /// The cluster runtime, built on first use.
@@ -53,11 +57,34 @@ fn spawn<T: Send + 'static>(
     request: impl Future<Output = Result<T, ClusterError>> + Send + 'static,
     panicked: ClusterError,
 ) -> impl Future<Output = Result<T, ClusterError>> + Send + 'static {
+    spawn_on(runtime, request).map(|answer| answer.unwrap_or(Err(panicked)))
+}
+
+/// Start `request` on `runtime` now; the returned future resolves with its
+/// answer, or with `None` if the task panicked.
+fn spawn_on<T: Send + 'static>(
+    runtime: &Handle,
+    request: impl Future<Output = T> + Send + 'static,
+) -> impl Future<Output = Option<T>> + Send + 'static {
     let (sender, receiver) = oneshot::channel();
     runtime.spawn(async move {
         let _ = sender.send(request.await);
     });
-    async move { receiver.await.unwrap_or(Err(panicked)) }
+    async move { receiver.await.ok() }
+}
+
+/// Run `request` on the cluster runtime, for the requests that do not go
+/// through [`Cluster`] yet: the YAML editors' Apply and Precheck (#160)
+/// and the Workspace YAML editor's current-context client (#161). The last
+/// of them removes this. The answer is `None` if the task panicked.
+///
+/// # Panics
+///
+/// When the cluster runtime cannot be created on first use.
+pub fn run_on_cluster_runtime<T: Send + 'static>(
+    request: impl Future<Output = T> + Send + 'static,
+) -> impl Future<Output = Option<T>> + Send + 'static {
+    spawn_on(runtime().handle(), request)
 }
 
 /// What kind of failure a [`ClusterError`] is.
@@ -126,8 +153,9 @@ impl ClusterError {
 }
 
 /// A 403 from the apiserver is [`Forbidden`](ClusterErrorKind::Forbidden),
-/// also when it refuses an exec's WebSocket upgrade, which kube-rs reports
-/// by status alone; anything else is [`Other`](ClusterErrorKind::Other).
+/// also when it refuses an exec's or a port-forward's WebSocket upgrade,
+/// which kube-rs reports by status alone; anything else is
+/// [`Other`](ClusterErrorKind::Other).
 impl From<kube::Error> for ClusterError {
     fn from(error: kube::Error) -> Self {
         let kind = match &error {
@@ -398,6 +426,84 @@ impl Cluster {
         ExecSession::with_work(input, output, work.abort_handle())
     }
 
+    /// Forward a localhost port to one Pod or Service port, started at
+    /// once on the cluster runtime: on the same port when it is free, on a
+    /// free one otherwise. The forward reports
+    /// [`Listening`](ForwardEvent::Listening) with the port it took, then
+    /// each connection that fails. A Service forward resolves its Pod
+    /// afresh for each connection. Dropping the forward closes the
+    /// listener and its connections.
+    ///
+    /// # Errors
+    ///
+    /// A connection's forward that fails is reported as
+    /// [`ConnectionFailed`](ForwardEvent::ConnectionFailed) and the
+    /// listener goes on: [`Forbidden`](ClusterErrorKind::Forbidden) when
+    /// the apiserver refuses it (403), including the Service lookup;
+    /// [`Other`](ClusterErrorKind::Other) for any other failure, a Service
+    /// with no running Pod or no such port included.
+    ///
+    /// The forward's last report is [`Failed`](ForwardEvent::Failed)
+    /// when:
+    /// - the client could not be built
+    ///   ([`Connect`](ClusterErrorKind::Connect));
+    /// - no localhost port can be bound, or the listener fails
+    ///   ([`Other`](ClusterErrorKind::Other)).
+    ///
+    /// The forward just ends when the request's task panicked.
+    pub fn port_forward(&self, request: ForwardRequest) -> PortForward {
+        let (sender, events) = mpsc::unbounded();
+        let client = self.client.clone();
+        let work = self.runtime.spawn(async move {
+            let failed = |error: ClusterError| {
+                let _ = sender.unbounded_send(ForwardEvent::Failed(error));
+            };
+            let bind_failed =
+                |error: std::io::Error| ClusterError::new(format!("bind localhost: {error}"));
+            let client = match client.await {
+                Ok(client) => client,
+                Err(error) => return failed(error),
+            };
+            let port = request.port;
+            let listener = match pod::bind_local(port).await {
+                Ok(listener) => listener,
+                Err(error) => return failed(bind_failed(error)),
+            };
+            match listener.local_addr() {
+                Ok(local) => {
+                    let _ = sender.unbounded_send(ForwardEvent::Listening(local.port()));
+                }
+                Err(error) => return failed(bind_failed(error)),
+            }
+            let connections = sender.clone();
+            let on_error = move |error| {
+                let _ = connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
+            };
+            let result = match &request.target {
+                ForwardTarget::Pod(pod) => {
+                    let namespace = pod.namespace.as_deref().unwrap_or_default();
+                    pod::port_forward(&client, namespace, &pod.name, port, listener, on_error).await
+                }
+                ForwardTarget::Service(service) => {
+                    let namespace = service.namespace.as_deref().unwrap_or_default();
+                    service::port_forward(
+                        &client,
+                        namespace,
+                        &service.name,
+                        port,
+                        listener,
+                        on_error,
+                    )
+                    .await
+                }
+            };
+            if let Err(error) = result {
+                failed(ClusterError::new(format!("listener: {error}")));
+            }
+        });
+        PortForward::with_work(events, work.abort_handle())
+    }
+
     /// Watch the Cluster's Namespaces, resident until the handle is
     /// dropped. See [`watch_objects`](Self::watch_objects) for the
     /// messages.
@@ -448,8 +554,8 @@ impl Cluster {
     }
 
     /// The shared client, for the requests that do not go through this
-    /// handle yet. Port-forward and Apply move behind it in #159–#160; the
-    /// last of them removes this.
+    /// handle yet: Apply moves behind it in #160, and #161, which moves the
+    /// Workspace YAML editor, removes this.
     pub fn client(&self) -> SharedClient {
         self.client.clone()
     }

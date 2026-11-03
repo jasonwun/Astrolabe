@@ -5,7 +5,6 @@ use futures::channel::mpsc;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
-use crate::kube_bridge::spawn_cluster;
 use crate::perf;
 use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, ScriptedCluster};
 use crate::session_view::SessionView;
@@ -134,12 +133,11 @@ impl WorkspaceView {
     }
 
     fn discover_contexts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let contexts =
-            spawn_cluster(async { astrolabe_kube::context_names().map_err(|e| e.to_string()) });
+        // Reading the kubeconfig is blocking file I/O: off the main thread.
+        let contexts = cx
+            .background_spawn(async { astrolabe_kube::context_names().map_err(|e| e.to_string()) });
         cx.spawn_in(window, async move |this, cx| {
-            let contexts = contexts
-                .await
-                .unwrap_or_else(|_| Err("cluster discovery task dropped".to_string()));
+            let contexts = contexts.await;
             this.update_in(cx, |workspace, window, cx| {
                 match contexts {
                     Ok(clusters) => workspace.set_clusters(clusters, window, cx),

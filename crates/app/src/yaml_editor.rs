@@ -12,6 +12,7 @@ use std::ops::Range;
 use std::time::Duration;
 
 use astrolabe_kube::apply::{self, ApplyError, ApplyReport, Location, PayloadError};
+use astrolabe_kube::cluster::run_on_cluster_runtime;
 use astrolabe_kube::kube;
 use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::input::language_config::LanguageConfig;
@@ -22,7 +23,6 @@ use gpui_kit::component::input::{
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
-use crate::kube_bridge::spawn_cluster;
 use crate::session::SharedClient;
 
 gpui_kit::actions!(
@@ -145,13 +145,15 @@ pub struct YamlEditorView {
 
 impl YamlEditorView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
-        let rx = spawn_cluster(async move {
+        let client = run_on_cluster_runtime(async move {
             astrolabe_kube::default_client()
                 .await
                 .map_err(|e| e.to_string())
         });
         Self::connecting(window, cx, initial, async move {
-            rx.await.unwrap_or(Err("cluster task dropped".to_string()))
+            client
+                .await
+                .unwrap_or(Err("cluster task panicked".to_string()))
         })
     }
 
@@ -279,14 +281,14 @@ impl YamlEditorView {
         };
         cx.notify();
 
-        let rx = spawn_cluster({
+        let applied = run_on_cluster_runtime({
             let snapshot = snapshot.clone();
             async move { apply::apply_documents(&client, &snapshot, force).await }
         });
         cx.spawn(async move |view, cx| {
-            let result = rx.await;
+            let result = applied.await;
             view.update(cx, |this, cx| {
-                this.finish_apply(result.ok(), cx);
+                this.finish_apply(result, cx);
             })
             .ok();
         })
@@ -424,11 +426,14 @@ impl YamlEditorView {
         self.precheck_status = PrecheckStatus::Checking;
         cx.notify();
 
-        let rx = spawn_cluster(async move { apply::precheck_documents(&client, &snapshot).await });
+        let checked =
+            run_on_cluster_runtime(
+                async move { apply::precheck_documents(&client, &snapshot).await },
+            );
         cx.spawn(async move |view, cx| {
-            let result = rx.await;
+            let result = checked.await;
             view.update(cx, |this, cx| {
-                this.finish_precheck(version, manual, result.ok(), cx);
+                this.finish_precheck(version, manual, result, cx);
             })
             .ok();
         })

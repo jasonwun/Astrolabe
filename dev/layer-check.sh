@@ -7,6 +7,8 @@
 # - its sources and tests name no `async fn`, `kube::Client`,
 #   `astrolabe_kube::Cluster` (the live handle; `ClusterId` and other value
 #   types are fine) and read no clock (`::now(`).
+# The UI layer (crates/app) does not depend on tokio: the cluster runtime
+# is `astrolabe-kube`'s alone (#159).
 # The search is line-based: it catches a full path or a one-line
 # `use a::{.., X, ..}`, not a `use` list split over several lines. Comment
 # lines are skipped, so a doc comment may name a forbidden item.
@@ -48,6 +50,13 @@ for dep in $model_deps; do
         status=1
     fi
 done
+
+app_deps=$(direct_deps astrolabe)
+if grep -qx tokio <<<"$app_deps"; then
+    echo "astrolabe depends on tokio; cluster I/O runs on astrolabe-kube's" \
+        "runtime, reached through Cluster." >&2
+    status=1
+fi
 
 # `path::X` or `path::{.., X, ..}` on one line.
 names() { echo "\\b$1::(\\{[^}]*\\b)?$2\\b"; }

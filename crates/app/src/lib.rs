@@ -8,7 +8,6 @@ mod cluster_io;
 pub mod detail;
 pub mod exec;
 pub mod keymap;
-pub mod kube_bridge;
 pub mod logs;
 pub mod perf;
 mod resource_detail;

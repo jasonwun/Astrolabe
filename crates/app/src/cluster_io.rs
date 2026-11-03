@@ -12,14 +12,14 @@ use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::{
-    ExecInput, ExecOutput, ExecRequest, ExecSession, LogChunk, LogRequest, LogStream,
+    ExecInput, ExecOutput, ExecRequest, ExecSession, ForwardEvent, ForwardRequest, LogChunk,
+    LogRequest, LogStream, PortForward,
 };
 use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
 use futures::future::{self, BoxFuture};
-use futures::{FutureExt as _, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, channel::mpsc};
 
-use crate::kube_bridge::spawn_cluster_task;
-use crate::session::{ForwardRequest, ForwardTarget, WatchKey};
+use crate::session::WatchKey;
 pub use astrolabe_kube::cluster::SharedClient;
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
@@ -27,39 +27,6 @@ type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), ClusterError>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
 type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
 type ExecFn = Box<dyn FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput>>;
-
-/// What a port-forward reports.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ForwardEvent {
-    /// Accepting on this localhost port.
-    Listening(u16),
-    /// One connection's forward failed; the listener goes on.
-    ConnectionFailed(String),
-    /// The forward stopped: the client, the bind or the listener failed.
-    Failed(String),
-}
-
-/// A running port-forward; dropping it closes the listener and its
-/// connections.
-pub struct PortForward {
-    events: mpsc::UnboundedReceiver<ForwardEvent>,
-    task: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl PortForward {
-    /// The next report; `None` once the forward is gone.
-    pub async fn next(&mut self) -> Option<ForwardEvent> {
-        self.events.next().await
-    }
-}
-
-impl Drop for PortForward {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-    }
-}
 
 /// Hand-fed cluster I/O for tests and demos: watch events come from
 /// channels, discovery, operations, log chunks, exec output and
@@ -238,74 +205,17 @@ impl ClusterIo {
     }
 
     /// Forward a localhost port to one Pod or Service port: the same port
-    /// when free.
+    /// when free. A scripted cluster's reports are all sent at once.
     pub(crate) fn port_forward(&mut self, request: ForwardRequest) -> PortForward {
-        let (sender, events) = mpsc::unbounded();
         match self {
             Self::Scripted(cluster) => {
+                let (sender, events) = mpsc::unbounded();
                 for event in (cluster.port_forward)(&request) {
                     let _ = sender.unbounded_send(event);
                 }
-                PortForward { events, task: None }
+                PortForward::new(events)
             }
-            Self::Live(cluster) => {
-                let client = cluster.client();
-                let task = spawn_cluster_task(async move {
-                    let failed = |error: String| {
-                        let _ = sender.unbounded_send(ForwardEvent::Failed(error));
-                    };
-                    let client = match client.await {
-                        Ok(client) => client,
-                        Err(error) => return failed(error.to_string()),
-                    };
-                    let port = request.port;
-                    let listener = match astrolabe_kube::pod::bind_local(port).await {
-                        Ok(listener) => listener,
-                        Err(error) => return failed(format!("bind localhost: {error}")),
-                    };
-                    match listener.local_addr() {
-                        Ok(local) => {
-                            let _ = sender.unbounded_send(ForwardEvent::Listening(local.port()));
-                        }
-                        Err(error) => return failed(format!("bind localhost: {error}")),
-                    }
-                    let connections = sender.clone();
-                    let on_error = move |error| {
-                        let _ = connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
-                    };
-                    let result = match &request.target {
-                        ForwardTarget::Pod(pod) => {
-                            astrolabe_kube::pod::port_forward(
-                                &client,
-                                pod.namespace.as_deref().unwrap_or_default(),
-                                &pod.name,
-                                port,
-                                listener,
-                                on_error,
-                            )
-                            .await
-                        }
-                        ForwardTarget::Service(service) => {
-                            astrolabe_kube::service::port_forward(
-                                &client,
-                                service.namespace.as_deref().unwrap_or_default(),
-                                &service.name,
-                                port,
-                                listener,
-                                on_error,
-                            )
-                            .await
-                        }
-                    };
-                    if let Err(error) = result {
-                        failed(format!("listener: {error}"));
-                    }
-                });
-                PortForward {
-                    events,
-                    task: Some(task),
-                }
-            }
+            Self::Live(cluster) => cluster.port_forward(request),
         }
     }
 
