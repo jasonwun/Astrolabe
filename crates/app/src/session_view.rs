@@ -87,6 +87,12 @@ impl SessionView {
         }
     }
 
+    /// The Session this view shows, for views outside it that act on its
+    /// Cluster: the Workspace's YAML editor (#161).
+    pub fn session(&self) -> Entity<Session> {
+        self.session.clone()
+    }
+
     pub fn health(&self, cx: &App) -> ConnectionHealth {
         self.session.read(cx).health()
     }

@@ -224,7 +224,7 @@ fn failed_report(snapshot: &str, status: serde_json::Value) -> ApplyReport {
 }
 
 /// What a plain Apply answers: `kubectl` owns `metadata.name` (409).
-fn conflict_report(snapshot: &str) -> ApplyReport {
+pub fn conflict_report(snapshot: &str) -> ApplyReport {
     failed_report(
         snapshot,
         serde_json::json!({
@@ -237,7 +237,7 @@ fn conflict_report(snapshot: &str) -> ApplyReport {
 }
 
 /// What a Precheck answers: an unknown field, which a real Apply ignores.
-fn unknown_field_report(snapshot: &str) -> ApplyReport {
+pub fn unknown_field_report(snapshot: &str) -> ApplyReport {
     failed_report(
         snapshot,
         serde_json::json!({
@@ -322,14 +322,7 @@ impl Ui<'_> {
     ///
     /// When `id` is not rendered.
     pub fn label(&mut self, id: &'static str) -> String {
-        self.frame(|window, _| {
-            window
-                .try_find(id)
-                .unwrap_or_else(|| panic!("{id} not rendered"))
-                .label()
-                .unwrap_or_default()
-                .to_string()
-        })
+        label(self.cx, id)
     }
 
     pub fn frame<R>(
@@ -341,6 +334,24 @@ impl Ui<'_> {
             f(window, cx)
         })
     }
+}
+
+/// The accessible label of `id` in a freshly drawn frame; empty when `id`
+/// has none. For tests that build their window without [`open`].
+///
+/// # Panics
+///
+/// When `id` is not rendered.
+pub fn label(cx: &mut VisualTestContext, id: &'static str) -> String {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window
+            .try_find(id)
+            .unwrap_or_else(|| panic!("{id} not rendered"))
+            .label()
+            .unwrap_or_default()
+            .to_string()
+    })
 }
 
 /// Press and release the left button on the centre `id` was last drawn at,

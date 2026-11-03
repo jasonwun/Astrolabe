@@ -398,8 +398,7 @@ path to it. The free function it wraps becomes `pub(crate)` in the same
 diff, and the tests and e2e that called it go through `Cluster`. The
 answer is a plain `Future` from `cluster.rs`'s `spawn`, never a tokio
 type such as `oneshot::Receiver`, so GPUI and any executor can await it.
-The module doc and `Cluster::client()`'s doc list only the requests that
-have not moved yet. A method that runs on the handle's stored `runtime`
+The module doc lists the requests that go through the handle. A method that runs on the handle's stored `runtime`
 has no `# Panics` for building the cluster runtime: only `connect` and
 `from_client` can reach that.
 
@@ -407,17 +406,16 @@ A request left with two public paths, an answer that exposes a tokio
 type, or a doc that names a moved request as pending (or a pending one
 as moved) is a finding.
 
-A request that has not moved yet but loses the path it ran on (the
-app's `kube_bridge`, removed in #159) runs through
-`cluster::run_on_cluster_runtime`. That helper's doc names each such
-request and the ticket that moves it, and the last of those tickets
-has an acceptance criterion that removes the helper.
+Every request has moved (#161): the app reaches a Cluster only through
+`Session`, and only `crates/app/src/cluster_io.rs` names `Cluster`;
+`dev/layer-check.sh` fails on a `kube::Client` or a `Cluster` anywhere
+else in the app. A stopgap that runs a request off the handle (such as
+`run_on_cluster_runtime`, #159–#161) names the ticket that removes it,
+and that ticket has the removal as an acceptance criterion.
 
-A caller that holds its own `kube::Client` rather than a Session (the
-Workspace YAML editor until #161, an e2e test) wraps it in
-`Cluster::from_client` and calls the moved request there. It never
-keeps the free function public. Only the step with no `Cluster` yet,
-such as building that client, goes through `run_on_cluster_runtime`.
+A test that holds its own `kube::Client` (an e2e or mock test) wraps it
+in `Cluster::from_client` and calls the request there, never a public
+free function.
 
 Origin: #160's first draft kept `apply_documents` and
 `precheck_documents` `pub` for the Workspace editor and the e2e. The

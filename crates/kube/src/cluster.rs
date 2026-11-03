@@ -1,7 +1,6 @@
-//! The live Cluster handle (#147): requests to a Cluster go through
-//! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches,
-//! operations, Apply, Precheck, logs, exec and port-forward do; only the
-//! Workspace YAML editor's current-context connect does not yet (#161).
+//! The live Cluster handle (#147): every request to a Cluster (Discovery,
+//! watches, operations, Apply, Precheck, logs, exec and port-forward) goes
+//! through [`Cluster`] and fails with a [`ClusterError`].
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future, receiver or
@@ -58,34 +57,11 @@ fn spawn<T: Send + 'static>(
     request: impl Future<Output = Result<T, ClusterError>> + Send + 'static,
     panicked: ClusterError,
 ) -> impl Future<Output = Result<T, ClusterError>> + Send + 'static {
-    spawn_on(runtime, request).map(|answer| answer.unwrap_or(Err(panicked)))
-}
-
-/// Start `request` on `runtime` now; the returned future resolves with its
-/// answer, or with `None` if the task panicked.
-fn spawn_on<T: Send + 'static>(
-    runtime: &Handle,
-    request: impl Future<Output = T> + Send + 'static,
-) -> impl Future<Output = Option<T>> + Send + 'static {
     let (sender, receiver) = oneshot::channel();
     runtime.spawn(async move {
         let _ = sender.send(request.await);
     });
-    async move { receiver.await.ok() }
-}
-
-/// Run `request` on the cluster runtime, for the requests that do not go
-/// through [`Cluster`] yet: the Workspace YAML editor's current-context
-/// connect, which #161 moves onto a Session's Cluster and so removes this.
-/// The answer is `None` if the task panicked.
-///
-/// # Panics
-///
-/// When the cluster runtime cannot be created on first use.
-pub fn run_on_cluster_runtime<T: Send + 'static>(
-    request: impl Future<Output = T> + Send + 'static,
-) -> impl Future<Output = Option<T>> + Send + 'static {
-    spawn_on(runtime().handle(), request)
+    receiver.map(|answer| answer.unwrap_or(Err(panicked)))
 }
 
 /// What kind of failure a [`ClusterError`] is.

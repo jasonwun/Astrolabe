@@ -86,7 +86,14 @@ Reference: `crates/app/src/resource_list.rs`.
   fixture (#106).
 - An element's accessible label, as the frame draws it:
   `ui.label(id)` (`crates/app/tests/support`); it panics when `id` is
-  not rendered (#160).
+  not rendered (#160). A test that builds its window without
+  `support::open`, such as one over a `WorkspaceView`, calls
+  `support::label(cx, id)` (#161).
+- The report of a plain Apply that `kubectl` refuses with a 409 on
+  `metadata.name`, which offers Force Apply:
+  `support::conflict_report(snapshot)`; a Precheck's that notes the
+  unknown field `spec.bogus`: `support::unknown_field_report(snapshot)`
+  (#161).
 - Clicking an element whose handler listens for mouse events, such as a
   dock tab or its close button, which `window.click` does not reach:
   `support::mouse_click(cx, id)` presses and releases on where `id` was
