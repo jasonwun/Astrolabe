@@ -459,21 +459,27 @@ spec:
     let crds: Api<CustomResourceDefinition> = Api::all(client.clone());
     let crd = crds.get(&crd_name).await.unwrap();
 
-    // Discovery serves the kind only once the CRD is established.
+    // Discovery serves the kind only once the CRD is established. Until
+    // then legacy discovery can fail outright: the new group is listed
+    // under /apis while its group version still answers 404. The error
+    // does not say which group failed, so any error counts as "not served
+    // yet"; a persistent one surfaces in the timeout panic, not as a bare
+    // timeout.
+    let mut last_error = None;
     let served = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            let served = Cluster::from_client(client.clone(), "e2e")
-                .discover()
-                .await
-                .unwrap();
-            if served.resolve(&group, "v1", "Widget").is_some() {
-                break served;
+            match Cluster::from_client(client.clone(), "e2e").discover().await {
+                Ok(served) if served.resolve(&group, "v1", "Widget").is_some() => break served,
+                Ok(_) => {}
+                Err(error) => last_error = Some(error),
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     })
     .await
-    .expect("CRD never became discoverable");
+    .unwrap_or_else(|_| {
+        panic!("CRD never became discoverable; last discover() error: {last_error:?}")
+    });
     assert!(served.resolve("", "v1", "Namespace").is_some());
 
     let groups = catalog(&[&crd], Some(&served));
