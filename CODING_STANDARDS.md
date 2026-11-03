@@ -407,6 +407,13 @@ A request left with two public paths, an answer that exposes a tokio
 type, or a doc that names a moved request as pending (or a pending one
 as moved) is a finding.
 
+A request over a WebSocket upgrade (exec, port-forward, attach) is not
+refused through `kube::Error::Api`: kube-rs reports the refusal as
+`UpgradeConnection(ProtocolSwitch(status))`. `From<kube::Error> for
+ClusterError` maps a 403 there to `Forbidden`; a moved upgrade request
+has a test that a 403 arrives as `Forbidden` and another status as
+`Other`.
+
 Origin: #155's first draft wrapped `discovery::discover` in
 `Cluster::discover` but left the free function `pub`, returned the
 spawned task's `oneshot::Receiver`, and its module doc said every
@@ -416,3 +423,5 @@ the second path; all three were fixed before merge (#155 retro).
 #156 kept `discover`'s runtime `# Panics` after it moved onto the
 stored handle, and copied it onto the three `watch_*` methods; the
 Standards reviewer caught it (#156 retro).
+#158's 403 exec test first saw `Other`: the refusal came as
+`UpgradeConnection`, which the mapping did not cover (#158 retro).
