@@ -4,8 +4,9 @@
 use std::collections::HashMap;
 
 use kube::Client;
-use kube::core::GroupVersionKind;
-use kube::discovery::{ApiGroup, ApiResource, Discovery, Scope};
+use kube::core::{GroupVersion, GroupVersionKind};
+use kube::discovery::{ApiGroup, ApiResource, Discovery, Scope, pinned_group};
+use kube::error::DiscoveryError;
 
 /// One served kind at one version.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,8 +37,8 @@ impl ServedResources {
         Self { by_gvk }
     }
 
-    fn from_discovery(discovery: &Discovery) -> Self {
-        Self::new(discovery.groups().flat_map(|group| {
+    fn from_groups<'a>(groups: impl IntoIterator<Item = &'a ApiGroup>) -> Self {
+        Self::new(groups.into_iter().flat_map(|group| {
             group.versions().flat_map(|version| {
                 group
                     .versioned_resources(version)
@@ -68,20 +69,65 @@ impl ServedResources {
 /// `curl` through `kubectl proxy` with that Accept header). Every real
 /// server serves the core group, so its absence is the "unsupported" signal.
 ///
+/// Per-group discovery skips a named group's version whose
+/// `/apis/<group>/<version>` answers 404, as a CRD group mid-registration
+/// does: it is listed under `/apis` before that path serves. Core
+/// versions (`/api/<version>`) are not skipped.
+///
 /// # Errors
 ///
-/// A [`kube::Error`] when per-group discovery fails; a failed aggregated
-/// request only falls back to it.
+/// A [`kube::Error`] when per-group discovery fails other than by a 404
+/// from `/apis/<group>/<version>`; a failed aggregated request only falls
+/// back to it.
 pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
         Ok(discovery) if discovery.has_group(ApiGroup::CORE_GROUP) => {
-            return Ok(ServedResources::from_discovery(&discovery));
+            return Ok(ServedResources::from_groups(discovery.groups()));
         }
         Ok(_) => tracing::debug!("aggregated discovery unsupported; using per-group discovery"),
         Err(error) => {
             tracing::debug!(error = %error, "aggregated discovery failed; using per-group discovery");
         }
     }
-    let discovery = Discovery::new(client.clone()).run().await?;
-    Ok(ServedResources::from_discovery(&discovery))
+    discover_per_group(client).await
+}
+
+/// kube-client's `Discovery::run`, except that a named group's version
+/// answering 404 is skipped with a warning instead of failing the whole
+/// run. The request order and every other error match `Discovery::run`
+/// (kube-client 4.2.0): `/apis`, each group version, `/api`, each core
+/// version.
+async fn discover_per_group(client: &Client) -> kube::Result<ServedResources> {
+    let mut group_versions = Vec::new();
+    for group in client.list_api_groups().await?.groups {
+        if group.versions.is_empty() {
+            return Err(kube::Error::Discovery(DiscoveryError::EmptyApiGroup(
+                group.name,
+            )));
+        }
+        for version in &group.versions {
+            let group_version = GroupVersion::gv(&group.name, &version.version);
+            match pinned_group(client, &group_version).await {
+                Ok(pinned) => group_versions.push(pinned),
+                Err(kube::Error::Api(status)) if status.code == 404 => {
+                    tracing::warn!(
+                        group_version = %group_version.api_version(),
+                        "group version not served yet (404); skipping it in discovery"
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    let core = client.list_core_api_versions().await?;
+    if core.versions.is_empty() {
+        return Err(kube::Error::Discovery(DiscoveryError::EmptyApiGroup(
+            ApiGroup::CORE_GROUP.to_string(),
+        )));
+    }
+    for version in &core.versions {
+        let group_version = GroupVersion::gv(ApiGroup::CORE_GROUP, version);
+        group_versions.push(pinned_group(client, &group_version).await?);
+    }
+    Ok(ServedResources::from_groups(&group_versions))
 }
