@@ -120,6 +120,7 @@ impl<K: ResourceExt> Watched<K> {
         self.stale = false;
     }
 
+    /// The watch failed or ended: keep the snapshot, flag it stale.
     pub fn mark_stale(&mut self) {
         self.set_health(ConnectionHealth::Stale);
         self.stale = self.has_snapshot;

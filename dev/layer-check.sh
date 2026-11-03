@@ -8,6 +8,7 @@
 #   `astrolabe_kube::Cluster` or `cluster::Cluster` (the live handle,
 #   whichever way it is reached; `ClusterId` and other value types are
 #   fine) and read no clock (`::now(`).
+# `tracing` is on the allowlist for log events only, no I/O (#163).
 # The UI layer (crates/app) does not depend on tokio: the cluster runtime
 # is `astrolabe-kube`'s alone (#159). Its sources and tests name no
 # `kube::Client`, and only the I/O seam (crates/app/src/cluster_io.rs)

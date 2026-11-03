@@ -9,8 +9,8 @@ publish.workspace = true
 astrolabe-kube.workspace = true
 cronspeak.workspace = true
 serde_json.workspace = true
-tracing.workspace = true
 serde-saphyr.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
