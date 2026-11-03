@@ -1,11 +1,11 @@
 //! The Events list component (#17): kubectl's columns, newest first, and
 //! the involvedObject filter a related section applies.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::events::event_involves;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Event, Pod};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::events::event_involves;
 use support::list;
 
 mod support;
@@ -19,6 +19,10 @@ fn typed_event(name: &str, extra: serde_json::Value) -> Event {
 }
 
 /// Synthetic Event (plausible shape, not captured from a server).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a json! literal"
+)]
 fn event_json(name: &str, extra: serde_json::Value) -> serde_json::Value {
     let mut value = serde_json::json!({
         "apiVersion": "v1", "kind": "Event",
@@ -133,6 +137,14 @@ fn an_unnamed_involved_object_shows_its_kind() {
     );
     assert_eq!(
         list(BuiltinKind::Events, vec![node], now()).rows[0].cells[2],
+        "node"
+    );
+    let unnamed = event_json(
+        "unnamed",
+        serde_json::json!({"involvedObject": {"kind": "Node", "name": ""}}),
+    );
+    assert_eq!(
+        list(BuiltinKind::Events, vec![unnamed], now()).rows[0].cells[2],
         "node"
     );
 }

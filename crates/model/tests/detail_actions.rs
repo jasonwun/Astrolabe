@@ -4,12 +4,12 @@
 
 mod support;
 
-use astrolabe::builtin::{Action, BuiltinKind};
-use astrolabe::session::OperationText as _;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
+use astrolabe_model::builtin::{Action, BuiltinKind};
+use astrolabe_model::operation_text;
 
 fn web() -> ObjectRef {
     ObjectRef {
@@ -58,9 +58,9 @@ fn each_operation_names_its_pending_done_and_failure_text() {
     for (operation, (pending, done, verb)) in cases {
         assert_eq!(
             (
-                operation.pending(),
-                operation.done().as_str(),
-                operation.verb()
+                operation_text::pending(&operation),
+                operation_text::done(&operation).as_str(),
+                operation_text::verb(&operation)
             ),
             (pending, done, verb),
             "{operation:?}"

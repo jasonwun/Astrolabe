@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
+use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
-use crate::builtin::BuiltinKind;
 use crate::kube_bridge::spawn_cluster;
 use crate::perf;
 use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, NamespaceWatchMessage, ScriptedCluster};

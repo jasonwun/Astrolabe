@@ -1,9 +1,14 @@
 //! HorizontalPodAutoscalers on the generic list/detail pipeline (#20), with
 //! Freelens 14a491f's columns and detail fields.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{DetailItem, DetailSection, SummaryTable};
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::{DetailItem, DetailSection, SummaryTable};
 use support::{detail, list};
 
 mod support;
@@ -275,4 +280,62 @@ fn an_empty_external_average_reads_as_unknown_like_a_missing_one() {
     let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![external], now());
 
     assert_eq!(table.rows[0].cells[1], "unknown / unknown");
+}
+
+#[test]
+fn a_metrics_current_value_is_the_one_of_its_own_type_and_name() {
+    let mut hpa = web_hpa();
+    hpa["spec"]["metrics"] = serde_json::json!([
+        {"type": "Resource", "resource": {"name": "cpu",
+            "target": {"type": "Utilization", "averageUtilization": 50}}},
+        {"type": "Resource", "resource": {"name": "memory",
+            "target": {"type": "Utilization", "averageUtilization": 60}}},
+        {"type": "External", "external": {"metric": {"name": "queue_messages"},
+            "target": {"type": "AverageValue", "averageValue": "30"}}}
+    ]);
+    hpa["status"]["currentMetrics"] = serde_json::json!([
+        {"type": "Resource", "resource": {"name": "memory",
+            "current": {"averageUtilization": 40}}},
+        {"type": "External", "external": {"metric": {"name": "queue_messages"},
+            "current": {"averageValue": "20"}}}
+    ]);
+
+    let model = detail(BuiltinKind::HorizontalPodAutoscalers, hpa, now());
+
+    assert_eq!(
+        model.sections,
+        [metrics_section(&[
+            // Only memory is reported: cpu's Resource sibling is not cpu's.
+            ["Resource cpu on Pods", "unknown / 50%"],
+            ["Resource memory on Pods", "40% / 60%"],
+            ["queue_messages", "20 (avg) / 30 (avg)"],
+        ])]
+    );
+}
+
+#[test]
+fn conditions_that_changed_together_sort_by_freelens_priority() {
+    let mut hpa = web_hpa();
+    // Lowest priority first, so a lost priority keeps this order.
+    hpa["status"]["conditions"] = [
+        "Other",
+        "PodScheduled",
+        "PodReadyToStartContainers",
+        "ContainersReady",
+        "Initialized",
+        "Synced",
+    ]
+    .iter()
+    .map(|kind| {
+        serde_json::json!({"type": kind, "status": "True",
+                           "lastTransitionTime": "2026-10-22T11:00:00Z"})
+    })
+    .collect();
+
+    let table = list(BuiltinKind::HorizontalPodAutoscalers, vec![hpa], now());
+
+    assert_eq!(
+        table.rows[0].cells[6],
+        "Synced, Initialized, ContainersReady, PodReadyToStartContainers, PodScheduled, Other"
+    );
 }

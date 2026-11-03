@@ -1,8 +1,13 @@
-use astrolabe::projection::{ResourceRow, project_namespaces};
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::projection::{ResourceRow, project_namespaces};
 
 mod support;
 
@@ -44,9 +49,9 @@ fn namespaces_project_to_handwritten_columns() {
 }
 
 mod namespace_detail {
-    use astrolabe::projection::{namespace_detail, object_yaml};
     use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
     use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+    use astrolabe_model::projection::{namespace_detail, object_yaml};
 
     fn now() -> Timestamp {
         "2026-10-22T12:00:00Z".parse().unwrap()
@@ -125,15 +130,15 @@ mod namespace_detail {
 mod custom {
     use std::collections::BTreeSet;
 
-    use astrolabe::projection::{
-        ResourceRow, age_cadence, custom_resource_detail, definition_detail, format_age,
-        next_age_change, project_custom_resources, project_definitions, track_ages,
-    };
     use astrolabe_kube::crd::{CustomKind, catalog};
     use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
     use astrolabe_kube::k8s_openapi::jiff::{SignedDuration, Timestamp};
     use astrolabe_kube::kube::core::DynamicObject;
     use astrolabe_kube::object::ObjectKey;
+    use astrolabe_model::projection::{
+        ResourceRow, age_cadence, custom_resource_detail, definition_detail, format_age,
+        next_age_change, project_custom_resources, project_definitions, track_ages,
+    };
 
     use crate::support::object;
 
@@ -204,6 +209,39 @@ mod custom {
     }
 
     #[test]
+    fn ages_change_unit_at_kubectl_boundaries() {
+        let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);
+        let cases = [
+            (-2, "<invalid>"),
+            (-1, "0s"),
+            (0, "0s"),
+            (119, "119s"),
+            (120, "2m"),
+            (10 * 60 - 1, "9m59s"),
+            (10 * 60, "10m"),
+            (10 * 60 + 1, "10m"),
+            (180 * 60 - 1, "179m"),
+            (180 * 60, "3h"),
+            (8 * 3600 - 1, "7h59m"),
+            (8 * 3600, "8h"),
+            (8 * 3600 + 60, "8h"),
+            (48 * 3600 - 1, "47h"),
+            (48 * 3600, "2d"),
+            (8 * 86400 - 1, "7d23h"),
+            (8 * 86400, "8d"),
+            (8 * 86400 + 3600, "8d"),
+            (2 * 365 * 86400 - 1, "729d"),
+            (2 * 365 * 86400, "2y"),
+            (8 * 365 * 86400 - 1, "7y364d"),
+            (8 * 365 * 86400, "8y"),
+            (8 * 365 * 86400 + 86400, "8y"),
+        ];
+        for (seconds, age) in cases {
+            assert_eq!(format_age(ago(seconds), now()), age, "{seconds}s ago");
+        }
+    }
+
+    #[test]
     fn ages_tick_every_second_below_ten_minutes_then_every_minute() {
         // Freelens 113abe5 `computeUpdateInterval`, compact: `minutes < 10`.
         let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);
@@ -254,7 +292,7 @@ mod custom {
         assert_eq!(next, std::time::Duration::from_secs(1));
 
         // Nothing aged: a minute.
-        let (_, next) = track_ages(now(), || ());
+        let ((), next) = track_ages(now(), || ());
         assert_eq!(next, std::time::Duration::from_secs(60));
     }
 

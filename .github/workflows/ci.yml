@@ -17,13 +17,16 @@ jobs:
       - run: dev/registration-path.sh
       - run: dev/log-capture.sh
       - run: dev/layer-check.sh
-      # Dependency-direction guard: the kube layer must stay gpui-free.
-      - name: astrolabe-kube must not depend on gpui
+      # Dependency-direction guard: the kube and model layers must stay
+      # gpui-free.
+      - name: astrolabe-kube and astrolabe-model must not depend on gpui
         run: |
-          if cargo tree -p astrolabe-kube --locked | grep -qi gpui; then
-            echo "gpui found in astrolabe-kube's dependency tree" >&2
-            exit 1
-          fi
+          for crate in astrolabe-kube astrolabe-model; do
+            if cargo tree -p "$crate" --locked | grep -qi gpui; then
+              echo "gpui found in $crate's dependency tree" >&2
+              exit 1
+            fi
+          done
 
   build-test:
     runs-on: macos-latest

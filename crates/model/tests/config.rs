@@ -1,10 +1,15 @@
 //! ConfigMaps and Secrets on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::SummaryTable;
-use astrolabe::projection::config::{Revealable, SecretKey};
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::SummaryTable;
+use astrolabe_model::projection::config::{Revealable, SecretKey};
 use support::{detail, list};
 
 mod support;
@@ -179,4 +184,11 @@ fn a_secret_last_applied_annotation_is_masked_too() {
     assert!(!model.yaml.contains("aHVudGVyMg=="), "{}", model.yaml);
     assert!(model.yaml.contains("team: db"), "{}", model.yaml);
     assert!(model.edit_yaml.unwrap().contains("aHVudGVyMg=="));
+}
+
+#[test]
+fn a_revealable_value_debugs_as_hidden() {
+    let secret = Revealable::new("hunter2".to_string());
+    assert_eq!(format!("{secret:?}"), "<hidden>");
+    assert_eq!(secret.reveal(), "hunter2");
 }

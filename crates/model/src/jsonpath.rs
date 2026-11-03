@@ -113,7 +113,6 @@ fn bracket_end(input: &str) -> Option<usize> {
     for (index, ch) in input.char_indices() {
         match (quote, ch) {
             (Some(open), ch) if ch == open => quote = None,
-            (Some(_), _) => {}
             (None, '"' | '\'') => quote = Some(ch),
             (None, '[') => depth += 1,
             (None, ']') => {

@@ -4,8 +4,8 @@
 //! Synthetic objects (plausible shapes, never captured from a real
 //! apiserver).
 
-use astrolabe::builtin::BuiltinKind;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
 use support::{detail, list, object};
 
 mod support;
@@ -14,6 +14,10 @@ fn now() -> Timestamp {
     "2026-10-22T12:00:00Z".parse().unwrap()
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a json! literal"
+)]
 fn slice_json(name: &str, owner: &str, ports: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice",

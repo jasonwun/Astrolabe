@@ -5,7 +5,6 @@
 
 mod support;
 
-use astrolabe::builtin::BuiltinKind;
 use astrolabe::detail::{DetailTarget, NeededWatch, RelatedOutcome, Resolved, resolve, watches};
 use astrolabe::session::{ScriptedCluster, Session, WatchError};
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
@@ -14,6 +13,7 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
+use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::{AppContext as _, Entity, TestAppContext};
 use support::{Sender, key, object, snapshot};

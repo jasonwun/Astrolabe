@@ -1,10 +1,15 @@
 //! The complete built-in Registration contract. New kinds join this matrix
 //! with their list columns, full action set and optional related kind.
 
-use astrolabe::builtin::{Action, BuiltinKind};
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_model::builtin::{Action, BuiltinKind};
 use support::object;
 
 mod support;
@@ -19,6 +24,7 @@ struct Contract {
 const EDIT_DELETE: &[Action] = &[Action::Edit, Action::Delete];
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "one row per built-in kind")]
 fn every_builtin_registration_matches_its_contract() {
     let contracts = [
         Contract {

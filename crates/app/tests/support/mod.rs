@@ -8,9 +8,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use astrolabe::builtin::BuiltinKind;
 use astrolabe::clock::Clock;
-use astrolabe::projection::{DetailModel, ResourceTable};
 use astrolabe::session::{
     ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
     ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
@@ -21,6 +19,7 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectRef, Operation};
+use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
@@ -50,17 +49,6 @@ pub fn snapshot<K>(sender: &mut Sender<K>, objects: Vec<K>) {
 
 pub fn object(value: serde_json::Value) -> DynamicObject {
     serde_json::from_value(value).unwrap()
-}
-
-/// Lists `raws` through `kind`'s Registration, as the app does.
-pub fn list(kind: BuiltinKind, raws: Vec<serde_json::Value>, now: Timestamp) -> ResourceTable {
-    let objects: Vec<DynamicObject> = raws.into_iter().map(object).collect();
-    (kind.registration().list)(&objects.iter().collect::<Vec<_>>(), now)
-}
-
-/// Projects `raw` through `kind`'s Registration, as the app does.
-pub fn detail(kind: BuiltinKind, raw: serde_json::Value, now: Timestamp) -> DetailModel {
-    (kind.registration().detail)(&object(raw), now).unwrap()
 }
 
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;

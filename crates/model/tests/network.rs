@@ -1,14 +1,19 @@
 //! Services and Ingresses on the generic list/detail pipeline (#18), with
 //! Freelens 088d085's columns and detail fields.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::network::service_ports;
-use astrolabe::projection::workloads::ForwardPort;
-use astrolabe::projection::{
-    DetailField, DetailItem, DetailSection, DetailValue, Forward, ForwardTo, SummaryTable,
-};
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use astrolabe_kube::k8s_openapi::api::core::v1::Service;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::network::service_ports;
+use astrolabe_model::projection::workloads::ForwardPort;
+use astrolabe_model::projection::{
+    DetailField, DetailItem, DetailSection, DetailValue, Forward, ForwardTo, SummaryTable,
+};
 use support::{detail, list};
 
 mod support;
@@ -22,6 +27,10 @@ fn service(spec: serde_json::Value, status: serde_json::Value) -> Service {
 }
 
 /// A Service as the server sends it.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers pass a json! literal"
+)]
 fn service_object(spec: serde_json::Value, status: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "metadata": {"name": "web", "namespace": "default", "uid": "uid-svc",
@@ -711,4 +720,61 @@ fn an_ingress_detail_follows_lens() {
             },
         ]
     );
+}
+
+#[test]
+fn a_zero_node_port_falls_back_to_the_target_port() {
+    let service = service_object(
+        serde_json::json!({
+            "type": "ClusterIP",
+            "ports": [{"port": 80, "targetPort": 8080, "nodePort": 0, "protocol": "TCP"}]
+        }),
+        serde_json::json!({}),
+    );
+    assert_eq!(cells(service)[4], "80:8080/TCP");
+}
+
+/// The Client IP Timeout a Service with `timeout` seconds shows.
+fn client_ip_timeout(timeout: i64) -> String {
+    let model = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({
+                "type": "ClusterIP", "sessionAffinity": "ClientIP",
+                "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": timeout}}
+            }),
+            serde_json::json!({}),
+        ),
+        now(),
+    );
+    let affinity = section(&model.sections, "Session Affinity Config").unwrap();
+    value(field(affinity, "Client IP Timeout"))
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn a_client_ip_timeout_changes_unit_at_freelens_boundaries() {
+    const MINUTE: i64 = 60;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    // Two years in Freelens's 400-year Gregorian average.
+    const TWO_YEARS: i64 = 86_400 * 146_097 / 200;
+    let cases = [
+        (-1, "0s"),
+        (0, "0s"),
+        (119, "119s"),
+        (120, "2m"),
+        (180 * MINUTE - 1, "179m 59s"),
+        (180 * MINUTE, "3h"),
+        (48 * HOUR - 1, "47h 59m"),
+        (48 * HOUR, "2d"),
+        (8 * DAY - 1, "7d 23h 59m"),
+        (8 * DAY, "8d"),
+        (TWO_YEARS - 1, "730d 11h 38m"),
+        (TWO_YEARS, "2y 29d 11h 38m"),
+    ];
+    for (seconds, shown) in cases {
+        assert_eq!(client_ip_timeout(seconds), shown, "{seconds}s");
+    }
 }

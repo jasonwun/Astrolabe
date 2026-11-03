@@ -5,14 +5,14 @@
 
 mod support;
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{MIN_COLUMN_WIDTH, column_widths};
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::{MIN_COLUMN_WIDTH, column_widths};
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Bounds, Pixels, TestAppContext, Window, point, px, size};
-use support::{Ui, key, list, object, open, open_detail, snapshot};
+use support::{Ui, key, object, open, open_detail, snapshot};
 
 /// The Pods list's columns: Name, Ready, Status, Restarts, IP, Node, Age.
 const POD_COLUMNS: usize = 7;
@@ -85,7 +85,7 @@ fn related_columns_share_the_width_by_the_related_kinds_weights(cx: &mut TestApp
     let mut ui = deployment_with_a_pod(cx, 1200.);
 
     // The weights the Pods Registration gives its own list.
-    let weights = list(BuiltinKind::Pods, vec![], Timestamp::UNIX_EPOCH).weights();
+    let weights = (BuiltinKind::Pods.registration().list)(&[], Timestamp::UNIX_EPOCH).weights();
     assert_eq!(weights.len(), POD_COLUMNS);
 
     ui.frame(|window, _| {

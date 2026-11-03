@@ -344,14 +344,14 @@ fn current_target(
 }
 
 /// Freelens's `sortConditions` priorities: higher sorts first among
-/// conditions that changed at the same time.
+/// conditions that changed at the same time. Freelens ranks Ready 5; it is
+/// left out, as `condition_list` moves Ready first whatever its rank.
 fn condition_priority(kind: &str) -> i32 {
     match kind {
         "PodScheduled" => 1,
         "PodReadyToStartContainers" => 2,
         "ContainersReady" | "ArtifactInStorage" | "Released" => 3,
         "Initialized" => 4,
-        "Ready" => 5,
         "Synced" => 6,
         _ => 0,
     }

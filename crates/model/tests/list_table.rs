@@ -1,13 +1,18 @@
 //! A list is built from one definition per column (#99): its header, its
 //! weight and its cell cannot drift apart.
 
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
 use std::collections::BTreeMap;
 
-use astrolabe::projection::{Column, ListColumn, ResourceRow, list_table};
 use astrolabe_kube::k8s_openapi::api::core::v1::ConfigMap;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::projection::{Column, ListColumn, ResourceRow, list_table};
 
 const COLUMNS: &[Column<ConfigMap>] = &[
     Column {

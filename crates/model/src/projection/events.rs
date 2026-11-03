@@ -96,6 +96,5 @@ fn last_seen(event: &Event) -> Option<Timestamp> {
 }
 
 fn since(time: Option<Timestamp>, now: Timestamp) -> String {
-    time.map(|time| format_age(time, now))
-        .unwrap_or_else(|| "<unknown>".to_string())
+    time.map_or_else(|| "<unknown>".to_string(), |time| format_age(time, now))
 }

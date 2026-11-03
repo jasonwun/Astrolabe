@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use astrolabe_kube::object::ObjectKey;
+use astrolabe_model::builtin::BuiltinKind;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::dock::{DockArea, DockPlacement, DockSkin, PanelId, panel_handle};
@@ -8,7 +9,6 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::builtin::BuiltinKind;
 use crate::detail::DetailTarget;
 use crate::exec::ExecPanel;
 use crate::logs::LogsPanel;
@@ -349,7 +349,7 @@ impl SessionView {
                         std::iter::once(heading(section).into_any_element()).chain(
                             kinds.iter().map(|&kind| {
                                 item(
-                                    kind.nav_id(),
+                                    kind.nav_id().into(),
                                     kind.registration().label.to_string(),
                                     0,
                                     current == ListView::Builtin(kind),

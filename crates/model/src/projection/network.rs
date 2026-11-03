@@ -145,11 +145,8 @@ fn format_duration(seconds: i64) -> String {
             .join(" ")
     }
 
-    if seconds < 0 {
-        return "0s".to_string();
-    }
     if seconds < 120 {
-        return format!("{seconds}s");
+        return format!("{}s", seconds.max(0));
     }
     let minutes = seconds / 60;
     if minutes < 180 {
@@ -160,9 +157,7 @@ fn format_duration(seconds: i64) -> String {
         return meaningful(&[(hours, "h"), (minutes % 60, "m")]);
     }
     let days = hours / 24;
-    if days < 8 {
-        return meaningful(&[(days, "d"), (hours % 24, "h"), (minutes % 60, "m")]);
-    }
+    // Freelens's under-8-days branch prints what the under-2-years one does.
     let years = seconds * 400 / (86_400 * 146_097);
     if years < 2 {
         return meaningful(&[(days, "d"), (hours % 24, "h"), (minutes % 60, "m")]);
@@ -181,6 +176,10 @@ fn format_duration(seconds: i64) -> String {
 /// then the Connection section. `raw` is the Service's untyped body as the
 /// server sent it (no `metadata`); it retains fields that the current
 /// Kubernetes types no longer model.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one block per Freelens field, in Freelens's order"
+)]
 pub fn service_detail(service: &Service, raw: &serde_json::Value, now: Timestamp) -> DetailModel {
     let spec = service.spec.clone().unwrap_or_default();
     let mut summary = Vec::new();
@@ -223,7 +222,8 @@ pub fn service_detail(service: &Service, raw: &serde_json::Value, now: Timestamp
             items.push(
                 DetailField::from((
                     "Client IP Timeout",
-                    format_duration(client_ip.timeout_seconds.unwrap_or_default() as i64).as_str(),
+                    format_duration(i64::from(client_ip.timeout_seconds.unwrap_or_default()))
+                        .as_str(),
                 ))
                 .into(),
             );
@@ -506,18 +506,17 @@ fn routes(ingress: &Ingress, rule: &IngressRule) -> Vec<Route> {
 /// Freelens's `getBackendServiceNamePort`: `service:port` (the port's number,
 /// else its name), `<unknown>` for anything but a Service backend.
 fn backend_text(backend: &IngressBackend) -> String {
-    backend
-        .service
-        .as_ref()
-        .map(|service| {
+    backend.service.as_ref().map_or_else(
+        || "<unknown>".to_string(),
+        |service| {
             let port = service
                 .port
                 .as_ref()
                 .and_then(|port| port.number.map(|n| n.to_string()).or(port.name.clone()))
                 .unwrap_or_default();
             format!("{}:{port}", service.name)
-        })
-        .unwrap_or_else(|| "<unknown>".to_string())
+        },
+    )
 }
 
 /// Freelens's `Ingress.getPorts`: 80 when a rule has paths (or, with no rules,

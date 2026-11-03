@@ -304,12 +304,11 @@ name = "astrolabe"
 version = "0.0.0"
 dependencies = [
  "astrolabe-kube",
+ "astrolabe-model",
  "astrolabe-terminal",
- "cronspeak",
  "futures",
  "gpui-kit",
  "regex",
- "serde-saphyr 0.0.29",
  "serde_json",
  "tokio",
  "tracing",
@@ -336,6 +335,12 @@ dependencies = [
 [[package]]
 name = "astrolabe-model"
 version = "0.0.0"
+dependencies = [
+ "astrolabe-kube",
+ "cronspeak",
+ "serde-saphyr 0.0.29",
+ "serde_json",
+]
 
 [[package]]
 name = "astrolabe-terminal"

@@ -221,8 +221,8 @@ clean case caught it (#148 retro).
 ## Tests that claim the Registration's path
 
 A test of a built-in kind's list or detail calls the Registration
-through `support::list(kind, raws, now)` or `support::detail(kind, raw,
-now)`, which pass `DynamicObject`s to
+through `crates/model/tests/support`'s `list(kind, raws, now)` or
+`detail(kind, raw, now)`, which pass `DynamicObject`s to
 `(BuiltinKind::X.registration().list)` / `.detail`.
 `dev/registration-path.sh` (CI) fails a test that calls a projection
 function the Registration wraps; review covers the rest: a helper that

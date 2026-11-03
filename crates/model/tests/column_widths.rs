@@ -1,10 +1,15 @@
 //! A list's columns share the panel width by weight, as Freelens's do (#68).
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::{
+#![expect(
+    clippy::assert_is_empty,
+    reason = "moved from the app with its assertions unchanged (#153)"
+)]
+
+use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::{
     MIN_COLUMN_WIDTH, ResourceTable, column_widths, default_column_weights,
 };
-use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 
 /// An empty list through the HorizontalPodAutoscalers Registration.
 fn hpa_list() -> ResourceTable {
@@ -70,4 +75,11 @@ fn every_builtin_list_but_hpa_weighs_its_first_column_two_and_the_rest_one() {
             "{kind:?}"
         );
     }
+}
+
+#[test]
+fn a_share_of_exactly_the_minimum_is_not_clamped() {
+    // The second column's share is exactly 80, so it stays unclamped and,
+    // as the last unclamped column, takes the first's rounding remainder.
+    assert_eq!(column_widths(160.5, &[161., 160.]), vec![80., 80.5]);
 }

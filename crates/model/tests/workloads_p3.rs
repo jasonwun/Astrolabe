@@ -1,8 +1,8 @@
 //! P3 built-in workload projections, aligned with Freelens 14a491f.
 
-use astrolabe::builtin::BuiltinKind;
-use astrolabe::projection::ReplicaCounts;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
+use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::projection::ReplicaCounts;
 use support::{detail, list};
 
 mod support;
@@ -254,7 +254,7 @@ fn cronjobs_list_and_detail_follow_freelens_schedule_status() {
         .items
         .iter()
         .map(|item| {
-            let astrolabe::projection::DetailItem::Field(field) = item else {
+            let astrolabe_model::projection::DetailItem::Field(field) = item else {
                 panic!("template field expected")
             };
             (field.label.as_str(), field.values[0].text.as_str())
@@ -283,7 +283,7 @@ fn a_zero_second_ttl_reads_zero_seconds() {
     });
     let detail = detail(BuiltinKind::CronJobs, cronjob, now());
     let ttl = detail.sections[0].items.iter().find_map(|item| {
-        let astrolabe::projection::DetailItem::Field(field) = item else {
+        let astrolabe_model::projection::DetailItem::Field(field) = item else {
             return None;
         };
         (field.label == "TTL Seconds After Finished").then(|| field.values[0].text.as_str())
@@ -358,4 +358,96 @@ fn a_cronjob_detail_says_whether_it_is_suspended() {
         suspended(serde_json::json!({"schedule": "@daily", "jobTemplate": template})),
         Some(false)
     );
+}
+
+#[test]
+fn a_replicaset_counts_its_unavailable_replicas() {
+    let replicaset = serde_json::json!({
+        "apiVersion": "apps/v1", "kind": "ReplicaSet",
+        "metadata": {"name": "web-abc", "namespace": "default"},
+        "spec": {"replicas": 4, "selector": {"matchLabels": {"app": "web"}}},
+        "status": {"replicas": 4, "availableReplicas": 1}
+    });
+    let counts = detail(BuiltinKind::ReplicaSets, replicaset, now()).replicas;
+    assert_eq!(counts.map(|counts| counts.unavailable), Some(3));
+}
+
+/// Synthetic Job (plausible shape, not captured from a server), running.
+fn running_job(metadata: &serde_json::Value, status: &serde_json::Value) -> serde_json::Value {
+    let mut job = serde_json::json!({
+        "apiVersion": "batch/v1", "kind": "Job",
+        "metadata": {"name": "migrate", "namespace": "default"},
+        "spec": {"template": {"spec": {"containers": [{"name": "migrate"}]}}},
+        "status": status,
+    });
+    job["metadata"]
+        .as_object_mut()
+        .unwrap()
+        .extend(metadata.as_object().unwrap().clone());
+    job
+}
+
+fn job_status(job: serde_json::Value) -> String {
+    list(BuiltinKind::Jobs, vec![job], now()).rows[0].cells[2].clone()
+}
+
+#[test]
+fn a_deleted_job_finalizes_only_while_it_has_finalizers() {
+    let status = serde_json::json!({"conditions": [{"type": "Suspended", "status": "False"}]});
+    let deleted = |finalizers: serde_json::Value| {
+        let metadata = serde_json::json!({
+            "deletionTimestamp": "2026-10-22T11:59:00Z", "finalizers": finalizers
+        });
+        job_status(running_job(&metadata, &status))
+    };
+    assert_eq!(
+        deleted(serde_json::json!(["batch.kubernetes.io/job-tracking"])),
+        "Finalizing"
+    );
+    assert_eq!(deleted(serde_json::json!([])), "Terminating");
+}
+
+#[test]
+fn a_job_shows_a_duration_only_once_it_completed() {
+    let job = running_job(
+        &serde_json::json!({}),
+        &serde_json::json!({"active": 1, "startTime": "2026-10-22T11:50:00Z"}),
+    );
+    let status = detail(BuiltinKind::Jobs, job, now()).status;
+    assert!(status.iter().any(|(label, _)| label == "Start Time"));
+    assert!(!status.iter().any(|(label, _)| label == "Duration"));
+}
+
+#[test]
+fn a_schedule_on_a_day_its_month_never_has_reads_never() {
+    let cronjob = |schedule: &str| {
+        serde_json::json!({
+            "apiVersion": "batch/v1", "kind": "CronJob",
+            "metadata": {"name": "nightly", "namespace": "default"},
+            "spec": {"schedule": schedule,
+                     "jobTemplate": {"spec": {"template": {"spec": {"containers": [{"name": "job"}]}}}}},
+        })
+    };
+    let schedule = |text: &str| {
+        list(BuiltinKind::CronJobs, vec![cronjob(text)], now()).rows[0].cells[1].clone()
+    };
+    assert_eq!(schedule("0 0 30 2 *"), "never");
+    assert_eq!(schedule("0 0 29 2 *"), "0 0 29 2 *");
+}
+
+#[test]
+fn a_deadline_reads_in_the_largest_unit_that_divides_it() {
+    let deadline = |seconds: i64| {
+        let mut job = running_job(&serde_json::json!({}), &serde_json::json!({}));
+        job["spec"]["activeDeadlineSeconds"] = seconds.into();
+        detail(BuiltinKind::Jobs, job, now())
+            .status
+            .into_iter()
+            .find(|(label, _)| label == "Active Deadline Seconds")
+            .unwrap()
+            .1
+    };
+    assert_eq!(deadline(7200), "2h");
+    assert_eq!(deadline(5400), "90m");
+    assert_eq!(deadline(90), "90s");
 }

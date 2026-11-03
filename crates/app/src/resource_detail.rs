@@ -7,6 +7,12 @@
 use std::collections::BTreeSet;
 
 use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
+use astrolabe_model::builtin::Action;
+use astrolabe_model::operation_text;
+use astrolabe_model::projection::config::{HIDDEN, SecretKey};
+use astrolabe_model::projection::{
+    DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
+};
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -16,16 +22,11 @@ use gpui_kit::component::{Size, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::builtin::Action;
 use crate::clock;
 use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::perf;
-use crate::projection::config::{HIDDEN, SecretKey};
-use crate::projection::{
-    DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
-};
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
-use crate::session::{ExecRequest, LogRequest, OperationText as _, Session};
+use crate::session::{ExecRequest, LogRequest, Session};
 
 mod editor_panel;
 mod pod_actions;
@@ -225,7 +226,11 @@ impl ResourceDetailPanel {
             return false;
         };
         let operation = operation(object);
-        let (pending, done, verb) = (operation.pending(), operation.done(), operation.verb());
+        let (pending, done, verb) = (
+            operation_text::pending(&operation),
+            operation_text::done(&operation),
+            operation_text::verb(&operation),
+        );
         let result = self
             .session
             .update(cx, |session, _| session.operate(operation));

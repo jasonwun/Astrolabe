@@ -5,7 +5,7 @@
 
 mod support;
 
-use astrolabe::builtin::BuiltinKind;
+use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, Window, px};
