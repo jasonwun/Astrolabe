@@ -131,6 +131,12 @@ Reference: `crates/app/src/resource_list.rs`.
   "missing ElementId". To cover a click racing a change (the object left
   its watch before Delete was confirmed), test the seam the handler reads
   (`DetailTarget::object`) without a view (#96).
+- `simulate_keystrokes` and `dispatch_action` run until parked, so the
+  scripted answer lands before the test's next step. To act while a
+  request is in flight (select another Cluster before the Apply's answer
+  arrives), call `window.dispatch_keystroke` and the next action in one
+  `cx.update`, then `run_until_parked`: `press_then_select` in
+  `crates/app/tests/workspace_yaml.rs` (#161).
 - Snapshots carry element bounds, never laid-out text: a text element's
   bounds are its box, whatever the text's width or truncation. An
   ellipsis, a wrap, or text overflowing its box shows only in the manual

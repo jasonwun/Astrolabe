@@ -76,3 +76,7 @@ a fixture that fails if the field passes only through the typed model.
 - **Accepted deviations:** built-in kind lists leave out the Namespace
   column (#17). Any other deviation is a question for the user before it
   is implemented, not a decision recorded afterwards.
+- When an issue says to raise differences from upstream before building,
+  post them (an issue comment or a draft PR) and wait for the answer
+  before writing code; listing them only in the final PR is too late
+  (#161 retro).

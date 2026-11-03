@@ -242,6 +242,18 @@ held 4 (#152 retro).
 Paths a scripted test cannot reach stay missed: kubeconfig discovery
 (`discover_contexts`) and styling such as the selected row's colours.
 
+### Assertions that something is dropped
+
+A test that asserts an answer is dropped, or a note is absent, also shows
+the same answer appearing on the path that keeps it; without that control
+it passes whether or not the guard works. Kill the guard's mutant with the
+test, not only the full suite.
+
+Origin: #161's stale-Precheck test passed under the `+=` → `*=` mutant of
+`session_version`: the scripted report noted a field the buffer did not
+hold, so no note ever appeared. Typing `spec.bogus` and asserting the note
+while the first Cluster is still selected made it fail (#161 retro).
+
 ## Watch tests on a mock client (paused clock)
 
 Relist and the 403 backoff are tested in the cluster layer, through
