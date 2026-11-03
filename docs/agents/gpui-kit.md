@@ -84,6 +84,9 @@ Reference: `crates/app/src/resource_list.rs`.
   A Secret's `data` values must be base64: the list drops a row it cannot
   decode, and the test then fails on a missing `row-…` id, not on the
   fixture (#106).
+- An element's accessible label, as the frame draws it:
+  `ui.label(id)` (`crates/app/tests/support`); it panics when `id` is
+  not rendered (#160).
 - Clicking an element whose handler listens for mouse events, such as a
   dock tab or its close button, which `window.click` does not reach:
   `support::mouse_click(cx, id)` presses and releases on where `id` was

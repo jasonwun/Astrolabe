@@ -1,7 +1,7 @@
 //! The live Cluster handle (#147): requests to a Cluster go through
 //! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches,
-//! operations, logs, exec and port-forward do today; Apply follows in
-//! #160.
+//! operations, Apply, Precheck, logs, exec and port-forward do; only the
+//! Workspace YAML editor's current-context connect does not yet (#161).
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future, receiver or
@@ -24,6 +24,7 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
+use crate::apply::{self, ApplyMode, ApplyReport};
 use crate::discovery::{self, ServedResources};
 use crate::object::Operation;
 use crate::pod::{
@@ -74,9 +75,9 @@ fn spawn_on<T: Send + 'static>(
 }
 
 /// Run `request` on the cluster runtime, for the requests that do not go
-/// through [`Cluster`] yet: the YAML editors' Apply and Precheck (#160)
-/// and the Workspace YAML editor's current-context client (#161). The last
-/// of them removes this. The answer is `None` if the task panicked.
+/// through [`Cluster`] yet: the Workspace YAML editor's current-context
+/// connect, which #161 moves onto a Session's Cluster and so removes this.
+/// The answer is `None` if the task panicked.
 ///
 /// # Panics
 ///
@@ -192,7 +193,7 @@ impl From<watcher::Error> for ClusterError {
 }
 
 /// The Cluster's client, connected once and shared by every request.
-pub type SharedClient = Shared<BoxFuture<'static, Result<Client, ClusterError>>>;
+type SharedClient = Shared<BoxFuture<'static, Result<Client, ClusterError>>>;
 
 /// The live handle to one Cluster.
 ///
@@ -328,6 +329,76 @@ impl Cluster {
                 Ok(())
             },
             ClusterError::new("operation task panicked"),
+        )
+    }
+
+    /// Apply every document of `snapshot` with server-side apply, started
+    /// at once on the cluster runtime. Each document is sent on its own:
+    /// one the server rejects does not stop the others, and its outcome in
+    /// the report carries the rejection, its causes located on `snapshot`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Connect`](ClusterErrorKind::Connect) when the client could not be
+    ///   built, or its connect task panicked: nothing is sent;
+    /// - [`Other`](ClusterErrorKind::Other) when `snapshot` does not parse
+    ///   as YAML documents (nothing is sent), or the request's task
+    ///   panicked.
+    pub fn apply(
+        &self,
+        snapshot: &str,
+        mode: ApplyMode,
+    ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
+        self.send_snapshot(
+            snapshot,
+            "apply task panicked",
+            move |client, snapshot| async move {
+                apply::apply_documents(&client, &snapshot, mode).await
+            },
+        )
+    }
+
+    /// Precheck `snapshot`: a dry-run [`apply`](Self::apply) with strict
+    /// field validation, which changes nothing on the Cluster. An unknown
+    /// or duplicate field comes back as a cause that
+    /// [`is_strict_decoding`](apply::FieldCause::is_strict_decoding).
+    ///
+    /// # Errors
+    ///
+    /// As for [`apply`](Self::apply).
+    pub fn precheck(
+        &self,
+        snapshot: &str,
+    ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
+        self.send_snapshot(
+            snapshot,
+            "precheck task panicked",
+            |client, snapshot| async move { apply::precheck_documents(&client, &snapshot).await },
+        )
+    }
+
+    /// Run `request` on `snapshot` once the client connects, on the cluster
+    /// runtime: Apply's and Precheck's shared shape.
+    fn send_snapshot<F>(
+        &self,
+        snapshot: &str,
+        panicked: &'static str,
+        request: impl FnOnce(Client, String) -> F + Send + 'static,
+    ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static
+    where
+        F: Future<Output = Result<ApplyReport, apply::PayloadError>> + Send + 'static,
+    {
+        let client = self.client.clone();
+        let snapshot = snapshot.to_owned();
+        spawn(
+            &self.runtime,
+            async move {
+                let client = client.await?;
+                request(client, snapshot)
+                    .await
+                    .map_err(|error| ClusterError::new(error.to_string()))
+            },
+            ClusterError::new(panicked),
         )
     }
 
@@ -551,13 +622,6 @@ impl Cluster {
         watches.retain(|watch| !watch.is_finished());
         watches.push(task);
         receiver
-    }
-
-    /// The shared client, for the requests that do not go through this
-    /// handle yet: Apply moves behind it in #160, and #161, which moves the
-    /// Workspace YAML editor, removes this.
-    pub fn client(&self) -> SharedClient {
-        self.client.clone()
     }
 }
 

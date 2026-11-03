@@ -66,17 +66,6 @@ fn open_hpas<'a>(cx: &'a mut TestAppContext, created: &str) -> (Ui<'a>, Sender<D
     open_clocked_list(cx, BuiltinKind::HorizontalPodAutoscalers, hpa(created))
 }
 
-fn label(ui: &mut Ui<'_>, id: &'static str) -> String {
-    ui.frame(|window, _| {
-        window
-            .try_find(id)
-            .unwrap_or_else(|| panic!("{id} not rendered"))
-            .label()
-            .unwrap_or_default()
-            .to_string()
-    })
-}
-
 fn advance(ui: &mut Ui<'_>, duration: Duration) {
     ui.cx.executor().advance_clock(duration);
     ui.cx.run_until_parked();
@@ -86,25 +75,25 @@ fn advance(ui: &mut Ui<'_>, duration: Duration) {
 fn a_young_age_counts_every_second(cx: &mut TestAppContext) {
     // `settle` moved the clock 0.8s on; the age shows whole seconds.
     let (mut ui, _hpas) = open_hpas(cx, "2026-10-26T11:59:00Z");
-    assert_eq!(label(&mut ui, AGE), "60s");
+    assert_eq!(ui.label(AGE), "60s");
 
     advance(&mut ui, Duration::from_secs(3));
-    assert_eq!(label(&mut ui, AGE), "63s");
+    assert_eq!(ui.label(AGE), "63s");
 
     advance(&mut ui, Duration::from_secs(1));
-    assert_eq!(label(&mut ui, AGE), "64s");
+    assert_eq!(ui.label(AGE), "64s");
 }
 
 #[gpui_kit::test]
 fn an_old_age_counts_every_minute(cx: &mut TestAppContext) {
     let (mut ui, _hpas) = open_hpas(cx, "2026-10-26T11:45:00Z");
-    assert_eq!(label(&mut ui, AGE), "15m");
+    assert_eq!(ui.label(AGE), "15m");
 
     advance(&mut ui, Duration::from_secs(30));
-    assert_eq!(label(&mut ui, AGE), "15m");
+    assert_eq!(ui.label(AGE), "15m");
 
     advance(&mut ui, Duration::from_secs(30));
-    assert_eq!(label(&mut ui, AGE), "16m");
+    assert_eq!(ui.label(AGE), "16m");
 }
 
 #[gpui_kit::test]
@@ -113,10 +102,10 @@ fn a_new_object_brings_back_per_second_ticks(cx: &mut TestAppContext) {
     // A fresh HPA, created as the list opened, replaces the old one.
     snapshot(&mut hpas, vec![hpa("2026-10-26T12:00:00Z")]);
     ui.cx.run_until_parked();
-    assert_eq!(label(&mut ui, AGE), "0s");
+    assert_eq!(ui.label(AGE), "0s");
 
     advance(&mut ui, Duration::from_secs(2));
-    assert_eq!(label(&mut ui, AGE), "2s");
+    assert_eq!(ui.label(AGE), "2s");
 }
 
 #[gpui_kit::test]
@@ -138,7 +127,7 @@ fn a_detail_age_counts_while_it_is_open(cx: &mut TestAppContext) {
     };
     assert!(state(&mut ui, "Running since 60s"));
     assert_eq!(
-        label(&mut ui, "field-Created"),
+        ui.label("field-Created"),
         "Created: 2026-10-26T11:45:00Z (15m ago)"
     );
 

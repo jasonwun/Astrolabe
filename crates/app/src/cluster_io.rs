@@ -1,12 +1,13 @@
 //! The session's one I/O seam: every scripted-vs-live decision lives here,
-//! so `Session` starts watches, discovers, operates and hands out its client
-//! without knowing which kind of cluster it talks to. The live arm wraps
+//! so `Session` starts watches, discovers, operates and applies without
+//! knowing which kind of cluster it talks to. The live arm wraps
 //! `astrolabe_kube::cluster::Cluster`; no other app module names it. An
 //! enum, not a trait: this crate knows every adapter and no other crate
 //! adds one (docs/adr/0002).
 
 use std::collections::HashMap;
 
+use astrolabe_kube::apply::{ApplyMode, ApplyReport};
 use astrolabe_kube::cluster::{Cluster, ClusterError};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::discovery::ApiResource;
@@ -20,23 +21,26 @@ use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, channel::mpsc};
 
 use crate::session::WatchKey;
-pub use astrolabe_kube::cluster::SharedClient;
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), ClusterError>>;
+type ApplyFn = Box<dyn FnMut(&str, ApplyMode) -> Result<ApplyReport, ClusterError>>;
+type PrecheckFn = Box<dyn FnMut(&str) -> Result<ApplyReport, ClusterError>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
 type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
 type ExecFn = Box<dyn FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput>>;
 
 /// Hand-fed cluster I/O for tests and demos: watch events come from
-/// channels, discovery, operations, log chunks, exec output and
-/// port-forward reports from closures.
+/// channels, discovery, operations, Apply and Precheck reports, log chunks,
+/// exec output and port-forward reports from closures.
 pub struct ScriptedCluster {
     pub(crate) namespaces: Option<mpsc::Receiver<NamespaceWatchMessage>>,
     pub(crate) crds: Option<mpsc::Receiver<CrdWatchMessage>>,
     pub(crate) watches: HashMap<WatchKey, mpsc::Receiver<ObjectWatchMessage>>,
     discover: DiscoverFn,
     operate: OperateFn,
+    apply: ApplyFn,
+    precheck: PrecheckFn,
     logs: LogsFn,
     exec: ExecFn,
     port_forward: ForwardFn,
@@ -52,6 +56,8 @@ impl ScriptedCluster {
             watches: HashMap::new(),
             discover: Box::new(|| Ok(ServedResources::default())),
             operate: Box::new(|_| Ok(())),
+            apply: Box::new(|_, _| Ok(clean_report())),
+            precheck: Box::new(|_| Ok(clean_report())),
             logs: Box::new(|_| Vec::new()),
             exec: Box::new(|_, _| Vec::new()),
             port_forward: Box::new(|_| Vec::new()),
@@ -86,6 +92,26 @@ impl ScriptedCluster {
         self
     }
 
+    /// The report an Apply of a snapshot answers with; by default every
+    /// document applies cleanly.
+    pub fn apply(
+        mut self,
+        apply: impl FnMut(&str, ApplyMode) -> Result<ApplyReport, ClusterError> + 'static,
+    ) -> Self {
+        self.apply = Box::new(apply);
+        self
+    }
+
+    /// The report a Precheck of a snapshot answers with; by default it
+    /// finds nothing.
+    pub fn precheck(
+        mut self,
+        precheck: impl FnMut(&str) -> Result<ApplyReport, ClusterError> + 'static,
+    ) -> Self {
+        self.precheck = Box::new(precheck);
+        self
+    }
+
     /// The chunks a log request streams before the stream closes.
     pub fn logs(mut self, logs: impl FnMut(&LogRequest) -> Vec<LogChunk> + 'static) -> Self {
         self.logs = Box::new(logs);
@@ -109,6 +135,14 @@ impl ScriptedCluster {
     ) -> Self {
         self.port_forward = Box::new(port_forward);
         self
+    }
+}
+
+/// A report with no document in it and nothing wrong.
+fn clean_report() -> ApplyReport {
+    ApplyReport {
+        outcomes: Vec::new(),
+        ok: true,
     }
 }
 
@@ -173,6 +207,31 @@ impl ClusterIo {
         }
     }
 
+    /// Apply every document of `snapshot`; a scripted cluster's answer is
+    /// ready at once.
+    pub(crate) fn apply(
+        &mut self,
+        snapshot: &str,
+        mode: ApplyMode,
+    ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
+        match self {
+            Self::Scripted(cluster) => future::ready((cluster.apply)(snapshot, mode)).boxed(),
+            Self::Live(cluster) => cluster.apply(snapshot, mode).boxed(),
+        }
+    }
+
+    /// Dry-run `snapshot` with strict field validation; a scripted
+    /// cluster's answer is ready at once.
+    pub(crate) fn precheck(
+        &mut self,
+        snapshot: &str,
+    ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
+        match self {
+            Self::Scripted(cluster) => future::ready((cluster.precheck)(snapshot)).boxed(),
+            Self::Live(cluster) => cluster.precheck(snapshot).boxed(),
+        }
+    }
+
     /// Follow one container's log; a scripted cluster's chunks are all
     /// sent at once.
     pub(crate) fn logs(&mut self, request: LogRequest) -> LogStream {
@@ -216,14 +275,6 @@ impl ClusterIo {
                 PortForward::new(events)
             }
             Self::Live(cluster) => cluster.port_forward(request),
-        }
-    }
-
-    /// The live shared client; `None` for scripted clusters.
-    pub(crate) fn client(&self) -> Option<SharedClient> {
-        match self {
-            Self::Live(cluster) => Some(cluster.client()),
-            Self::Scripted(_) => None,
         }
     }
 }

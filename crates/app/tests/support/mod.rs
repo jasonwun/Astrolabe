@@ -11,6 +11,9 @@ use std::time::Duration;
 use astrolabe::clock::Clock;
 use astrolabe::session::{ResourceKind, ScriptedCluster, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe_kube::apply::{
+    ApplyMode, ApplyReport, DocError, DocOutcome, LocatedCause, locate_field, parse_status,
+};
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -67,6 +70,7 @@ pub fn deletion(object: &ObjectRef) -> (String, Option<String>, String) {
 pub type Operated = Rc<RefCell<Vec<Operation>>>;
 pub type Logged = Rc<RefCell<Vec<LogRequest>>>;
 pub type Forwarded = Rc<RefCell<Vec<ForwardRequest>>>;
+pub type Applied = Rc<RefCell<Vec<ApplyMode>>>;
 pub type Execed = Rc<RefCell<Vec<(ExecRequest, mpsc::UnboundedReceiver<ExecInput>)>>>;
 
 pub struct Ui<'a> {
@@ -77,6 +81,7 @@ pub struct Ui<'a> {
     pub logged: Logged,
     pub execed: Execed,
     pub forwarded: Forwarded,
+    pub applied: Applied,
 }
 
 pub fn open(
@@ -93,6 +98,7 @@ pub fn open(
     let logged: Logged = Rc::default();
     let execed: Execed = Rc::default();
     let forwarded: Forwarded = Rc::default();
+    let applied: Applied = Rc::default();
     let mut cluster = ScriptedCluster::new(namespace_events)
         .operate({
             let deleted = deleted.clone();
@@ -109,6 +115,20 @@ pub fn open(
                 }
             }
         })
+        .apply({
+            let applied = applied.clone();
+            move |snapshot: &str, mode| {
+                applied.borrow_mut().push(mode);
+                Ok(match mode {
+                    ApplyMode::Normal => conflict_report(snapshot),
+                    ApplyMode::Force => ApplyReport {
+                        outcomes: vec![outcome(Ok(()))],
+                        ok: true,
+                    },
+                })
+            }
+        })
+        .precheck(|snapshot: &str| Ok(unknown_field_report(snapshot)))
         .logs({
             let logged = logged.clone();
             move |request: &LogRequest| {
@@ -165,7 +185,73 @@ pub fn open(
         logged,
         execed,
         forwarded,
+        applied,
     }
+}
+
+/// The one document every scripted Apply and Precheck reports on.
+fn outcome(result: Result<(), DocError>) -> DocOutcome {
+    DocOutcome {
+        doc_index: 0,
+        doc: "v1 Namespace/old".to_string(),
+        result,
+    }
+}
+
+/// A report whose one document failed with `status`, its causes located
+/// on `snapshot`.
+fn failed_report(snapshot: &str, status: serde_json::Value) -> ApplyReport {
+    let error = parse_status(&serde_json::from_value(status).unwrap());
+    let causes = match &error {
+        astrolabe_kube::apply::ApplyError::Validation(causes) => causes.clone(),
+        astrolabe_kube::apply::ApplyError::Conflict(conflicts) => conflicts
+            .iter()
+            .flat_map(|conflict| conflict.causes.clone())
+            .collect(),
+        astrolabe_kube::apply::ApplyError::Global { .. } => Vec::new(),
+    };
+    let causes = causes
+        .into_iter()
+        .map(|cause| LocatedCause {
+            located: locate_field(snapshot, 0, &cause.path),
+            cause,
+        })
+        .collect();
+    ApplyReport {
+        outcomes: vec![outcome(Err(DocError { error, causes }))],
+        ok: false,
+    }
+}
+
+/// What a plain Apply answers: `kubectl` owns `metadata.name` (409).
+fn conflict_report(snapshot: &str) -> ApplyReport {
+    failed_report(
+        snapshot,
+        serde_json::json!({
+            "status": "Failure",
+            "code": 409,
+            "reason": "Conflict",
+            "message": "Apply failed with 1 conflict: conflict with \"kubectl\" using v1: .metadata.name",
+        }),
+    )
+}
+
+/// What a Precheck answers: an unknown field, which a real Apply ignores.
+fn unknown_field_report(snapshot: &str) -> ApplyReport {
+    failed_report(
+        snapshot,
+        serde_json::json!({
+            "status": "Failure",
+            "code": 422,
+            "reason": "Invalid",
+            "message": "Namespace \"old\" is invalid",
+            "details": {"causes": [{
+                "reason": "FieldValueInvalid",
+                "message": "unknown field \"spec.bogus\"",
+                "field": "spec.bogus",
+            }]},
+        }),
+    )
 }
 
 /// Open `kind`'s list in the `default` namespace from the navigation with
@@ -227,6 +313,23 @@ impl Ui<'_> {
             })
             .collect();
         snapshot(&mut self.namespaces, namespaces);
+    }
+
+    /// The accessible label of `id`, as the last frame drew it; empty when
+    /// `id` has none.
+    ///
+    /// # Panics
+    ///
+    /// When `id` is not rendered.
+    pub fn label(&mut self, id: &'static str) -> String {
+        self.frame(|window, _| {
+            window
+                .try_find(id)
+                .unwrap_or_else(|| panic!("{id} not rendered"))
+                .label()
+                .unwrap_or_default()
+                .to_string()
+        })
     }
 
     pub fn frame<R>(

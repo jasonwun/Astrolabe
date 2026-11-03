@@ -53,26 +53,35 @@ pub struct ApplyReport {
     pub ok: bool,
 }
 
-/// Apply every document of `snapshot` with SSA (allSettled).
-///
-/// `force` re-sends with `force=true` (the panel's explicit Force Apply
-/// button for 409s; never automatic).
+/// How an Apply treats fields another field manager owns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyMode {
+    /// A field another manager owns fails the document with a 409
+    /// conflict.
+    Normal,
+    /// Take the conflicting fields over (`force=true`): the panel's
+    /// explicit Force Apply after a 409, never automatic.
+    Force,
+}
+
+/// Apply every document of `snapshot` with SSA (allSettled); callers go
+/// through [`Cluster::apply`](crate::cluster::Cluster::apply).
 ///
 /// # Errors
 ///
 /// A [`payload::PayloadError`] when `snapshot` does not parse, before
 /// anything is sent. A document the server rejects is not an error: its
 /// outcome in the report carries it.
-pub async fn apply_documents(
+pub(crate) async fn apply_documents(
     client: &Client,
     snapshot: &str,
-    force: bool,
+    mode: ApplyMode,
 ) -> Result<ApplyReport, payload::PayloadError> {
     let docs = payload::parse_documents(snapshot)?;
-    let mut params = PatchParams::apply(FIELD_MANAGER);
-    if force {
-        params = params.force();
-    }
+    let params = match mode {
+        ApplyMode::Normal => PatchParams::apply(FIELD_MANAGER),
+        ApplyMode::Force => PatchParams::apply(FIELD_MANAGER).force(),
+    };
     let outcomes = send_all(
         docs,
         snapshot,
@@ -88,14 +97,15 @@ pub async fn apply_documents(
 
 /// Dry-run precheck (#15): `dry_run` + strict validation. Same per-doc
 /// allSettled semantics; strict-decoding causes are flagged for warning
-/// rendering via [`FieldCause::is_strict_decoding`].
+/// rendering via [`FieldCause::is_strict_decoding`]. Callers go through
+/// [`Cluster::precheck`](crate::cluster::Cluster::precheck).
 ///
 /// # Errors
 ///
 /// A [`payload::PayloadError`] when `snapshot` does not parse, before
 /// anything is sent. A document the server rejects is not an error: its
 /// outcome in the report carries it.
-pub async fn precheck_documents(
+pub(crate) async fn precheck_documents(
     client: &Client,
     snapshot: &str,
 ) -> Result<ApplyReport, payload::PayloadError> {
@@ -548,7 +558,9 @@ data:
             ),
             _ => unexpected_request(),
         });
-        let report = apply_documents(&client, TWO_DOCS, false).await.unwrap();
+        let report = apply_documents(&client, TWO_DOCS, ApplyMode::Normal)
+            .await
+            .unwrap();
         assert!(!report.ok);
         assert_eq!(report.outcomes.len(), 2);
         assert_eq!(report.outcomes[0].doc, "v1 ConfigMap/first");

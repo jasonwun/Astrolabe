@@ -12,7 +12,5 @@ pub use error::{ApplyError, FieldCause, ManagerConflict, parse_status};
 pub use fieldpath::{FieldPathError, Segment, parse_field_path};
 pub use locate::{Located, Location, locate_field};
 pub use payload::{DocPayload, PayloadError, parse_documents};
-pub use run::{
-    ApplyReport, DocError, DocOutcome, FIELD_MANAGER, LocatedCause, apply_documents,
-    precheck_documents,
-};
+pub use run::{ApplyMode, ApplyReport, DocError, DocOutcome, FIELD_MANAGER, LocatedCause};
+pub(crate) use run::{apply_documents, precheck_documents};
