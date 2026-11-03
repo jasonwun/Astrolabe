@@ -434,3 +434,20 @@ fn a_schedule_on_a_day_its_month_never_has_reads_never() {
     assert_eq!(schedule("0 0 30 2 *"), "never");
     assert_eq!(schedule("0 0 29 2 *"), "0 0 29 2 *");
 }
+
+#[test]
+fn a_deadline_reads_in_the_largest_unit_that_divides_it() {
+    let deadline = |seconds: i64| {
+        let mut job = running_job(&serde_json::json!({}), &serde_json::json!({}));
+        job["spec"]["activeDeadlineSeconds"] = seconds.into();
+        detail(BuiltinKind::Jobs, job, now())
+            .status
+            .into_iter()
+            .find(|(label, _)| label == "Active Deadline Seconds")
+            .unwrap()
+            .1
+    };
+    assert_eq!(deadline(7200), "2h");
+    assert_eq!(deadline(5400), "90m");
+    assert_eq!(deadline(90), "90s");
+}
