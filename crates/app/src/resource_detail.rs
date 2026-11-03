@@ -236,9 +236,7 @@ impl ResourceDetailPanel {
             .update(cx, |session, _| session.operate(operation));
         self.show_notice(pending, cx);
         cx.spawn(async move |panel, cx| {
-            let result = result
-                .await
-                .unwrap_or_else(|_| Err(format!("{verb} task dropped")));
+            let result = result.await;
             panel
                 .update(cx, |panel, cx| {
                     panel.show_notice(

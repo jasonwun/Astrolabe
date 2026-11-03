@@ -15,14 +15,13 @@ use astrolabe_kube::pod::ExecInput;
 use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
 use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
-use tokio::sync::oneshot;
 
-use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
+use crate::kube_bridge::spawn_cluster_task;
 use crate::session::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest, WatchKey};
 pub use astrolabe_kube::cluster::SharedClient;
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
-type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
+type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), ClusterError>>;
 type LogsFn = Box<dyn FnMut(&LogRequest) -> Vec<LogChunk>>;
 type ForwardFn = Box<dyn FnMut(&ForwardRequest) -> Vec<ForwardEvent>>;
 type ExecFn = Box<dyn FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput>>;
@@ -172,7 +171,7 @@ impl ScriptedCluster {
 
     pub fn operate(
         mut self,
-        operate: impl FnMut(&Operation) -> Result<(), String> + 'static,
+        operate: impl FnMut(&Operation) -> Result<(), ClusterError> + 'static,
     ) -> Self {
         self.operate = Box::new(operate);
         self
@@ -253,44 +252,15 @@ impl ClusterIo {
         }
     }
 
-    /// Run one operation on one object.
+    /// Run one operation on one object; a scripted cluster's answer is
+    /// ready at once.
     pub(crate) fn operate(
         &mut self,
         operation: Operation,
-    ) -> oneshot::Receiver<Result<(), String>> {
+    ) -> BoxFuture<'static, Result<(), ClusterError>> {
         match self {
-            Self::Scripted(cluster) => answered((cluster.operate)(&operation)),
-            Self::Live(cluster) => {
-                let client = cluster.client();
-                spawn_cluster(async move {
-                    let client = client.await.map_err(|error| error.to_string())?;
-                    let result = match &operation {
-                        Operation::Scale { object, replicas } => {
-                            astrolabe_kube::resource::scale(&client, object, *replicas).await
-                        }
-                        // The restart stamp goes to the server: system time.
-                        #[allow(clippy::disallowed_methods)]
-                        Operation::RolloutRestart { object } => {
-                            astrolabe_kube::resource::rollout_restart(
-                                &client,
-                                object,
-                                astrolabe_kube::k8s_openapi::jiff::Timestamp::now(),
-                            )
-                            .await
-                        }
-                        Operation::SetSuspend { object, suspend } => {
-                            astrolabe_kube::resource::suspend(&client, object, *suspend).await
-                        }
-                        Operation::TriggerCronJob { object } => {
-                            astrolabe_kube::resource::trigger_cron_job(&client, object).await
-                        }
-                        Operation::Delete { object } => {
-                            astrolabe_kube::resource::delete(&client, object).await
-                        }
-                    };
-                    result.map_err(|error| error.to_string())
-                })
-            }
+            Self::Scripted(cluster) => future::ready((cluster.operate)(&operation)).boxed(),
+            Self::Live(cluster) => cluster.operate(&operation).boxed(),
         }
     }
 
@@ -470,10 +440,4 @@ impl ClusterIo {
             Self::Scripted(_) => None,
         }
     }
-}
-
-fn answered<T>(value: T) -> oneshot::Receiver<T> {
-    let (tx, rx) = oneshot::channel();
-    let _ = tx.send(value);
-    rx
 }

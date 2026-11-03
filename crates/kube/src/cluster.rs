@@ -1,7 +1,7 @@
 //! The live Cluster handle (#147): requests to a Cluster go through
-//! [`Cluster`] and fail with a [`ClusterError`]. Discovery and watches do
-//! today; operations, logs, exec, port-forward and Apply follow in
-//! #157–#160.
+//! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches and
+//! operations do today; logs, exec, port-forward and Apply follow in
+//! #158–#160.
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future or receiver that
@@ -24,6 +24,8 @@ use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
 use crate::discovery::{self, ServedResources};
+use crate::object::Operation;
+use crate::resource;
 use crate::watch::{self, WatchMessage};
 
 /// The cluster runtime, built on first use.
@@ -246,6 +248,53 @@ impl Cluster {
         )
     }
 
+    /// Run `operation` on its object, started at once on the cluster
+    /// runtime. A rollout restart is stamped with the current system time,
+    /// read here.
+    ///
+    /// # Errors
+    ///
+    /// The answer fails with:
+    /// - [`Connect`](ClusterErrorKind::Connect) when the client could not be
+    ///   built, or its connect task panicked;
+    /// - [`Forbidden`](ClusterErrorKind::Forbidden) when the apiserver
+    ///   refuses a request (403);
+    /// - [`Other`](ClusterErrorKind::Other) when it fails any other way,
+    ///   e.g. the object is gone (404), or the request's task panicked.
+    pub fn operate(
+        &self,
+        operation: &Operation,
+    ) -> impl Future<Output = Result<(), ClusterError>> + Send + 'static {
+        let client = self.client.clone();
+        let operation = operation.clone();
+        spawn(
+            &self.runtime,
+            async move {
+                let client = client.await?;
+                match &operation {
+                    Operation::Scale { object, replicas } => {
+                        resource::scale(&client, object, *replicas).await?;
+                    }
+                    Operation::RolloutRestart { object } => {
+                        // The restart stamp goes to the server: system time.
+                        #[allow(clippy::disallowed_methods)]
+                        let now = k8s_openapi::jiff::Timestamp::now();
+                        resource::rollout_restart(&client, object, now).await?;
+                    }
+                    Operation::SetSuspend { object, suspend } => {
+                        resource::suspend(&client, object, *suspend).await?;
+                    }
+                    Operation::TriggerCronJob { object } => {
+                        resource::trigger_cron_job(&client, object).await?;
+                    }
+                    Operation::Delete { object } => resource::delete(&client, object).await?,
+                }
+                Ok(())
+            },
+            ClusterError::new("operation task panicked"),
+        )
+    }
+
     /// Watch the Cluster's Namespaces, resident until the handle is
     /// dropped. See [`watch_objects`](Self::watch_objects) for the
     /// messages.
@@ -296,8 +345,8 @@ impl Cluster {
     }
 
     /// The shared client, for the requests that do not go through this
-    /// handle yet. Operations, logs, exec, port-forward and Apply move
-    /// behind it in #157–#160; the last of them removes this.
+    /// handle yet. Logs, exec, port-forward and Apply move behind it in
+    /// #158–#160; the last of them removes this.
     pub fn client(&self) -> SharedClient {
         self.client.clone()
     }

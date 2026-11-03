@@ -24,19 +24,24 @@ use astrolabe_kube::kube::api::{Api, DeleteParams, ListParams, PostParams};
 use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
-use astrolabe_kube::object::{ObjectKey, ObjectRef};
+use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
 use astrolabe_kube::pod::{self, ExecInput};
-use astrolabe_kube::{default_client, resource, service};
+use astrolabe_kube::{default_client, service};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Unique namespace per test run; deleted on drop-best-effort at the end.
+/// The counter keeps parallel tests apart: macOS clocks tick in
+/// microseconds, so two tests can read the same nanos, share a namespace,
+/// and the first to finish deletes the other's objects.
 fn unique_ns() -> String {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    format!("e2e-{nanos:x}")
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("e2e-{nanos:x}-{n}")
 }
 
 fn ns_doc(ns: &str) -> String {
@@ -517,7 +522,8 @@ spec:
         resource: resource.clone(),
         key: ObjectKey::new(Some(ns.clone()), "w1"),
     };
-    astrolabe_kube::resource::delete(&client, &widget_ref)
+    cluster
+        .operate(&Operation::Delete { object: widget_ref })
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -610,16 +616,25 @@ async fn scale_and_rollout_restart_a_deployment() {
         key: ObjectKey::new(Some(ns.clone()), "nginx"),
     };
 
-    resource::scale(&client, &deployment, 2).await.unwrap();
+    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let scale = |replicas| Operation::Scale {
+        object: deployment.clone(),
+        replicas,
+    };
+
+    cluster.operate(&scale(2)).await.unwrap();
     let scaled = deployments.get("nginx").await.unwrap();
     assert_eq!(scaled.spec.unwrap().replicas, Some(2));
-    resource::scale(&client, &deployment, 1).await.unwrap();
+    cluster.operate(&scale(1)).await.unwrap();
 
-    let at: Timestamp = "2026-01-02T03:04:05Z".parse().unwrap();
-    resource::rollout_restart(&client, &deployment, at)
+    cluster
+        .operate(&Operation::RolloutRestart {
+            object: deployment.clone(),
+        })
         .await
         .unwrap();
     let restarted = deployments.get("nginx").await.unwrap();
+    let created = restarted.metadata.creation_timestamp.clone().unwrap().0;
     let annotations = restarted
         .spec
         .unwrap()
@@ -628,10 +643,12 @@ async fn scale_and_rollout_restart_a_deployment() {
         .unwrap()
         .annotations
         .unwrap();
-    assert_eq!(
-        annotations["kubectl.kubernetes.io/restartedAt"],
-        "2026-01-02T03:04:05Z"
-    );
+    // The stamp is the cluster layer's clock reading: newer than the
+    // Deployment.
+    let stamp: Timestamp = annotations["kubectl.kubernetes.io/restartedAt"]
+        .parse()
+        .unwrap();
+    assert!(stamp >= created, "{stamp} before {created}");
     ready_pod(&client, &ns, Some(&first)).await;
 
     delete_ns(&client, &ns).await;
@@ -676,12 +693,23 @@ async fn suspend_and_trigger_a_cronjob() {
         key: ObjectKey::new(Some(ns.clone()), "nightly"),
     };
 
-    resource::suspend(&client, &nightly, true).await.unwrap();
+    let cluster = Cluster::from_client(client.clone(), "e2e");
+
+    cluster
+        .operate(&Operation::SetSuspend {
+            object: nightly.clone(),
+            suspend: true,
+        })
+        .await
+        .unwrap();
     let cronjobs: Api<CronJob> = Api::namespaced(client.clone(), &ns);
     let suspended = cronjobs.get("nightly").await.unwrap();
     assert_eq!(suspended.spec.suspend, Some(true));
 
-    resource::trigger_cron_job(&client, &nightly).await.unwrap();
+    cluster
+        .operate(&Operation::TriggerCronJob { object: nightly })
+        .await
+        .unwrap();
     let jobs: Api<Job> = Api::namespaced(client.clone(), &ns);
     let created = jobs.list(&ListParams::default()).await.unwrap().items;
     assert_eq!(created.len(), 1, "one manual Job");

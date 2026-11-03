@@ -14,7 +14,7 @@ pub mod cluster;
 pub mod discovery;
 pub mod object;
 pub mod pod;
-pub mod resource;
+mod resource;
 pub mod service;
 pub mod watch;
 

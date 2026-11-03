@@ -104,7 +104,7 @@ pub fn open(
                 }
                 operated.borrow_mut().push(operation.clone());
                 match operation {
-                    Operation::Scale { replicas: 0, .. } => Err("scale refused".to_string()),
+                    Operation::Scale { replicas: 0, .. } => Err(ClusterError::new("scale refused")),
                     _ => Ok(()),
                 }
             }
