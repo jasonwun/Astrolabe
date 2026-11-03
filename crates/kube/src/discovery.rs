@@ -69,14 +69,16 @@ impl ServedResources {
 /// `curl` through `kubectl proxy` with that Accept header). Every real
 /// server serves the core group, so its absence is the "unsupported" signal.
 ///
-/// Per-group discovery skips a group version whose resource list answers
-/// 404, as a CRD group mid-registration does: it is listed under `/apis`
-/// before `/apis/<group>/<version>` serves.
+/// Per-group discovery skips a named group's version whose
+/// `/apis/<group>/<version>` answers 404, as a CRD group mid-registration
+/// does: it is listed under `/apis` before that path serves. Core
+/// versions (`/api/<version>`) are not skipped.
 ///
 /// # Errors
 ///
 /// A [`kube::Error`] when per-group discovery fails other than by a 404
-/// group version; a failed aggregated request only falls back to it.
+/// from `/apis/<group>/<version>`; a failed aggregated request only falls
+/// back to it.
 pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
         Ok(discovery) if discovery.has_group(ApiGroup::CORE_GROUP) => {
@@ -90,12 +92,13 @@ pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     discover_per_group(client).await
 }
 
-/// kube-client's `Discovery::run`, except that a group version answering
-/// 404 is skipped with a warning instead of failing the whole run. The
-/// request order and every other error match `Discovery::run` (kube-client
-/// 4.2.0): `/apis`, each group version, `/api`, each core version.
+/// kube-client's `Discovery::run`, except that a named group's version
+/// answering 404 is skipped with a warning instead of failing the whole
+/// run. The request order and every other error match `Discovery::run`
+/// (kube-client 4.2.0): `/apis`, each group version, `/api`, each core
+/// version.
 async fn discover_per_group(client: &Client) -> kube::Result<ServedResources> {
-    let mut groups = Vec::new();
+    let mut group_versions = Vec::new();
     for group in client.list_api_groups().await?.groups {
         if group.versions.is_empty() {
             return Err(kube::Error::Discovery(DiscoveryError::EmptyApiGroup(
@@ -105,10 +108,10 @@ async fn discover_per_group(client: &Client) -> kube::Result<ServedResources> {
         for version in &group.versions {
             let group_version = GroupVersion::gv(&group.name, &version.version);
             match pinned_group(client, &group_version).await {
-                Ok(served) => groups.push(served),
+                Ok(pinned) => group_versions.push(pinned),
                 Err(kube::Error::Api(status)) if status.code == 404 => {
                     tracing::warn!(
-                        group_version = %version.group_version,
+                        group_version = %group_version.api_version(),
                         "group version not served yet (404); skipping it in discovery"
                     );
                 }
@@ -124,7 +127,7 @@ async fn discover_per_group(client: &Client) -> kube::Result<ServedResources> {
     }
     for version in &core.versions {
         let group_version = GroupVersion::gv(ApiGroup::CORE_GROUP, version);
-        groups.push(pinned_group(client, &group_version).await?);
+        group_versions.push(pinned_group(client, &group_version).await?);
     }
-    Ok(ServedResources::from_groups(&groups))
+    Ok(ServedResources::from_groups(&group_versions))
 }

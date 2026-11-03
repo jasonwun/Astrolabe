@@ -221,8 +221,9 @@ impl Cluster {
     }
 
     /// API Discovery, started at once on the cluster runtime. On the
-    /// per-group path, a group version that answers 404 (a CRD group
-    /// mid-registration) is skipped: its kinds are not served in the result.
+    /// per-group path, a named group's version whose
+    /// `/apis/<group>/<version>` answers 404 (a CRD group mid-registration)
+    /// is skipped: its kinds are not served in the result.
     ///
     /// # Errors
     ///
@@ -232,7 +233,8 @@ impl Cluster {
     /// - [`Forbidden`](ClusterErrorKind::Forbidden) when per-group discovery
     ///   (the fallback after any aggregated failure) gets a 403;
     /// - [`Other`](ClusterErrorKind::Other) when it fails any other way
-    ///   (a 404 group version aside), or the request's task panicked.
+    ///   (a 404 from `/apis/<group>/<version>` aside), or the request's
+    ///   task panicked.
     pub fn discover(
         &self,
     ) -> impl Future<Output = Result<ServedResources, ClusterError>> + Send + 'static {

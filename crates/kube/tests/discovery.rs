@@ -19,14 +19,21 @@ fn json(body: &str) -> http::Response<Body> {
         .unwrap()
 }
 
-fn not_found() -> http::Response<Body> {
+fn status(code: u16, reason: &str) -> http::Response<Body> {
     http::Response::builder()
-        .status(404)
+        .status(code)
         .header("content-type", "application/json")
         .body(Body::from(
-            br#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"not found"}"#.to_vec(),
+            format!(
+                r#"{{"kind":"Status","apiVersion":"v1","status":"Failure","code":{code},"reason":"{reason}","message":"{reason} by the mock"}}"#
+            )
+            .into_bytes(),
         ))
         .unwrap()
+}
+
+fn not_found() -> http::Response<Body> {
+    status(404, "NotFound")
 }
 
 /// Discovery through the `Cluster` handle, the only way to discover.
@@ -169,19 +176,6 @@ const LEGACY_GROUPS_WITH_NEW_CRD: &str = r#"{"kind":"APIGroupList","apiVersion":
     {"name":"stable.example.com","versions":[{"groupVersion":"stable.example.com/v1","version":"v1"}],
      "preferredVersion":{"groupVersion":"stable.example.com/v1","version":"v1"}}
 ]}"#;
-
-fn status(code: u16, reason: &str) -> http::Response<Body> {
-    http::Response::builder()
-        .status(code)
-        .header("content-type", "application/json")
-        .body(Body::from(
-            format!(
-                r#"{{"kind":"Status","apiVersion":"v1","status":"Failure","code":{code},"reason":"{reason}","message":"{reason} by the mock"}}"#
-            )
-            .into_bytes(),
-        ))
-        .unwrap()
-}
 
 /// A pre-aggregated apiserver that lists `new.example.com` under `/apis`
 /// while `/apis/new.example.com/v1` answers `new_group_version`: a CRD
