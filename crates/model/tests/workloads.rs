@@ -594,3 +594,78 @@ fn a_pod_detail_offers_its_containers_and_ports_to_the_actions() {
     );
     assert_eq!(model.suspended, None);
 }
+
+/// A container status named `name`, in `state`.
+fn container_status(name: &str, ready: bool, state: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"name": name, "image": "", "imageID": "", "ready": ready,
+                       "restartCount": 0, "state": state})
+}
+
+/// The Ready and Status cells of a Pod with a `setup` init container that
+/// finished, a `proxy` sidecar and an `app` container.
+fn sidecar_pod_cells(proxy_started: bool, proxy_ready: bool) -> Vec<String> {
+    let spec = serde_json::json!({
+        "initContainers": [{"name": "setup"}, {"name": "proxy", "restartPolicy": "Always"}],
+        "containers": [{"name": "app"}]
+    });
+    let mut proxy = container_status("proxy", proxy_ready, &serde_json::json!({"running": {}}));
+    proxy["started"] = proxy_started.into();
+    let status = serde_json::json!({
+        "phase": "Running",
+        "initContainerStatuses": [
+            container_status("setup", false, &serde_json::json!({"terminated": {"exitCode": 0}})),
+            proxy
+        ],
+        "containerStatuses": [
+            container_status("app", true, &serde_json::json!({"running": {}}))
+        ]
+    });
+    let row = &list(BuiltinKind::Pods, vec![pod(spec, status)], now()).rows[0];
+    row.cells[1..3].to_vec()
+}
+
+#[test]
+fn a_started_sidecar_counts_toward_ready_and_total() {
+    assert_eq!(sidecar_pod_cells(true, true), ["2/2", "Running"]);
+    assert_eq!(sidecar_pod_cells(true, false), ["1/2", "Running"]);
+}
+
+#[test]
+fn a_sidecar_that_has_not_started_holds_the_pod_initializing() {
+    assert_eq!(sidecar_pod_cells(false, false), ["0/2", "Init:1/2"]);
+}
+
+#[test]
+fn a_running_container_counts_as_ready_only_when_ready() {
+    let spec = serde_json::json!({"containers": [{"name": "app"}]});
+    let status = |ready: bool| {
+        serde_json::json!({"phase": "Running", "containerStatuses": [
+            container_status("app", ready, &serde_json::json!({"running": {}}))
+        ]})
+    };
+    let ready = |ready: bool| {
+        list(
+            BuiltinKind::Pods,
+            vec![pod(spec.clone(), status(ready))],
+            now(),
+        )
+        .rows[0]
+            .cells[1]
+            .clone()
+    };
+    assert_eq!(ready(true), "1/1");
+    assert_eq!(ready(false), "0/1");
+}
+
+#[test]
+fn a_last_termination_without_restarts_shows_no_age() {
+    let spec = serde_json::json!({"containers": [{"name": "app"}]});
+    let mut app = container_status("app", true, &serde_json::json!({"running": {}}));
+    app["lastState"] = serde_json::json!({"terminated": {"exitCode": 0,
+                                          "finishedAt": "2026-10-22T11:55:00Z"}});
+    let status = serde_json::json!({"phase": "Running", "containerStatuses": [app]});
+    assert_eq!(
+        list(BuiltinKind::Pods, vec![pod(spec, status)], now()).rows[0].cells[3],
+        "0"
+    );
+}

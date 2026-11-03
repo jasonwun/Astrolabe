@@ -145,11 +145,8 @@ fn format_duration(seconds: i64) -> String {
             .join(" ")
     }
 
-    if seconds < 0 {
-        return "0s".to_string();
-    }
     if seconds < 120 {
-        return format!("{seconds}s");
+        return format!("{}s", seconds.max(0));
     }
     let minutes = seconds / 60;
     if minutes < 180 {
@@ -160,9 +157,7 @@ fn format_duration(seconds: i64) -> String {
         return meaningful(&[(hours, "h"), (minutes % 60, "m")]);
     }
     let days = hours / 24;
-    if days < 8 {
-        return meaningful(&[(days, "d"), (hours % 24, "h"), (minutes % 60, "m")]);
-    }
+    // Freelens's under-8-days branch prints what the under-2-years one does.
     let years = seconds * 400 / (86_400 * 146_097);
     if years < 2 {
         return meaningful(&[(days, "d"), (hours % 24, "h"), (minutes % 60, "m")]);

@@ -118,7 +118,8 @@ fn usage(used: &str, hard: &str) -> String {
 fn quantity_value(quantity: &str) -> Option<f64> {
     let digits_end = quantity
         .char_indices()
-        .find(|&(index, c)| !(c.is_ascii_digit() || c == '.' || (index == 0 && "+-".contains(c))))
+        .skip(usize::from(quantity.starts_with(['+', '-'])))
+        .find(|&(_, c)| !(c.is_ascii_digit() || c == '.'))
         .map_or(quantity.len(), |(index, _)| index);
     let (number, suffix) = quantity.split_at(digits_end);
     if !number.chars().any(|c| c.is_ascii_digit()) {

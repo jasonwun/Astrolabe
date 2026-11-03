@@ -185,3 +185,10 @@ fn a_secret_last_applied_annotation_is_masked_too() {
     assert!(model.yaml.contains("team: db"), "{}", model.yaml);
     assert!(model.edit_yaml.unwrap().contains("aHVudGVyMg=="));
 }
+
+#[test]
+fn a_revealable_value_debugs_as_hidden() {
+    let secret = Revealable::new("hunter2".to_string());
+    assert_eq!(format!("{secret:?}"), "<hidden>");
+    assert_eq!(secret.reveal(), "hunter2");
+}

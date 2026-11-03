@@ -134,7 +134,10 @@ pub fn default_column_weights(count: usize) -> Vec<f32> {
 /// the rounding remainder, so the widths fill `available` exactly.
 pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
     let mut clamped = vec![false; weights.len()];
-    let (free, unclamped_weight) = loop {
+    let mut share = (available, 0.);
+    // A pass that clamps nothing ends the search, so one pass more than the
+    // columns always reaches it.
+    for _ in 0..=weights.len() {
         let clamped_count = clamped.iter().filter(|clamped| **clamped).count();
         #[expect(
             clippy::cast_precision_loss,
@@ -154,10 +157,12 @@ pub fn column_widths(available: f32, weights: &[f32]) -> Vec<f32> {
                 changed = true;
             }
         }
+        share = (free, unclamped_weight);
         if !changed {
-            break (free, unclamped_weight);
+            break;
         }
-    };
+    }
+    let (free, unclamped_weight) = share;
     let mut widths: Vec<f32> = weights
         .iter()
         .zip(&clamped)
