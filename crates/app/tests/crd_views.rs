@@ -103,7 +103,7 @@ fn default_key() -> WatchKey {
 
 fn key_at(version: &str, namespace: &str) -> WatchKey {
     WatchKey {
-        cluster: ClusterId::kubeconfig_context("kind-a"),
+        cluster: ClusterId::named("kind-a"),
         kind: ResourceKind::Custom {
             group: "stable.example.com".to_string(),
             version: version.to_string(),
@@ -163,7 +163,7 @@ fn open(
     }
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
         WorkspaceView::from_clusters(
-            vec![(ClusterId::kubeconfig_context("kind-a"), cluster)],
+            vec![(ClusterId::named("kind-a"), cluster)],
             Preselection::default(),
             window,
             cx,

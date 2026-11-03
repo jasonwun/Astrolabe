@@ -23,8 +23,6 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
-pub use crate::client::ClusterId;
-
 use crate::apply::{self, ApplyMode, ApplyReport};
 use crate::discovery::{self, ServedResources};
 use crate::object::Operation;
@@ -170,6 +168,45 @@ impl From<watcher::Error> for ClusterError {
     }
 }
 
+/// A Cluster the app can open, named without saying where it comes from.
+///
+/// Today every Cluster is a kubeconfig context and the id wraps its name;
+/// a second source changes only this type's inside and this crate. The app
+/// takes its ids from [`clusters`](crate::clusters). It orders by name, so
+/// that a list keyed by it is stable.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ClusterId {
+    context: String,
+}
+
+impl ClusterId {
+    /// The Cluster named `name`, whether or not any source lists it: what
+    /// tests and scripted clusters name a Cluster with. Today that is the
+    /// kubeconfig context `name`.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            context: name.into(),
+        }
+    }
+
+    /// The name the user knows the Cluster by.
+    pub fn name(&self) -> &str {
+        &self.context
+    }
+
+    /// The kubeconfig context the Cluster is.
+    pub(crate) fn context(&self) -> &str {
+        &self.context
+    }
+}
+
+/// The Cluster's name.
+impl std::fmt::Display for ClusterId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.context)
+    }
+}
+
 /// The Cluster's client, connected once and shared by every request.
 type SharedClient = Shared<BoxFuture<'static, Result<Client, ClusterError>>>;
 
@@ -196,15 +233,16 @@ impl Cluster {
     ///
     /// When the cluster runtime cannot be created on first use.
     pub fn connect(cluster: &ClusterId) -> Self {
+        // One copy moves into the connect task, one stays for logs.
         let id = cluster.clone();
-        let cluster = id.clone();
+        let cluster = cluster.clone();
         let runtime = runtime().handle().clone();
         // A credential plugin's first run blocks inside config loading, so
         // the connect runs on the cluster runtime, never the caller's thread.
         let client = spawn(
             &runtime,
             async move {
-                crate::client_for(&cluster)
+                crate::client::client_for(&cluster)
                     .await
                     .map_err(|error| ClusterError::connect(error.to_string()))
             },

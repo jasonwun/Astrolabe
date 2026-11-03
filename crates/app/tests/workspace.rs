@@ -40,8 +40,8 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
         WorkspaceView::from_events(
             vec![
-                (ClusterId::kubeconfig_context("kind-a"), receiver_a),
-                (ClusterId::kubeconfig_context("kind-b"), receiver_b),
+                (ClusterId::named("kind-a"), receiver_a),
+                (ClusterId::named("kind-b"), receiver_b),
             ],
             window,
             cx,

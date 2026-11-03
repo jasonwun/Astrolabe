@@ -9,7 +9,7 @@ use crate::perf;
 use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
-use astrolabe_kube::cluster::ClusterId;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::watch::NamespaceWatchMessage;
 
 pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
@@ -75,7 +75,8 @@ pub struct WorkspaceView {
     /// is selected (#161).
     yaml: Entity<YamlEditorView>,
     show_yaml: bool,
-    discovery_error: Option<String>,
+    /// Why the Clusters could not be listed.
+    listing_error: Option<ClusterError>,
     /// Consumed by the launch selection; later sessions start in `default`.
     preselection: Preselection,
 }
@@ -90,7 +91,7 @@ impl WorkspaceView {
             selected_cluster: None,
             yaml,
             show_yaml: false,
-            discovery_error: None,
+            listing_error: None,
             preselection,
         };
         workspace.list_clusters(window, cx);
@@ -131,7 +132,7 @@ impl WorkspaceView {
             selected_cluster: None,
             yaml,
             show_yaml: false,
-            discovery_error: None,
+            listing_error: None,
             preselection,
         };
         workspace.select_launch_cluster(window, cx);
@@ -140,15 +141,13 @@ impl WorkspaceView {
 
     fn list_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Listing reads the kubeconfig, blocking file I/O: off the main thread.
-        let clusters = cx.background_spawn(async {
-            astrolabe_kube::clusters().map_err(|error| error.to_string())
-        });
+        let clusters = cx.background_spawn(async { astrolabe_kube::clusters() });
         cx.spawn_in(window, async move |this, cx| {
             let clusters = clusters.await;
             this.update_in(cx, |workspace, window, cx| {
                 match clusters {
                     Ok(clusters) => workspace.set_clusters(clusters, window, cx),
-                    Err(error) => workspace.discovery_error = Some(error),
+                    Err(error) => workspace.listing_error = Some(error),
                 }
                 cx.notify();
             })
@@ -362,9 +361,9 @@ impl WorkspaceView {
             .items_center()
             .justify_center()
             .child(
-                self.discovery_error
-                    .clone()
-                    .unwrap_or_else(|| "Loading clusters…".to_string()),
+                self.listing_error
+                    .as_ref()
+                    .map_or_else(|| "Loading clusters…".to_string(), ToString::to_string),
             )
             .into_any_element()
     }

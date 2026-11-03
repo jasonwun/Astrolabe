@@ -61,7 +61,7 @@ fn cluster(
                 Answer::Applied => clean(),
             })
         });
-    ((ClusterId::kubeconfig_context(name), scripted), namespaces)
+    ((ClusterId::named(name), scripted), namespaces)
 }
 
 fn click(cx: &mut VisualTestContext, id: &'static str) {

@@ -1,6 +1,6 @@
 //! Client construction and the Clusters the kubeconfig names.
 
-use crate::cluster::ClusterError;
+use crate::cluster::{ClusterError, ClusterId};
 
 /// Build a client from the ambient environment (KUBECONFIG / in-cluster).
 ///
@@ -17,40 +17,6 @@ pub async fn default_client() -> kube::Result<kube::Client> {
     kube::Client::try_default().await
 }
 
-/// A Cluster the app can open, named without saying where it comes from.
-///
-/// Today every Cluster is a kubeconfig context and the id wraps its name;
-/// a second source changes only this type's inside and this crate. Outside
-/// tests, ids come from [`clusters`]. It orders by name, so that a list
-/// keyed by it is stable.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ClusterId {
-    context: String,
-}
-
-impl ClusterId {
-    /// The Cluster that kubeconfig context `name` reaches, whether or not
-    /// the kubeconfig has it: what tests and scripted clusters name a
-    /// Cluster with. The app takes its ids from [`clusters`].
-    pub fn kubeconfig_context(name: impl Into<String>) -> Self {
-        Self {
-            context: name.into(),
-        }
-    }
-
-    /// The name the user knows the Cluster by.
-    pub fn name(&self) -> &str {
-        &self.context
-    }
-}
-
-/// The Cluster's name.
-impl std::fmt::Display for ClusterId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.context)
-    }
-}
-
 /// Build a client for `cluster`, whatever the kubeconfig's
 /// `current-context` names.
 ///
@@ -58,9 +24,9 @@ impl std::fmt::Display for ClusterId {
 ///
 /// A [`kube::Error`] when the kubeconfig cannot be read or parsed, has no
 /// context for `cluster`, or the client cannot be built from it.
-pub async fn client_for(cluster: &ClusterId) -> kube::Result<kube::Client> {
+pub(crate) async fn client_for(cluster: &ClusterId) -> kube::Result<kube::Client> {
     let options = kube::config::KubeConfigOptions {
-        context: Some(cluster.context.clone()),
+        context: Some(cluster.context().to_owned()),
         ..kube::config::KubeConfigOptions::default()
     };
     let config = kube::Config::from_kubeconfig(&options).await?;
@@ -81,13 +47,13 @@ pub fn clusters() -> Result<Vec<ClusterId>, ClusterError> {
     let mut clusters: Vec<ClusterId> = config
         .contexts
         .iter()
-        .map(|context| ClusterId::kubeconfig_context(context.name.clone()))
+        .map(|context| ClusterId::named(context.name.clone()))
         .collect();
     clusters.sort();
     if let Some(current) = config.current_context
         && let Some(index) = clusters
             .iter()
-            .position(|cluster| cluster.context == current)
+            .position(|cluster| cluster.context() == current)
     {
         let current = clusters.remove(index);
         clusters.insert(0, current);

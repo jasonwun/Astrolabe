@@ -56,14 +56,7 @@ fn session(
             related_events,
         );
     let session = cx.update(|cx| {
-        cx.new(|cx| {
-            Session::scripted(
-                ClusterId::kubeconfig_context("kind-a"),
-                "default",
-                cluster,
-                cx,
-            )
-        })
+        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), "default", cluster, cx))
     });
     session.update(cx, |session, cx| {
         for watch in &needed {
@@ -223,13 +216,7 @@ fn a_section_lists_only_the_selected_objects(cx: &mut TestAppContext) {
 fn an_involved_definition_opens_as_a_definition(cx: &mut TestAppContext) {
     let (_namespaces, namespace_events) = mpsc::channel(32);
     let session = cx.update(|cx| {
-        cx.new(|cx| {
-            Session::from_events(
-                ClusterId::kubeconfig_context("kind-a"),
-                namespace_events,
-                cx,
-            )
-        })
+        cx.new(|cx| Session::from_events(ClusterId::named("kind-a"), namespace_events, cx))
     });
     let reference = ObjectReference {
         api_version: Some("apiextensions.k8s.io/v1".to_string()),

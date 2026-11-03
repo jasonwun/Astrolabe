@@ -34,10 +34,10 @@ fn launch(
         WorkspaceView::from_clusters(
             vec![
                 (
-                    ClusterId::kubeconfig_context("kind-a"),
+                    ClusterId::named("kind-a"),
                     ScriptedCluster::new(namespaces_a),
                 ),
-                (ClusterId::kubeconfig_context("kind-b"), kind_b),
+                (ClusterId::named("kind-b"), kind_b),
             ],
             preselection,
             window,

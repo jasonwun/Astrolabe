@@ -59,10 +59,7 @@ fn mock_cluster(status: u16, reply: &'static str) -> (Cluster, Log) {
         }
     });
     (
-        Cluster::from_client(
-            Client::new(service, "default"),
-            ClusterId::kubeconfig_context("mock"),
-        ),
+        Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock")),
         seen,
     )
 }
@@ -234,7 +231,7 @@ async fn a_missing_object_is_other() {
 
 /// No kubeconfig names this context, on CI or a dev machine.
 fn no_such_cluster() -> ClusterId {
-    ClusterId::kubeconfig_context("astrolabe-test-no-such-context")
+    ClusterId::named("astrolabe-test-no-such-context")
 }
 
 /// GPUI's executor has no tokio reactor: an operation must resolve when

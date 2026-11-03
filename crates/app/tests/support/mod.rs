@@ -38,7 +38,7 @@ pub fn key(kind: BuiltinKind, namespace: &str) -> WatchKey {
 
 pub fn key_on(cluster: &str, kind: BuiltinKind, namespace: &str) -> WatchKey {
     WatchKey {
-        cluster: ClusterId::kubeconfig_context(cluster),
+        cluster: ClusterId::named(cluster),
         kind: ResourceKind::Builtin(kind),
         namespace: Some(namespace.to_string()),
     }
@@ -165,7 +165,7 @@ pub fn open(
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
-    let cx = open_workspace(cx, vec![(ClusterId::kubeconfig_context("kind-a"), cluster)]);
+    let cx = open_workspace(cx, vec![(ClusterId::named("kind-a"), cluster)]);
     Ui {
         cx,
         namespaces,

@@ -23,7 +23,7 @@ fn names(watched: &Watched<Namespace>) -> Vec<String> {
 }
 
 fn namespace_watch() -> Watched<Namespace> {
-    Watched::new(ClusterId::kubeconfig_context("kind-test"), "namespace")
+    Watched::new(ClusterId::named("kind-test"), "namespace")
 }
 
 fn relist(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {

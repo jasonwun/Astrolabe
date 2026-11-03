@@ -61,7 +61,7 @@ fn object(namespace: Option<&str>, name: &str) -> DynamicObject {
 
 fn custom_key(namespace: Option<&str>, kind: &str) -> WatchKey {
     WatchKey {
-        cluster: ClusterId::kubeconfig_context("kind-a"),
+        cluster: ClusterId::named("kind-a"),
         kind: ResourceKind::Custom {
             group: "stable.example.com".to_string(),
             version: "v1".to_string(),
@@ -116,14 +116,7 @@ fn harness(
         cluster = cluster.watch(key, receiver);
     }
     let session = cx.update(|cx| {
-        cx.new(|cx| {
-            Session::scripted(
-                ClusterId::kubeconfig_context("kind-a"),
-                DEFAULT_NAMESPACE,
-                cluster,
-                cx,
-            )
-        })
+        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), DEFAULT_NAMESPACE, cluster, cx))
     });
     Harness {
         session,
@@ -243,14 +236,7 @@ fn a_first_crd_snapshot_already_discovered_does_not_rediscover(cx: &mut TestAppC
             }
         });
     let _session = cx.update(|cx| {
-        cx.new(|cx| {
-            Session::scripted(
-                ClusterId::kubeconfig_context("kind-a"),
-                DEFAULT_NAMESPACE,
-                cluster,
-                cx,
-            )
-        })
+        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), DEFAULT_NAMESPACE, cluster, cx))
     });
     snapshot(
         &mut crds,

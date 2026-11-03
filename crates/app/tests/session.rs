@@ -32,9 +32,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     let logs = LogCapture::default();
     logs.install();
     let (mut sender, receiver) = mpsc::channel(32);
-    let session = cx.update(|cx| {
-        cx.new(|cx| Session::from_events(ClusterId::kubeconfig_context("kind-a"), receiver, cx))
-    });
+    let session =
+        cx.update(|cx| cx.new(|cx| Session::from_events(ClusterId::named("kind-a"), receiver, cx)));
 
     cx.read(|cx| {
         let session = session.read(cx);
@@ -121,9 +120,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn session_coalesces_queued_events_into_one_notification(cx: &mut TestAppContext) {
     let (mut sender, receiver) = mpsc::channel(32);
-    let session = cx.update(|cx| {
-        cx.new(|cx| Session::from_events(ClusterId::kubeconfig_context("kind-a"), receiver, cx))
-    });
+    let session =
+        cx.update(|cx| cx.new(|cx| Session::from_events(ClusterId::named("kind-a"), receiver, cx)));
     let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
     cx.update(|cx| {
         cx.observe(&session, {

@@ -119,10 +119,7 @@ pub fn mock_cluster(apiserver: &Arc<Apiserver>) -> Cluster {
         let target = request.uri().to_string();
         apiserver.answer(target).map(Ok::<_, Infallible>)
     });
-    Cluster::from_client(
-        Client::new(service, "default"),
-        ClusterId::kubeconfig_context("mock"),
-    )
+    Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock"))
 }
 
 pub async fn next(watch: &mut mpsc::Receiver<NamespaceWatchMessage>) -> NamespaceWatchMessage {

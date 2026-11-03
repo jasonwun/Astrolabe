@@ -99,7 +99,7 @@ fn line_of(snapshot: &str, needle: &str) -> usize {
 /// Apply `snapshot` the plain way, as the editor's Apply button does.
 /// A handle over the ambient kubeconfig's `client`.
 fn handle(client: &kube::Client) -> Cluster {
-    Cluster::from_client(client.clone(), ClusterId::kubeconfig_context("e2e"))
+    Cluster::from_client(client.clone(), ClusterId::named("e2e"))
 }
 
 async fn apply(client: &kube::Client, snapshot: &str) -> ApplyReport {
@@ -138,7 +138,8 @@ async fn cluster_connects_and_discovers() {
 async fn namespace_watch_lists_then_streams_create_and_delete() {
     let clusters = astrolabe_kube::clusters().unwrap();
     assert!(!clusters.is_empty(), "kubeconfig must contain a context");
-    let client = astrolabe_kube::client_for(&clusters[0]).await.unwrap();
+    // The current context is listed first: the ambient client reaches it.
+    let client = default_client().await.unwrap();
     let cluster = Cluster::from_client(client.clone(), clusters[0].clone());
     let mut events = cluster.watch_namespaces();
 
@@ -563,7 +564,7 @@ async fn crd_watch_without_rbac_reports_forbidden() {
     let mut config = kube::Config::infer().await.unwrap();
     config.auth_info.impersonate = Some("astrolabe-e2e-nobody".to_string());
     let client = kube::Client::try_from(config).unwrap();
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("e2e-nobody"));
+    let cluster = Cluster::from_client(client, ClusterId::named("e2e-nobody"));
     let mut events = cluster.watch_crds();
     // The watcher announces `Init` before its LIST; the LIST then fails.
     let error = tokio::time::timeout(Duration::from_secs(20), async {

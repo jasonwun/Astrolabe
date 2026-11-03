@@ -40,10 +40,7 @@ fn mock_cluster(handler: impl Fn(&str) -> http::Response<Body> + Send + Sync + '
     let service = tower::service_fn(move |req: http::Request<Body>| {
         std::future::ready(Ok::<_, std::convert::Infallible>(handler(req.uri().path())))
     });
-    Cluster::from_client(
-        Client::new(service, "default"),
-        ClusterId::kubeconfig_context("mock"),
-    )
+    Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock"))
 }
 
 fn aggregated_server(path: &str) -> http::Response<Body> {
@@ -107,7 +104,7 @@ async fn a_failed_discovery_is_other() {
 /// No kubeconfig names this context, on CI or a dev machine, so building
 /// the client fails whatever the ambient kubeconfig holds.
 fn no_such_cluster() -> ClusterId {
-    ClusterId::kubeconfig_context("astrolabe-test-no-such-context")
+    ClusterId::named("astrolabe-test-no-such-context")
 }
 
 #[tokio::test]
@@ -179,10 +176,7 @@ fn configmap_cluster(patched: fn() -> http::Response<Body>) -> (Cluster, Patches
         std::future::ready(Ok::<_, std::convert::Infallible>(response))
     });
     (
-        Cluster::from_client(
-            Client::new(service, "default"),
-            ClusterId::kubeconfig_context("mock"),
-        ),
+        Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock")),
         recorded,
     )
 }

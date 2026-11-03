@@ -38,7 +38,7 @@ fn not_found() -> http::Response<Body> {
 
 /// Discovery through the `Cluster` handle, the only way to discover.
 async fn discover(client: &Client) -> Result<ServedResources, ClusterError> {
-    Cluster::from_client(client.clone(), ClusterId::kubeconfig_context("mock"))
+    Cluster::from_client(client.clone(), ClusterId::named("mock"))
         .discover()
         .await
 }

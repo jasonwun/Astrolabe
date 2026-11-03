@@ -92,7 +92,7 @@ async fn dropping_stops_the_request<T>(
 #[tokio::test]
 async fn logs_follow_one_container_from_a_bounded_tail() {
     let (client, seen) = mock_client(200, "starting\n\x1b[32mready\x1b[0m\n");
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut stream = cluster.logs(log_request("app"));
     let mut chunks = Vec::new();
@@ -115,7 +115,7 @@ async fn a_refused_log_request_is_the_streams_last_chunk() {
         400,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":400,"reason":"BadRequest","message":"container \"db\" is not valid for pod \"web-1\""}"#,
     );
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut stream = cluster.logs(log_request("db"));
     let error = stream.next().await.unwrap().unwrap_err();
@@ -131,7 +131,7 @@ async fn a_refused_log_request_is_the_streams_last_chunk() {
 #[tokio::test]
 async fn dropping_a_log_stream_stops_its_request() {
     let (client, on_start, on_drop) = hanging_client();
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let stream = cluster.logs(log_request("app"));
 
@@ -146,7 +146,7 @@ async fn exec_asks_for_an_interactive_tty_in_one_container() {
         403,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"pods \"web-1\" is forbidden: User \"dev\" cannot create resource \"pods/exec\""}"#,
     );
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut session = cluster.exec(exec_request());
     let Some(ExecOutput::Exited(Err(error))) = session.next().await else {
@@ -169,7 +169,7 @@ async fn an_exec_refused_another_way_is_not_forbidden() {
         404,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"pods \"web-1\" not found"}"#,
     );
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut session = cluster.exec(exec_request());
     let Some(ExecOutput::Exited(Err(error))) = session.next().await else {
@@ -183,7 +183,7 @@ async fn an_exec_refused_another_way_is_not_forbidden() {
 #[tokio::test]
 async fn dropping_an_exec_session_stops_its_request() {
     let (client, on_start, on_drop) = hanging_client();
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let session = cluster.exec(exec_request());
 
@@ -219,7 +219,7 @@ async fn a_forward_listens_on_the_asked_port_when_it_is_free() {
         .unwrap()
         .port();
     let (client, _) = mock_client(200, "");
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut forward = cluster.port_forward(forward_request(free));
 
@@ -231,7 +231,7 @@ async fn a_forward_whose_port_is_taken_listens_on_a_free_one() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = taken.local_addr().unwrap().port();
     let (client, _) = mock_client(200, "");
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut forward = cluster.port_forward(forward_request(port));
 
@@ -250,7 +250,7 @@ async fn each_local_connection_forwards_to_the_pod_port() {
         403,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"pods \"web-1\" is forbidden: User \"dev\" cannot create resource \"pods/portforward\""}"#,
     );
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut forward = cluster.port_forward(forward_request(8080));
     let local = listening(&mut forward).await;
@@ -278,7 +278,7 @@ async fn a_connection_refused_another_way_is_not_forbidden() {
         404,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"pods \"web-1\" not found"}"#,
     );
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
 
     let mut forward = cluster.port_forward(forward_request(8080));
     let local = listening(&mut forward).await;
@@ -296,7 +296,7 @@ async fn a_connection_refused_another_way_is_not_forbidden() {
 #[tokio::test]
 async fn dropping_a_port_forward_stops_its_listener_and_connections() {
     let (client, on_start, on_drop) = hanging_client();
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
     let mut forward = cluster.port_forward(forward_request(8080));
     let local = listening(&mut forward).await;
     let _connection = tokio::net::TcpStream::connect(("127.0.0.1", local))
@@ -313,9 +313,7 @@ async fn dropping_a_port_forward_stops_its_listener_and_connections() {
 #[tokio::test]
 async fn a_forward_that_cannot_connect_fails_without_listening() {
     // No kubeconfig names this context, so building the client fails.
-    let cluster = Cluster::connect(&ClusterId::kubeconfig_context(
-        "astrolabe-test-no-such-context",
-    ));
+    let cluster = Cluster::connect(&ClusterId::named("astrolabe-test-no-such-context"));
 
     let mut forward = cluster.port_forward(forward_request(8080));
     let Some(ForwardEvent::Failed(error)) = next_report(&mut forward).await else {

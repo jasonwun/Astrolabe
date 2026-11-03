@@ -62,7 +62,7 @@ async fn dropping_the_cluster_stops_its_watches() {
 
 /// No kubeconfig names this context, on CI or a dev machine.
 fn no_such_cluster() -> ClusterId {
-    ClusterId::kubeconfig_context("astrolabe-test-no-such-context")
+    ClusterId::named("astrolabe-test-no-such-context")
 }
 
 #[tokio::test]

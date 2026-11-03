@@ -294,7 +294,7 @@ fn mock_client(pods: &[Pod]) -> (astrolabe_kube::kube::Client, Uris) {
 /// connection's failure.
 async fn first_failure(client: astrolabe_kube::kube::Client, port: u16) -> ClusterError {
     use std::time::Duration;
-    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
+    let cluster = Cluster::from_client(client, ClusterId::named("mock"));
     let mut forward = cluster.port_forward(ForwardRequest {
         target: ForwardTarget::Service(ObjectKey::new(Some("team-a".into()), "web")),
         port,
