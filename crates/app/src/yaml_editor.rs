@@ -163,6 +163,7 @@ impl YamlEditorView {
         initial: String,
         client: SharedClient,
     ) -> Self {
+        let client = async move { client.await.map_err(|error| error.to_string()) };
         Self::connecting(window, cx, initial, client)
     }
 

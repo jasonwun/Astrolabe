@@ -1,6 +1,6 @@
 //! End-to-end verification against a real cluster: the #21 apply loop and
-//! the #17 workload operations (scale, restart, logs, exec, port-forward)
-//! and the #18 Service port-forward.
+//! the #17 workload operations (scale, restart, logs, exec, port-forward),
+//! the #18 Service port-forward and the #155 `Cluster` handle.
 //!
 //! Requires a reachable cluster via the ambient kubeconfig (the dev loop
 //! uses `kind-astrolabe-dev`). All tests are `#[ignore]`d so the default
@@ -14,6 +14,7 @@
 use std::time::Duration;
 
 use astrolabe_kube::apply::{ApplyError, Location, apply_documents, precheck_documents};
+use astrolabe_kube::cluster::Cluster;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
@@ -91,6 +92,23 @@ async fn delete_ns(client: &kube::Client, ns: &str) {
     let gvk = GroupVersionKind::gvk("", "v1", "Namespace");
     let api: Api<DynamicObject> = Api::all_with(client.clone(), &ApiResource::from_gvk(&gvk));
     let _ = api.delete(ns, &DeleteParams::default()).await;
+}
+
+/// A real connect and Discovery through the handle: the kubeconfig's
+/// first context serves the core group's Namespace.
+#[tokio::test]
+#[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
+async fn cluster_connects_and_discovers() {
+    let contexts = astrolabe_kube::context_names().unwrap();
+    assert!(!contexts.is_empty(), "kubeconfig must contain a context");
+    let cluster = Cluster::connect(&contexts[0]);
+
+    let served = cluster.discover().await.unwrap().unwrap();
+
+    let namespace = served
+        .resolve("", "v1", "Namespace")
+        .expect("Namespace served");
+    assert!(!namespace.namespaced);
 }
 
 /// Namespaces emit a complete initial list followed by raw live changes.

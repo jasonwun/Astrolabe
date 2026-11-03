@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::discovery::{DiscoveryCache, discover};
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
@@ -158,15 +159,18 @@ async fn unresolvable_kinds_and_versions_are_not_served() {
 #[tokio::test]
 async fn failed_refresh_keeps_the_previous_result() {
     let (client, _) = mock_client(aggregated_server);
-    let first = discover(&client).await.map_err(|error| error.to_string());
+    let first = discover(&client).await.map_err(ClusterError::from);
     let mut cache = DiscoveryCache::default();
     assert!(cache.served().is_none());
 
     cache.record(first);
     assert!(cache.failure().is_none());
 
-    cache.record(Err("connection refused".to_string()));
-    assert_eq!(cache.failure(), Some("connection refused"));
+    cache.record(Err(ClusterError::new("connection refused")));
+    assert_eq!(
+        cache.failure(),
+        Some(&ClusterError::new("connection refused"))
+    );
     assert!(
         cache
             .served()
@@ -175,6 +179,6 @@ async fn failed_refresh_keeps_the_previous_result() {
     );
 
     let (client, _) = mock_client(legacy_server);
-    cache.record(discover(&client).await.map_err(|error| error.to_string()));
+    cache.record(discover(&client).await.map_err(ClusterError::from));
     assert!(cache.failure().is_none());
 }
