@@ -50,6 +50,21 @@ Run it before review on a ticket that only moves code; the residue
 should be `mod`/`use` lines, new modules' `//!` docs and rustfmt
 re-wraps. What else counts is in `CODING_STANDARDS.md`.
 
+Run `git add -N .` first: the script diffs the working tree, and a new
+file it cannot see leaves every moved line "removed nowhere". Before the
+move, compare what the moved code imports with the target crate's
+dependencies and `dev/layer-check.sh`'s allowlist: `Watched`'s
+`tracing::info!` needed a new dependency and allowlist entry, which then
+shows in the residue. A visibility change the move forces (a private
+method the old crate called) is invisible to the script; name it, and its
+real caller, in the PR body.
+
+Origin: #163 moved Session's value types. The first `move-check` run
+listed the whole new module as removed lines because the file was
+untracked, and the implementer first gave a test as the reason
+`Watched::mark_stale` went `pub`, where production code calls it; both
+reviewers corrected it (#163 retro).
+
 A test left in the lower crate that uses a moved item keeps its
 assertions: the lower crate takes the upper one as a dev-dependency, and
 the test changes only its `use` path. Integration tests (`tests/*.rs`)
