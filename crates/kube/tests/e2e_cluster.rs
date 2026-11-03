@@ -13,7 +13,9 @@
 
 use std::time::Duration;
 
-use astrolabe_kube::apply::{ApplyError, Location, apply_documents, precheck_documents};
+use astrolabe_kube::apply::{
+    ApplyError, ApplyMode, ApplyReport, Location, apply_documents, precheck_documents,
+};
 use astrolabe_kube::cluster::Cluster;
 use astrolabe_kube::default_client;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
@@ -94,6 +96,13 @@ fn line_of(snapshot: &str, needle: &str) -> usize {
         .position(|l| l.contains(needle))
         .unwrap_or_else(|| panic!("{needle:?} not in snapshot"))
         + 1
+}
+
+/// Apply `snapshot` the plain way, as the editor's Apply button does.
+async fn apply(client: &kube::Client, snapshot: &str) -> ApplyReport {
+    apply_documents(client, snapshot, ApplyMode::Normal)
+        .await
+        .unwrap()
 }
 
 async fn delete_ns(client: &kube::Client, ns: &str) {
@@ -214,7 +223,7 @@ async fn apply_multi_doc_happy_path() {
         deployment_doc(&ns, "IfNotPresent"),
     ]);
 
-    let report = apply_documents(&client, &snapshot, false).await.unwrap();
+    let report = apply(&client, &snapshot).await;
     assert!(report.ok, "all docs should apply: {:?}", report.outcomes);
     assert_eq!(report.outcomes.len(), 3);
     assert_eq!(report.outcomes[0].doc, format!("v1 Namespace/{ns}"));
@@ -247,7 +256,7 @@ async fn apply_422_maps_cause_to_field_line() {
         deployment_doc(&ns, "NotARealPolicy"),
     ]);
 
-    let report = apply_documents(&client, &snapshot, false).await.unwrap();
+    let report = apply(&client, &snapshot).await;
     assert!(!report.ok);
     assert!(report.outcomes[0].result.is_ok(), "Namespace applies");
     assert!(report.outcomes[1].result.is_ok(), "ConfigMap applies");
@@ -289,7 +298,7 @@ async fn apply_409_then_force_apply() {
     let ns = unique_ns();
     // Set up: namespace + ConfigMap owned by a *different* manager.
     let setup = join_docs(&[ns_doc(&ns), configmap_doc(&ns, "cm", "owned-by-other")]);
-    let report = apply_documents(&client, &setup, false).await.unwrap();
+    let report = apply(&client, &setup).await;
     assert!(report.ok);
 
     // Re-own data.value under a foreign manager.
@@ -312,7 +321,7 @@ async fn apply_409_then_force_apply() {
 
     // Our manager now conflicts on data.value.
     let snapshot = join_docs(&[configmap_doc(&ns, "cm", "ours")]);
-    let report = apply_documents(&client, &snapshot, false).await.unwrap();
+    let report = apply(&client, &snapshot).await;
     assert!(!report.ok);
     let err = report.outcomes[0]
         .result
@@ -345,7 +354,9 @@ async fn apply_409_then_force_apply() {
     );
 
     // Force Apply takes ownership and succeeds.
-    let report = apply_documents(&client, &snapshot, true).await.unwrap();
+    let report = apply_documents(&client, &snapshot, ApplyMode::Force)
+        .await
+        .unwrap();
     assert!(
         report.ok,
         "force apply should succeed: {:?}",
@@ -380,10 +391,7 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
             "precheck",
             precheck_documents(&client, &snapshot).await.unwrap(),
         ),
-        (
-            "apply",
-            apply_documents(&client, &snapshot, false).await.unwrap(),
-        ),
+        ("apply", apply(&client, &snapshot).await),
     ] {
         assert!(!report.ok, "{label} should flag the unknown field");
         assert!(
@@ -459,9 +467,7 @@ spec:
     - {{name: Size, type: string, jsonPath: .spec.size}}
 "
     );
-    let report = apply_documents(&client, &join_docs(&[ns_doc(&ns), crd_doc]), false)
-        .await
-        .unwrap();
+    let report = apply(&client, &join_docs(&[ns_doc(&ns), crd_doc])).await;
     assert!(report.ok, "{:?}", report.outcomes);
 
     let crds: Api<CustomResourceDefinition> = Api::all(client.clone());
@@ -504,7 +510,7 @@ spec:
     let widget = format!(
         "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"
     );
-    assert!(apply_documents(&client, &widget, false).await.unwrap().ok);
+    assert!(apply(&client, &widget).await.ok);
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             match events.next().await.expect("watch ended").unwrap() {
@@ -575,7 +581,7 @@ async fn crd_watch_without_rbac_reports_forbidden() {
 /// its Pods is Running and Ready; returns that Pod's name.
 async fn running_nginx(client: &kube::Client, ns: &str) -> String {
     let snapshot = join_docs(&[ns_doc(ns), deployment_doc(ns, "IfNotPresent")]);
-    let report = apply_documents(client, &snapshot, false).await.unwrap();
+    let report = apply(client, &snapshot).await;
     assert!(report.ok, "setup should apply: {:?}", report.outcomes);
     ready_pod(client, ns, None).await
 }
@@ -687,9 +693,7 @@ spec:
 async fn suspend_and_trigger_a_cronjob() {
     let client = default_client().await.unwrap();
     let ns = unique_ns();
-    let report = apply_documents(&client, &join_docs(&[ns_doc(&ns), cronjob_doc(&ns)]), false)
-        .await
-        .unwrap();
+    let report = apply(&client, &join_docs(&[ns_doc(&ns), cronjob_doc(&ns)])).await;
     assert!(report.ok, "setup should apply: {:?}", report.outcomes);
     let nightly = ObjectRef {
         resource: ApiResource::erase::<CronJob>(&()),
@@ -837,7 +841,7 @@ async fn service_port_forward_reaches_a_selected_pod() {
     let service = format!(
         "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: {ns}\nspec:\n  selector:\n    app: nginx\n  ports:\n    - name: http\n      port: 8081\n      targetPort: 80\n"
     );
-    let report = apply_documents(&client, &service, false).await.unwrap();
+    let report = apply(&client, &service).await;
     assert!(report.ok, "service should apply: {:?}", report.outcomes);
 
     let cluster = Cluster::from_client(client.clone(), "e2e");

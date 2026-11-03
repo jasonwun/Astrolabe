@@ -184,11 +184,8 @@ impl SessionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let client = self.session.read(cx).client();
-        let editor = cx.new(|cx| match client {
-            Some(client) => YamlEditorView::with_client(window, cx, yaml, client),
-            None => YamlEditorView::without_cluster(window, cx, yaml),
-        });
+        let session = self.session.clone();
+        let editor = cx.new(|cx| YamlEditorView::with_session(window, cx, yaml, session));
         let panel = cx.new(|_| EditorPanel::new(title, editor));
         self.add_tab(panel_handle(panel), window, cx);
     }

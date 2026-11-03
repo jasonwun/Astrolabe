@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+use astrolabe_kube::apply::{ApplyMode, ApplyReport};
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -23,7 +24,7 @@ use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{ScriptedCluster, SharedClient};
+pub use crate::cluster_io::ScriptedCluster;
 use crate::perf;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
@@ -576,6 +577,24 @@ impl Session {
         self.io.operate(operation)
     }
 
+    /// Apply every document of `snapshot` to the Cluster; resolves with
+    /// each document's outcome.
+    pub fn apply(
+        &mut self,
+        snapshot: &str,
+        mode: ApplyMode,
+    ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
+        self.io.apply(snapshot, mode)
+    }
+
+    /// Precheck `snapshot`: a dry run that changes nothing on the Cluster.
+    pub fn precheck(
+        &mut self,
+        snapshot: &str,
+    ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
+        self.io.precheck(snapshot)
+    }
+
     /// Follow one container's log, from a bounded tail.
     pub fn logs(&mut self, request: LogRequest) -> LogStream {
         self.io.logs(request)
@@ -656,11 +675,6 @@ impl Session {
             ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error.to_string()),
         }
         cx.notify();
-    }
-
-    /// The live session's shared client; `None` for scripted sessions.
-    pub fn client(&self) -> Option<SharedClient> {
-        self.io.client()
     }
 
     pub fn watch_key(&self) -> &WatchKey {

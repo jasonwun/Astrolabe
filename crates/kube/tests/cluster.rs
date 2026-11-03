@@ -2,6 +2,7 @@
 //! synthetic: hand-written minimal shapes, never captured from a real
 //! apiserver.
 
+use astrolabe_kube::apply::{ApplyError, ApplyMode};
 use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind};
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
@@ -136,8 +137,8 @@ fn a_new_error_is_other_and_shows_its_message() {
     assert_eq!(error.to_string(), "scripted failure");
 }
 
-/// The YAML editors' Apply still runs outside the handle (#160): it must
-/// reach a tokio reactor when awaited from an executor without one.
+/// The Workspace YAML editor's Apply still runs outside the handle (#161):
+/// it must reach a tokio reactor when awaited from an executor without one.
 #[test]
 fn a_request_not_behind_the_handle_yet_runs_on_the_cluster_runtime() {
     // A plain executor, with no tokio reactor of its own: the sleep only
@@ -155,4 +156,162 @@ fn a_request_not_behind_the_handle_yet_runs_on_the_cluster_runtime() {
     let answer = answer.recv_timeout(std::time::Duration::from_secs(5));
 
     assert_eq!(answer, Ok(Some(42)));
+}
+
+// ---- Apply and Precheck ---------------------------------------------------
+
+const CONFIGMAPS_DISCOVERY: &str = r#"{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"v1","resources":[
+    {"name":"configmaps","singularName":"configmap","namespaced":true,"kind":"ConfigMap","verbs":["get","list","patch"]}
+]}"#;
+const CONFIGMAP: &str =
+    r#"{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"cm","namespace":"default"}}"#;
+const CONFIGMAP_YAML: &str =
+    "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm\ndata:\n  key: value\n";
+const CONFLICT: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":409,"reason":"Conflict",
+    "message":"Apply failed with 1 conflict: conflict with \"kubectl\" using v1: .data.key"}"#;
+const PATCH_PATH: &str = "/api/v1/namespaces/default/configmaps/cm";
+
+/// The `PATCH` requests' query strings, in the order the mock saw them.
+type Patches = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+/// `Cluster` serving ConfigMap discovery, answering each `PATCH` of `cm`
+/// with `patched`, and recording the `PATCH` queries.
+fn configmap_cluster(patched: fn() -> http::Response<Body>) -> (Cluster, Patches) {
+    let recorded = Patches::default();
+    let seen = recorded.clone();
+    let service = tower::service_fn(move |req: http::Request<Body>| {
+        let response = match (req.method().as_str(), req.uri().path()) {
+            ("GET", "/api/v1") => reply(200, CONFIGMAPS_DISCOVERY),
+            ("PATCH", PATCH_PATH) => {
+                let query = req.uri().query().unwrap_or_default().to_owned();
+                seen.lock().unwrap().push(query);
+                patched()
+            }
+            _ => status(404, "NotFound"),
+        };
+        std::future::ready(Ok::<_, std::convert::Infallible>(response))
+    });
+    (
+        Cluster::from_client(Client::new(service, "default"), "mock"),
+        recorded,
+    )
+}
+
+fn applied() -> http::Response<Body> {
+    reply(200, CONFIGMAP)
+}
+
+fn conflicted() -> http::Response<Body> {
+    reply(409, CONFLICT)
+}
+
+fn queries(patches: &Patches) -> Vec<String> {
+    patches.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn apply_sends_the_snapshot_as_a_server_side_apply() {
+    let (cluster, patches) = configmap_cluster(applied);
+
+    let report = cluster
+        .apply(CONFIGMAP_YAML, ApplyMode::Normal)
+        .await
+        .unwrap();
+
+    assert!(report.ok);
+    assert_eq!(report.outcomes.len(), 1);
+    assert_eq!(report.outcomes[0].doc, "v1 ConfigMap/cm");
+    let queries = queries(&patches);
+    assert_eq!(queries.len(), 1, "{queries:?}");
+    assert!(queries[0].contains("fieldManager=astrolabe"), "{queries:?}");
+    assert!(!queries[0].contains("force"), "{queries:?}");
+    assert!(!queries[0].contains("dryRun"), "{queries:?}");
+}
+
+#[tokio::test]
+async fn a_conflicting_apply_reports_the_conflict() {
+    let (cluster, _) = configmap_cluster(conflicted);
+
+    let report = cluster
+        .apply(CONFIGMAP_YAML, ApplyMode::Normal)
+        .await
+        .unwrap();
+
+    assert!(!report.ok);
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    match &error.error {
+        ApplyError::Conflict(conflicts) => {
+            assert_eq!(conflicts.len(), 1);
+            assert_eq!(conflicts[0].manager, "kubectl");
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn force_apply_takes_over_the_conflicting_fields() {
+    let (cluster, patches) = configmap_cluster(applied);
+
+    let report = cluster
+        .apply(CONFIGMAP_YAML, ApplyMode::Force)
+        .await
+        .unwrap();
+
+    assert!(report.ok);
+    let queries = queries(&patches);
+    assert!(queries[0].contains("force=true"), "{queries:?}");
+    assert!(queries[0].contains("fieldManager=astrolabe"), "{queries:?}");
+}
+
+#[tokio::test]
+async fn precheck_is_a_strict_dry_run() {
+    let (cluster, patches) = configmap_cluster(applied);
+
+    let report = cluster.precheck(CONFIGMAP_YAML).await.unwrap();
+
+    assert!(report.ok);
+    let queries = queries(&patches);
+    assert_eq!(queries.len(), 1, "{queries:?}");
+    assert!(queries[0].contains("dryRun=All"), "{queries:?}");
+    assert!(queries[0].contains("fieldValidation=Strict"), "{queries:?}");
+    assert!(!queries[0].contains("force"), "{queries:?}");
+}
+
+#[tokio::test]
+async fn a_precheck_reports_what_the_apply_would_hit() {
+    let (cluster, _) = configmap_cluster(conflicted);
+
+    let report = cluster.precheck(CONFIGMAP_YAML).await.unwrap();
+
+    assert!(!report.ok);
+    assert!(report.outcomes[0].result.is_err());
+}
+
+#[tokio::test]
+async fn an_unparsable_snapshot_fails_before_anything_is_sent() {
+    let (cluster, patches) = configmap_cluster(applied);
+
+    let apply = cluster
+        .apply("kind: [unclosed", ApplyMode::Normal)
+        .await
+        .unwrap_err();
+    let precheck = cluster.precheck("kind: [unclosed").await.unwrap_err();
+
+    assert_eq!(apply.kind(), ClusterErrorKind::Other);
+    assert_eq!(precheck.kind(), ClusterErrorKind::Other);
+    assert_eq!(queries(&patches), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn apply_and_precheck_fail_with_the_connect_failure() {
+    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+
+    let apply = cluster
+        .apply(CONFIGMAP_YAML, ApplyMode::Normal)
+        .await
+        .unwrap_err();
+    let precheck = cluster.precheck(CONFIGMAP_YAML).await.unwrap_err();
+
+    assert_eq!(apply.kind(), ClusterErrorKind::Connect);
+    assert_eq!(precheck.kind(), ClusterErrorKind::Connect);
 }
