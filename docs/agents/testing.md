@@ -176,7 +176,11 @@ result into a failure.
 A `TIMEOUT` fails the run too (cargo-mutants 27.1 exits `Timeout` ahead of
 `FoundProblems`): a mutant that silences a callback leaves an unbounded
 `recv().await` hanging. Bound every wait on a channel or stream in kube
-tests with `tokio::time::timeout`. A loop that runs until nothing changes
+tests with `tokio::time::timeout`. A test that awaits on a plain executor
+(`futures::executor::block_on`), to show the work runs on the cluster
+runtime, has no tokio timer: run the `block_on` on a `std::thread` and
+take its answer with `std::sync::mpsc`'s `recv_timeout` (#159 retro). A
+loop that runs until nothing changes
 hangs the same way under a mutant: cap its passes (`column_widths` runs
 at most one pass per column, plus one).
 
