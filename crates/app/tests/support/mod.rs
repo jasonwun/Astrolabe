@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use astrolabe::clock::Clock;
-use astrolabe::session::{ResourceKind, ScriptedCluster, WatchKey};
+use astrolabe::session::ScriptedCluster;
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::apply::{
     ApplyMode, ApplyReport, DocError, DocOutcome, LocatedCause, locate_field, parse_status,
@@ -25,6 +25,7 @@ use astrolabe_kube::pod::{
 };
 use astrolabe_kube::watch::ObjectWatchMessage;
 use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::session::{ResourceKind, WatchKey};
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};

@@ -9,7 +9,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use super::{DetailTarget, OpenExec, OpenLogs, ResourceDetailPanel, button};
-use crate::session::ForwardState;
+use astrolabe_model::session::ForwardState;
 
 /// A Pod action that runs in one container; Forward also serves Services.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

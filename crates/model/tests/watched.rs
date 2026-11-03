@@ -1,8 +1,8 @@
-use astrolabe::session::{ConnectionHealth, SnapshotChange, Watched};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_model::session::{ConnectionHealth, SnapshotChange, Watched};
 
 fn namespace(name: &str) -> Namespace {
     Namespace {

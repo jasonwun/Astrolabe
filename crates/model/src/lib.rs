@@ -7,3 +7,4 @@ pub mod discovery_cache;
 pub mod jsonpath;
 pub mod operation_text;
 pub mod projection;
+pub mod session;

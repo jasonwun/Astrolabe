@@ -20,7 +20,7 @@ use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchM
 use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, channel::mpsc};
 
-use crate::session::WatchKey;
+use astrolabe_model::session::WatchKey;
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), ClusterError>>;

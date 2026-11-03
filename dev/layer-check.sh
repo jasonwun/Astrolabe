@@ -21,7 +21,7 @@
 # lines are skipped, so a doc comment may name a forbidden item.
 set -euo pipefail
 
-model_allowlist=(astrolabe-kube serde_json serde-saphyr regex cronspeak thiserror)
+model_allowlist=(astrolabe-kube serde_json serde-saphyr regex cronspeak thiserror tracing)
 model_dir=crates/model
 app_dir=crates/app
 app_seam=crates/app/src/cluster_io.rs

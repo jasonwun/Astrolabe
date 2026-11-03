@@ -341,6 +341,7 @@ dependencies = [
  "cronspeak",
  "serde-saphyr 0.0.29",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
