@@ -196,27 +196,26 @@ held 4 (#152 retro).
 Paths a scripted test cannot reach stay missed: kubeconfig discovery
 (`discover_contexts`) and styling such as the selected row's colours.
 
-## Scripted apiserver tests (gpui + real I/O)
+## Watch tests on a mock client (paused clock)
 
-Tests that drive real network I/O (e.g. `Session::new` against a scripted
-localhost apiserver) inside a `#[gpui_kit::test]` — reference implementation:
-`session_watch_error_forces_complete_namespace_relist` in
-`crates/app/tests/session.rs`. Three gotchas:
+Relist and the 403 backoff are tested in the cluster layer, through
+`Cluster::watch_*` over a mock `kube::Client` — reference implementation:
+`crates/kube/tests/support/mod.rs` and `crates/kube/tests/watch.rs`. No TCP server and no GPUI. Three gotchas:
 
-- Call `cx.executor().allow_parking()` first. Real I/O wakes the foreground
-  executor from tokio worker threads; without it the test scheduler fails the
-  test at teardown with "Your test is not deterministic".
-- `shutdown(Shutdown::Both)` every connection the server abandons. Returning
-  from a connection handler without shutdown leaves the socket open, and
-  hyper's client pool hands the dead connection to the next request, which
-  then hangs unread.
-- Route requests by path and answer every request `Session::new` makes on
-  connect (namespace list/watch, CRD list/watch, `/api` + `/apis`
-  discovery). A server that treats every non-watch request as one resource's
-  LIST miscounts its queries and serves the wrong body once the session adds
-  a connect-time request; the test then times out far from the cause.
+- Use `#[tokio::test(start_paused = true)]` and build the handle with
+  `Cluster::from_client` inside the test: it runs the watch on the caller's
+  runtime, so the paused clock skips the 1 s and 30 s retries. A handle from
+  `Cluster::connect` runs on the cluster runtime, whose clock is real.
+- Answer the last scripted watch with a request that never completes
+  (`future::pending()`). An empty `200` ends the watch at once and the
+  watcher re-watches in a busy loop; awaiting a message that never comes,
+  with no timer pending, hangs the test instead of failing it.
+- Capture logs with a process-wide subscriber, in a binary whose only test
+  reaches the asserted callsites (`crates/kube/tests/watch_relist.rs`). A
+  thread-scoped one (`set_default`) races other tests' threads over
+  tracing's per-callsite cache and loses events.
 
-Origin: #28 session (first two), #16 session (third).
+Origin: #156 (replaced the scripted TCP apiserver test from #28/#16).
 
 ## Merge gate
 

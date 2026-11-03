@@ -31,7 +31,9 @@ fn not_found() -> http::Response<Body> {
 
 /// Discovery through the `Cluster` handle, the only way to discover.
 async fn discover(client: &Client) -> Result<ServedResources, ClusterError> {
-    Cluster::from_client(client.clone()).discover().await
+    Cluster::from_client(client.clone(), "mock")
+        .discover()
+        .await
 }
 
 /// `Client` over a canned handler; the log records `path [aggregated]` for

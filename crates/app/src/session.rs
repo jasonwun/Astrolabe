@@ -7,13 +7,14 @@ use astrolabe_kube::crd::{self, CustomGroup, CustomKind, KindResource};
 use astrolabe_kube::discovery::{DiscoveryCache, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+use astrolabe_kube::kube::ResourceExt;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
-use astrolabe_kube::kube::runtime::watcher::{self, Event};
-use astrolabe_kube::kube::{Client, ResourceExt};
+use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, Operation};
+use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
-use futures::{FutureExt as _, Stream, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
 
@@ -29,43 +30,6 @@ pub use astrolabe_kube::pod::ExecInput;
 /// new CRD is served only once it turns Established, which arrives as an
 /// update of the same object.
 pub const CRD_DEBOUNCE: Duration = Duration::from_millis(400);
-
-/// A failed watch, as the session sees it. `forbidden` marks an RBAC
-/// denial (HTTP 403), which some views present as an empty state instead
-/// of a connection problem.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WatchError {
-    pub message: String,
-    pub forbidden: bool,
-}
-
-impl WatchError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            forbidden: false,
-        }
-    }
-
-    pub fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            forbidden: true,
-        }
-    }
-
-    pub(crate) fn from_watcher(error: &watcher::Error) -> Self {
-        Self {
-            message: error.to_string(),
-            forbidden: astrolabe_kube::watch::is_forbidden(error),
-        }
-    }
-}
-
-pub type WatchMessage<K> = Result<Event<K>, WatchError>;
-pub type NamespaceWatchMessage = WatchMessage<Namespace>;
-pub type CrdWatchMessage = WatchMessage<CustomResourceDefinition>;
-pub type ObjectWatchMessage = WatchMessage<DynamicObject>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ResourceKind {
@@ -227,7 +191,7 @@ impl<K: ResourceExt> Watched<K> {
                 SnapshotChange::Changed
             }
             Err(error) => {
-                self.forbidden = error.forbidden;
+                self.forbidden = error.is_forbidden();
                 self.mark_stale();
                 SnapshotChange::Unchanged
             }
@@ -340,7 +304,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Self {
         let cluster = cluster.into();
-        let io = ClusterIo::connect(cluster.clone());
+        let io = ClusterIo::connect(&cluster);
         Self::start(cluster, io, namespace.into(), cx)
     }
 
@@ -391,44 +355,20 @@ impl Session {
             forwards: Vec::new(),
             io,
         };
-        session.start_watch(
-            "namespace",
-            |scripted| scripted.namespaces.take(),
-            astrolabe_kube::watch::namespaces,
+        spawn_drain(
+            session.io.watch_namespaces(),
+            cx,
             |session| Some(&mut session.namespaces),
             |_, _, _| {},
-            cx,
         );
-        session.start_watch(
-            "CRD",
-            |scripted| scripted.crds.take(),
-            astrolabe_kube::watch::custom_resource_definitions,
+        spawn_drain(
+            session.io.watch_crds(),
+            cx,
             |session| Some(&mut session.crds),
             Self::crds_changed,
-            cx,
         );
         session.run_discovery(cx);
         session
-    }
-
-    /// Start a resident watch through the I/O seam and drain it into the
-    /// `Watched` that `watched` selects; `changed` runs after each message.
-    /// No-op when a scripted cluster scripts no events for it.
-    fn start_watch<K, S>(
-        &mut self,
-        label: &'static str,
-        scripted: impl FnOnce(&mut ScriptedCluster) -> Option<mpsc::Receiver<WatchMessage<K>>>,
-        stream: impl Fn(&Client) -> S + Send + 'static,
-        watched: impl Fn(&mut Self) -> Option<&mut Watched<K>> + 'static,
-        changed: impl Fn(&mut Self, SnapshotChange, &mut Context<Self>) + 'static,
-        cx: &mut Context<Self>,
-    ) where
-        K: ResourceExt + Send + 'static,
-        S: Stream<Item = Result<Event<K>, watcher::Error>> + Send,
-    {
-        if let Some(events) = self.io.watch(label, scripted, stream) {
-            spawn_drain(events, cx, watched, changed);
-        }
     }
 
     fn crds_changed(&mut self, change: SnapshotChange, cx: &mut Context<Self>) {
@@ -535,7 +475,7 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> WatchKey {
         let key = self.builtin_watch_key(kind, namespace);
-        self.ensure_watch(key.clone(), (kind.registration().resource)(), cx);
+        self.ensure_watch(key.clone(), &(kind.registration().resource)(), cx);
         key
     }
 
@@ -600,12 +540,12 @@ impl Session {
         };
         let resource = resource.clone();
         let key = self.custom_object_watch_key(kind, namespace.as_deref());
-        self.ensure_watch(key.clone(), resource, cx);
+        self.ensure_watch(key.clone(), &resource, cx);
         Some(key)
     }
 
     /// Start the object watch `key` on `resource` unless it runs already.
-    fn ensure_watch(&mut self, key: WatchKey, resource: ApiResource, cx: &mut Context<Self>) {
+    fn ensure_watch(&mut self, key: WatchKey, resource: &ApiResource, cx: &mut Context<Self>) {
         if self.objects.contains_key(&key) {
             return;
         }
@@ -613,16 +553,11 @@ impl Session {
             key.clone(),
             Watched::new(key.cluster.clone(), resource.kind.clone()),
         );
-        let scripted_key = key.clone();
-        let watched_key = key.clone();
-        let namespace = key.namespace.clone();
-        self.start_watch(
-            "object",
-            move |scripted| scripted.watches.remove(&scripted_key),
-            move |client| astrolabe_kube::watch::objects(client, &resource, namespace.as_deref()),
-            move |session| session.objects.get_mut(&watched_key),
-            |_, _, _| {},
+        spawn_drain(
+            self.io.watch_objects(&key, resource),
             cx,
+            move |session| session.objects.get_mut(&key),
+            |_, _, _| {},
         );
         cx.notify();
     }
@@ -814,13 +749,17 @@ impl Session {
 
 /// Resident drain loop (#8 bridge): applies every queued message to the
 /// `Watched` that `watched` selects, then notifies once; the channel
-/// closing marks the watch stale.
+/// closing marks the watch stale. No receiver (a scripted cluster with no
+/// script for the watch) starts nothing.
 fn spawn_drain<K: ResourceExt + 'static>(
-    mut receiver: mpsc::Receiver<WatchMessage<K>>,
+    receiver: Option<mpsc::Receiver<WatchMessage<K>>>,
     cx: &mut Context<Session>,
     watched: impl Fn(&mut Session) -> Option<&mut Watched<K>> + 'static,
     changed: impl Fn(&mut Session, SnapshotChange, &mut Context<Session>) + 'static,
 ) {
+    let Some(mut receiver) = receiver else {
+        return;
+    };
     let watched = Rc::new(watched);
     let apply_to = watched.clone();
     let apply = move |session: &mut Session, message, cx: &mut Context<Session>| {

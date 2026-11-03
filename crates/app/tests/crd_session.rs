@@ -3,8 +3,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe::session::{
-    ConnectionHealth, CustomKindId, DEFAULT_NAMESPACE, ObjectWatchMessage, ResourceKind,
-    ScriptedCluster, Session, WatchError, WatchKey,
+    ConnectionHealth, CustomKindId, DEFAULT_NAMESPACE, ResourceKind, ScriptedCluster, Session,
+    WatchKey,
 };
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::crd::KindResource;
@@ -14,6 +14,7 @@ use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensio
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_kube::watch::ObjectWatchMessage;
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, Entity, TestAppContext};
 
@@ -77,7 +78,7 @@ fn crontab_id() -> CustomKindId {
     }
 }
 
-fn snapshot<K>(sender: &mut mpsc::Sender<Result<Event<K>, WatchError>>, objects: Vec<K>) {
+fn snapshot<K>(sender: &mut mpsc::Sender<Result<Event<K>, ClusterError>>, objects: Vec<K>) {
     sender.try_send(Ok(Event::Init)).unwrap();
     for object in objects {
         sender.try_send(Ok(Event::InitApply(object))).unwrap();
@@ -87,8 +88,8 @@ fn snapshot<K>(sender: &mut mpsc::Sender<Result<Event<K>, WatchError>>, objects:
 
 struct Harness {
     session: Entity<Session>,
-    namespaces: mpsc::Sender<Result<Event<Namespace>, WatchError>>,
-    crds: mpsc::Sender<Result<Event<CustomResourceDefinition>, WatchError>>,
+    namespaces: mpsc::Sender<Result<Event<Namespace>, ClusterError>>,
+    crds: mpsc::Sender<Result<Event<CustomResourceDefinition>, ClusterError>>,
     discoveries: Rc<Cell<usize>>,
     discovery: Rc<RefCell<Result<ServedResources, ClusterError>>>,
 }
@@ -216,7 +217,8 @@ fn crd_changes_rerun_discovery_after_a_400ms_debounce(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_first_crd_snapshot_already_discovered_does_not_rediscover(cx: &mut TestAppContext) {
-    let (namespaces, namespace_events) = mpsc::channel::<Result<Event<Namespace>, WatchError>>(32);
+    let (namespaces, namespace_events) =
+        mpsc::channel::<Result<Event<Namespace>, ClusterError>>(32);
     let (mut crds, crd_events) = mpsc::channel(32);
     let discoveries = Rc::new(Cell::new(0));
     let cluster = ScriptedCluster::new(namespace_events)
@@ -298,7 +300,7 @@ fn rbac_denied_crd_list_leaves_custom_resources_empty(cx: &mut TestAppContext) {
     let mut h = harness(cx, Vec::new());
     snapshot(&mut h.namespaces, Vec::new());
     h.crds
-        .try_send(Err(WatchError::forbidden(
+        .try_send(Err(ClusterError::forbidden(
             "customresourcedefinitions is forbidden",
         )))
         .unwrap();

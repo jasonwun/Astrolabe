@@ -4,7 +4,8 @@
 
 mod support;
 
-use astrolabe::session::{ForwardRequest, ForwardTarget, WatchError};
+use astrolabe::session::{ForwardRequest, ForwardTarget};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::ObjectKey;
@@ -405,7 +406,7 @@ fn a_service_lists_its_endpoint_slices_live_and_opens_one(cx: &mut TestAppContex
 fn a_forbidden_endpoint_slice_watch_still_says_so(cx: &mut TestAppContext) {
     let (mut ui, mut slices) = open_service_with_slices(cx);
     slices
-        .try_send(Err(WatchError::forbidden("endpointslices is forbidden")))
+        .try_send(Err(ClusterError::forbidden("endpointslices is forbidden")))
         .unwrap();
     ui.settle();
 

@@ -6,7 +6,8 @@
 mod support;
 
 use astrolabe::detail::{DetailTarget, NeededWatch, RelatedOutcome, Resolved, resolve, watches};
-use astrolabe::session::{ScriptedCluster, Session, WatchError};
+use astrolabe::session::{ScriptedCluster, Session};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -134,7 +135,7 @@ fn a_forbidden_related_watch_says_so(cx: &mut TestAppContext) {
     let target = target(BuiltinKind::Deployments, "web");
     let (session, mut deployments, mut pods) = session(&target, cx);
     snapshot(&mut deployments, vec![web_deployment()]);
-    pods.try_send(Err(WatchError::forbidden("pods is forbidden")))
+    pods.try_send(Err(ClusterError::forbidden("pods is forbidden")))
         .unwrap();
 
     let related = resolved(&target, &session, cx).related.unwrap();
@@ -161,7 +162,7 @@ fn a_hiding_section_still_says_its_watch_is_forbidden(cx: &mut TestAppContext) {
     let (session, mut services, mut slices) = session(&target, cx);
     snapshot(&mut services, vec![web_service()]);
     slices
-        .try_send(Err(WatchError::forbidden("endpointslices is forbidden")))
+        .try_send(Err(ClusterError::forbidden("endpointslices is forbidden")))
         .unwrap();
 
     let related = resolved(&target, &session, cx).related.unwrap();

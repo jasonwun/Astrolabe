@@ -6,27 +6,20 @@
 //! adds one (docs/adr/0002).
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use astrolabe_kube::cluster::{Cluster, ClusterError};
 use astrolabe_kube::discovery::ServedResources;
-use astrolabe_kube::kube::Client;
-use astrolabe_kube::kube::runtime::watcher::{self, Event};
+use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::ExecInput;
+use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
 use futures::future::{self, BoxFuture};
-use futures::{FutureExt as _, SinkExt, Stream, StreamExt, channel::mpsc};
+use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use tokio::sync::oneshot;
 
 use crate::kube_bridge::{spawn_cluster, spawn_cluster_task};
-use crate::session::{
-    CrdWatchMessage, ExecRequest, ForwardRequest, ForwardTarget, LogRequest, NamespaceWatchMessage,
-    ObjectWatchMessage, WatchError, WatchKey, WatchMessage,
-};
+use crate::session::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest, WatchKey};
 pub use astrolabe_kube::cluster::SharedClient;
-
-/// Retry interval for a watch the apiserver refused with 403.
-const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
 
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), String>>;
@@ -212,50 +205,43 @@ impl ScriptedCluster {
 }
 
 pub(crate) enum ClusterIo {
-    Live {
-        /// The kubeconfig context, for logs.
-        context: String,
-        cluster: Cluster,
-        tasks: Vec<tokio::task::JoinHandle<()>>,
-    },
+    Live(Cluster),
     Scripted(ScriptedCluster),
 }
 
 impl ClusterIo {
     /// Connect to kubeconfig context `context`; every request waits on the
     /// shared connect.
-    pub(crate) fn connect(context: String) -> Self {
-        Self::Live {
-            cluster: Cluster::connect(&context),
-            context,
-            tasks: Vec::new(),
+    pub(crate) fn connect(context: &str) -> Self {
+        Self::Live(Cluster::connect(context))
+    }
+
+    /// The Namespace watch; `None` when a scripted cluster scripts none.
+    pub(crate) fn watch_namespaces(&mut self) -> Option<mpsc::Receiver<NamespaceWatchMessage>> {
+        match self {
+            Self::Scripted(cluster) => cluster.namespaces.take(),
+            Self::Live(cluster) => Some(cluster.watch_namespaces()),
         }
     }
 
-    /// Start one watch: live clusters run `stream` resident on the cluster
-    /// runtime; scripted clusters hand over the channel `scripted` picks,
-    /// if the test scripted one.
-    pub(crate) fn watch<K, S>(
-        &mut self,
-        label: &'static str,
-        scripted: impl FnOnce(&mut ScriptedCluster) -> Option<mpsc::Receiver<WatchMessage<K>>>,
-        stream: impl Fn(&Client) -> S + Send + 'static,
-    ) -> Option<mpsc::Receiver<WatchMessage<K>>>
-    where
-        K: Send + 'static,
-        S: Stream<Item = Result<Event<K>, watcher::Error>> + Send,
-    {
+    /// The CRD watch; `None` when a scripted cluster scripts none.
+    pub(crate) fn watch_crds(&mut self) -> Option<mpsc::Receiver<CrdWatchMessage>> {
         match self {
-            Self::Scripted(cluster) => scripted(cluster),
-            Self::Live {
-                context,
-                cluster,
-                tasks,
-            } => {
-                let (events, task) = spawn_watch(context.clone(), label, cluster.client(), stream);
-                tasks.push(task);
-                Some(events)
-            }
+            Self::Scripted(cluster) => cluster.crds.take(),
+            Self::Live(cluster) => Some(cluster.watch_crds()),
+        }
+    }
+
+    /// The object watch `key` on `resource`; `None` when a scripted cluster
+    /// scripts none for `key`.
+    pub(crate) fn watch_objects(
+        &mut self,
+        key: &WatchKey,
+        resource: &ApiResource,
+    ) -> Option<mpsc::Receiver<ObjectWatchMessage>> {
+        match self {
+            Self::Scripted(cluster) => cluster.watches.remove(key),
+            Self::Live(cluster) => Some(cluster.watch_objects(resource, key.namespace.as_deref())),
         }
     }
 
@@ -263,7 +249,7 @@ impl ClusterIo {
     pub(crate) fn discover(&mut self) -> BoxFuture<'static, Result<ServedResources, ClusterError>> {
         match self {
             Self::Scripted(cluster) => future::ready((cluster.discover)()).boxed(),
-            Self::Live { cluster, .. } => cluster.discover().boxed(),
+            Self::Live(cluster) => cluster.discover().boxed(),
         }
     }
 
@@ -274,7 +260,7 @@ impl ClusterIo {
     ) -> oneshot::Receiver<Result<(), String>> {
         match self {
             Self::Scripted(cluster) => answered((cluster.operate)(&operation)),
-            Self::Live { cluster, .. } => {
+            Self::Live(cluster) => {
                 let client = cluster.client();
                 spawn_cluster(async move {
                     let client = client.await.map_err(|error| error.to_string())?;
@@ -318,7 +304,7 @@ impl ClusterIo {
                 }
                 LogStream { chunks, task: None }
             }
-            Self::Live { cluster, .. } => {
+            Self::Live(cluster) => {
                 let client = cluster.client();
                 let task = spawn_cluster_task(async move {
                     let failed = |error: String| {
@@ -372,7 +358,7 @@ impl ClusterIo {
                     task: None,
                 }
             }
-            Self::Live { cluster, .. } => {
+            Self::Live(cluster) => {
                 let client = cluster.client();
                 let task = spawn_cluster_task(async move {
                     let exit = match client.await {
@@ -416,7 +402,7 @@ impl ClusterIo {
                 }
                 PortForward { events, task: None }
             }
-            Self::Live { cluster, .. } => {
+            Self::Live(cluster) => {
                 let client = cluster.client();
                 let task = spawn_cluster_task(async move {
                     let failed = |error: String| {
@@ -480,18 +466,8 @@ impl ClusterIo {
     /// The live shared client; `None` for scripted clusters.
     pub(crate) fn client(&self) -> Option<SharedClient> {
         match self {
-            Self::Live { cluster, .. } => Some(cluster.client()),
+            Self::Live(cluster) => Some(cluster.client()),
             Self::Scripted(_) => None,
-        }
-    }
-}
-
-impl Drop for ClusterIo {
-    fn drop(&mut self) {
-        if let Self::Live { tasks, .. } = self {
-            for task in tasks.drain(..) {
-                task.abort();
-            }
         }
     }
 }
@@ -500,68 +476,4 @@ fn answered<T>(value: T) -> oneshot::Receiver<T> {
     let (tx, rx) = oneshot::channel();
     let _ = tx.send(value);
     rx
-}
-
-/// Resident watcher on the cluster runtime. Any stream error restarts the
-/// watcher from a fresh LIST (#28): a silent watch resumption would emit no
-/// `InitDone`, leaving the UI stale.
-fn spawn_watch<K, S>(
-    context: String,
-    label: &'static str,
-    client: SharedClient,
-    stream: impl Fn(&Client) -> S + Send + 'static,
-) -> (mpsc::Receiver<WatchMessage<K>>, tokio::task::JoinHandle<()>)
-where
-    K: Send + 'static,
-    S: Stream<Item = Result<Event<K>, watcher::Error>> + Send,
-{
-    let (mut sender, receiver) = mpsc::channel(256);
-    let task = spawn_cluster_task(async move {
-        let client = match client.await {
-            Ok(client) => client,
-            Err(error) => {
-                tracing::warn!(cluster = %context, error = %error, "{label} watch client setup failed");
-                let _ = sender.send(Err(WatchError::new(error.to_string()))).await;
-                return;
-            }
-        };
-        loop {
-            let events = stream(&client);
-            futures::pin_mut!(events);
-            let mut report_end = true;
-            let mut forbidden = false;
-            while let Some(event) = events.next().await {
-                let event = event.map_err(|error| {
-                    tracing::warn!(cluster = %context, error = %error, "{label} watch failed");
-                    WatchError::from_watcher(&error)
-                });
-                let failed = event.is_err();
-                forbidden = matches!(&event, Err(error) if error.forbidden);
-                if sender.send(event).await.is_err() {
-                    return;
-                }
-                if failed {
-                    report_end = false;
-                    break;
-                }
-            }
-            if report_end
-                && sender
-                    .send(Err(WatchError::new(format!("{label} watch ended"))))
-                    .await
-                    .is_err()
-            {
-                return;
-            }
-            tracing::info!(cluster = %context, "restarting {label} watch");
-            // RBAC denials do not clear by retrying fast; back off further.
-            let delay = if forbidden {
-                FORBIDDEN_RETRY
-            } else {
-                Duration::from_secs(1)
-            };
-            tokio::time::sleep(delay).await;
-        }
-    });
-    (receiver, task)
 }
