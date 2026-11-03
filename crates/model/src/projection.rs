@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use astrolabe_kube::crd::{CustomKind, preferred_version};
+use crate::catalog::{CustomKind, preferred_version};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::{
     CustomResourceColumnDefinition, CustomResourceDefinition,

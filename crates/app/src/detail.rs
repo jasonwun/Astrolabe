@@ -5,7 +5,6 @@
 //! the panel renders the answer. The watches a target reads are named here
 //! too, so the panel starts exactly those.
 
-use astrolabe_kube::crd::{CustomKind, KindResource};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, ObjectReference};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -13,6 +12,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_model::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use astrolabe_model::catalog::{CustomKind, KindResource};
 use astrolabe_model::projection::{
     DetailModel, ResourceTable, custom_resource_detail, definition_detail, namespace_detail,
 };

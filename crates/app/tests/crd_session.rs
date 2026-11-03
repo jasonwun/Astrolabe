@@ -7,7 +7,6 @@ use astrolabe::session::{
     WatchKey,
 };
 use astrolabe_kube::cluster::ClusterError;
-use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
@@ -15,6 +14,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::watch::ObjectWatchMessage;
+use astrolabe_model::catalog::KindResource;
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, Entity, TestAppContext};
 

@@ -1,7 +1,7 @@
-use astrolabe_kube::crd::{KindResource, catalog};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_model::catalog::{KindResource, catalog};
 
 /// Synthetic CRD manifest: the shape `kubectl apply` accepts, not a capture.
 fn crd(group: &str, kind: &str, scope: &str, versions: &str) -> CustomResourceDefinition {

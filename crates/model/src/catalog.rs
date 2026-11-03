@@ -3,13 +3,12 @@
 
 use std::collections::BTreeMap;
 
-use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::{
+use astrolabe_kube::discovery::ServedResources;
+use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::{
     CustomResourceColumnDefinition, CustomResourceDefinition, CustomResourceDefinitionVersion,
 };
-use kube::ResourceExt as _;
-use kube::discovery::ApiResource;
-
-use crate::discovery::ServedResources;
+use astrolabe_kube::kube::ResourceExt as _;
+use astrolabe_kube::kube::discovery::ApiResource;
 
 /// How a kind's preferred version resolves against discovery.
 #[derive(Clone, Debug, PartialEq, Eq)]
