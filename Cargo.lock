@@ -319,6 +319,7 @@ dependencies = [
 name = "astrolabe-kube"
 version = "0.0.0"
 dependencies = [
+ "astrolabe-model",
  "futures",
  "http",
  "k8s-openapi",

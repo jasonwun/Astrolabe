@@ -11,7 +11,6 @@ pub use kube;
 pub mod apply;
 mod client;
 pub mod cluster;
-pub mod crd;
 pub mod discovery;
 pub mod object;
 pub mod pod;

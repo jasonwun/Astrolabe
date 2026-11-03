@@ -130,11 +130,11 @@ mod namespace_detail {
 mod custom {
     use std::collections::BTreeSet;
 
-    use astrolabe_kube::crd::{CustomKind, catalog};
     use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
     use astrolabe_kube::k8s_openapi::jiff::{SignedDuration, Timestamp};
     use astrolabe_kube::kube::core::DynamicObject;
     use astrolabe_kube::object::ObjectKey;
+    use astrolabe_model::catalog::{CustomKind, catalog};
     use astrolabe_model::projection::{
         ResourceRow, age_cadence, custom_resource_detail, definition_detail, format_age,
         next_age_change, project_custom_resources, project_definitions, track_ages,

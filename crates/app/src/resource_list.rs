@@ -5,9 +5,9 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use astrolabe_kube::crd::KindResource;
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_model::builtin::{BuiltinKind, Registration};
+use astrolabe_model::catalog::KindResource;
 use astrolabe_model::projection::{
     ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
     project_namespaces, track_ages,

@@ -423,8 +423,8 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
 #[tokio::test]
 #[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
 async fn crd_kind_is_discovered_watched_and_deleted() {
-    use astrolabe_kube::crd::{KindResource, catalog};
     use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+    use astrolabe_model::catalog::{KindResource, catalog};
 
     let client = default_client().await.unwrap();
     let ns = unique_ns();

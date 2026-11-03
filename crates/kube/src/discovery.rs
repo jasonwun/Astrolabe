@@ -1,13 +1,11 @@
 //! API discovery (#16): run once on connect and again whenever the CRD set
-//! changes; the result is cached and a failed refresh keeps the old one.
+//! changes. Caching the result is the caller's job.
 
 use std::collections::HashMap;
 
 use kube::Client;
 use kube::core::GroupVersionKind;
 use kube::discovery::{ApiGroup, ApiResource, Discovery, Scope};
-
-use crate::cluster::ClusterError;
 
 /// One served kind at one version.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,32 +84,4 @@ pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     }
     let discovery = Discovery::new(client.clone()).run().await?;
     Ok(ServedResources::from_discovery(&discovery))
-}
-
-/// Last successful discovery plus the failure of the latest refresh, if it
-/// failed: a failed refresh never discards a previous result.
-#[derive(Debug, Default)]
-pub struct DiscoveryCache {
-    served: Option<ServedResources>,
-    failure: Option<ClusterError>,
-}
-
-impl DiscoveryCache {
-    pub fn record(&mut self, result: Result<ServedResources, ClusterError>) {
-        match result {
-            Ok(served) => {
-                self.served = Some(served);
-                self.failure = None;
-            }
-            Err(error) => self.failure = Some(error),
-        }
-    }
-
-    pub fn served(&self) -> Option<&ServedResources> {
-        self.served.as_ref()
-    }
-
-    pub fn failure(&self) -> Option<&ClusterError> {
-        self.failure.as_ref()
-    }
 }

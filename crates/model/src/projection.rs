@@ -2,7 +2,6 @@ use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use astrolabe_kube::crd::{CustomKind, preferred_version};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::{
     CustomResourceColumnDefinition, CustomResourceDefinition,
@@ -15,6 +14,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::object::ObjectKey;
 use serde_json::Value;
 
+use crate::catalog::{CustomKind, preferred_version};
 use crate::jsonpath;
 
 pub mod autoscaling;

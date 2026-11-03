@@ -3,8 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe_kube::cluster::ClusterError;
-use astrolabe_kube::crd::{self, CustomGroup, CustomKind, KindResource};
-use astrolabe_kube::discovery::{DiscoveryCache, ServedResources};
+use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::ResourceExt;
@@ -14,6 +13,8 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, Operation};
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::catalog::{self, CustomGroup, CustomKind, KindResource};
+use astrolabe_model::discovery_cache::DiscoveryCache;
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 use tokio::sync::oneshot;
@@ -441,7 +442,7 @@ impl Session {
     }
 
     fn rebuild_catalog(&mut self, cx: &mut Context<Self>) {
-        self.catalog = crd::catalog(&self.crds.objects(), self.discovery.served());
+        self.catalog = catalog::catalog(&self.crds.objects(), self.discovery.served());
         if let Some(Viewing::Custom(id)) = self.viewing.clone() {
             self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
         }
