@@ -28,41 +28,49 @@ pub struct LogRequest {
     pub container: String,
 }
 
+/// The task behind a handle, aborted when the handle is dropped; none for
+/// a handle built from a channel alone.
+#[derive(Default)]
+struct AbortOnDrop(Option<AbortHandle>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(work) = self.0.take() {
+            work.abort();
+        }
+    }
+}
+
 /// A piece of a log stream, or why the stream stopped.
 pub type LogChunk = Result<Vec<u8>, ClusterError>;
 
 /// A followed container log; dropping it stops the stream.
 pub struct LogStream {
     chunks: mpsc::UnboundedReceiver<LogChunk>,
-    work: Option<AbortHandle>,
+    _work: AbortOnDrop,
 }
 
 impl LogStream {
     /// A stream of the chunks sent on `chunks`; it ends once their sender
     /// is dropped.
     pub fn new(chunks: mpsc::UnboundedReceiver<LogChunk>) -> Self {
-        Self { chunks, work: None }
+        Self {
+            chunks,
+            _work: AbortOnDrop::default(),
+        }
     }
 
     /// The stream, owning the task that feeds it.
     pub(crate) fn with_work(chunks: mpsc::UnboundedReceiver<LogChunk>, work: AbortHandle) -> Self {
         Self {
             chunks,
-            work: Some(work),
+            _work: AbortOnDrop(Some(work)),
         }
     }
 
     /// The next chunk; `None` once the server closed the stream.
     pub async fn next(&mut self) -> Option<LogChunk> {
         self.chunks.next().await
-    }
-}
-
-impl Drop for LogStream {
-    fn drop(&mut self) {
-        if let Some(work) = self.work.take() {
-            work.abort();
-        }
     }
 }
 
@@ -87,7 +95,7 @@ pub enum ExecOutput {
 pub struct ExecSession {
     input: mpsc::UnboundedSender<ExecInput>,
     output: mpsc::UnboundedReceiver<ExecOutput>,
-    work: Option<AbortHandle>,
+    _work: AbortOnDrop,
 }
 
 impl ExecSession {
@@ -101,7 +109,7 @@ impl ExecSession {
         Self {
             input,
             output,
-            work: None,
+            _work: AbortOnDrop::default(),
         }
     }
 
@@ -114,7 +122,7 @@ impl ExecSession {
         Self {
             input,
             output,
-            work: Some(work),
+            _work: AbortOnDrop(Some(work)),
         }
     }
 
@@ -126,14 +134,6 @@ impl ExecSession {
     /// The next output; `None` once the session is gone.
     pub async fn next(&mut self) -> Option<ExecOutput> {
         self.output.next().await
-    }
-}
-
-impl Drop for ExecSession {
-    fn drop(&mut self) {
-        if let Some(work) = self.work.take() {
-            work.abort();
-        }
     }
 }
 
@@ -267,7 +267,7 @@ impl From<ExecError> for ClusterError {
 /// The server's message for a `Failure` that is not `NonZeroExitCode`, and
 /// a protocol error for a `NonZeroExitCode` status without a parseable
 /// `ExitCode` cause or for a status that is neither `Success` nor `Failure`.
-pub fn exit_code(status: Option<&Status>) -> Result<u8, String> {
+pub(crate) fn exit_code(status: Option<&Status>) -> Result<u8, String> {
     let Some(status) = status else {
         return Ok(0);
     };
@@ -394,4 +394,73 @@ async fn forward(
         return Err(error);
     }
     copied.map(|_| ()).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Synthetic remotecommand v4 status (plausible shape, not captured from a
+    /// server).
+    fn status(json: &str) -> Status {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn a_successful_command_exits_zero() {
+        assert_eq!(exit_code(Some(&status(r#"{"status":"Success"}"#))), Ok(0));
+    }
+
+    #[test]
+    fn a_closed_status_channel_is_success() {
+        assert_eq!(exit_code(None), Ok(0));
+    }
+
+    #[test]
+    fn a_non_zero_exit_code_comes_from_its_cause() {
+        let failed = status(
+            r#"{"status":"Failure","message":"command terminated with non-zero exit code: error executing command [sh -c exit 3], exit code 3","reason":"NonZeroExitCode","details":{"causes":[{"reason":"ExitCode","message":"3"}]}}"#,
+        );
+        assert_eq!(exit_code(Some(&failed)), Ok(3));
+    }
+
+    #[test]
+    fn a_non_zero_exit_without_its_cause_is_a_protocol_error() {
+        let failed = status(r#"{"status":"Failure","reason":"NonZeroExitCode","details":{}}"#);
+        assert_eq!(
+            exit_code(Some(&failed)),
+            Err("error stream protocol error: no ExitCode cause given".to_string())
+        );
+        let failed = status(r#"{"status":"Failure","reason":"NonZeroExitCode"}"#);
+        assert_eq!(
+            exit_code(Some(&failed)),
+            Err("error stream protocol error: details must be set".to_string())
+        );
+        let failed = status(
+            r#"{"status":"Failure","reason":"NonZeroExitCode","details":{"causes":[{"reason":"ExitCode","message":"256"}]}}"#,
+        );
+        assert_eq!(
+            exit_code(Some(&failed)),
+            Err("error stream protocol error: invalid exit code value \"256\"".to_string())
+        );
+    }
+
+    #[test]
+    fn another_failure_is_its_message() {
+        let failed = status(
+            r#"{"status":"Failure","message":"executable file not found in $PATH","reason":"InternalError"}"#,
+        );
+        assert_eq!(
+            exit_code(Some(&failed)),
+            Err("executable file not found in $PATH".to_string())
+        );
+    }
+
+    #[test]
+    fn an_unknown_status_is_a_protocol_error() {
+        assert_eq!(
+            exit_code(Some(&status("{}"))),
+            Err("error stream protocol error: unknown error".to_string())
+        );
+    }
 }

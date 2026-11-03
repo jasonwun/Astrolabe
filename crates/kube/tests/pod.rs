@@ -5,12 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use astrolabe_kube::cluster::{Cluster, ClusterErrorKind};
-use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{
-    ExecOutput, ExecRequest, LOG_TAIL_LINES, LogRequest, bind_local, exit_code, port_forward,
+    ExecOutput, ExecRequest, LOG_TAIL_LINES, LogRequest, bind_local, port_forward,
 };
 use tokio::sync::oneshot;
 
@@ -34,8 +33,9 @@ fn mock_client(status: u16, reply: &'static str) -> (Client, Uris) {
     (Client::new(service, "default"), seen)
 }
 
-/// A client whose first request never completes; the receiver resolves
-/// once that request's future is dropped, i.e. once its work stopped.
+/// A client whose first request never completes. The first receiver
+/// resolves once that request starts, the second once its future is
+/// dropped, i.e. once its work stopped.
 fn hanging_client() -> (Client, oneshot::Receiver<()>, oneshot::Receiver<()>) {
     let (started, on_start) = oneshot::channel();
     let (alive, on_drop) = oneshot::channel::<()>();
@@ -187,70 +187,6 @@ async fn dropping_an_exec_session_stops_its_request() {
     let session = cluster.exec(exec_request());
 
     dropping_stops_the_request(session, on_start, on_drop).await;
-}
-
-/// Synthetic remotecommand v4 status (plausible shape, not captured from a
-/// server).
-fn status(json: &str) -> Status {
-    serde_json::from_str(json).unwrap()
-}
-
-#[test]
-fn a_successful_command_exits_zero() {
-    assert_eq!(exit_code(Some(&status(r#"{"status":"Success"}"#))), Ok(0));
-}
-
-#[test]
-fn a_closed_status_channel_is_success() {
-    assert_eq!(exit_code(None), Ok(0));
-}
-
-#[test]
-fn a_non_zero_exit_code_comes_from_its_cause() {
-    let failed = status(
-        r#"{"status":"Failure","message":"command terminated with non-zero exit code: error executing command [sh -c exit 3], exit code 3","reason":"NonZeroExitCode","details":{"causes":[{"reason":"ExitCode","message":"3"}]}}"#,
-    );
-    assert_eq!(exit_code(Some(&failed)), Ok(3));
-}
-
-#[test]
-fn a_non_zero_exit_without_its_cause_is_a_protocol_error() {
-    let failed = status(r#"{"status":"Failure","reason":"NonZeroExitCode","details":{}}"#);
-    assert_eq!(
-        exit_code(Some(&failed)),
-        Err("error stream protocol error: no ExitCode cause given".to_string())
-    );
-    let failed = status(r#"{"status":"Failure","reason":"NonZeroExitCode"}"#);
-    assert_eq!(
-        exit_code(Some(&failed)),
-        Err("error stream protocol error: details must be set".to_string())
-    );
-    let failed = status(
-        r#"{"status":"Failure","reason":"NonZeroExitCode","details":{"causes":[{"reason":"ExitCode","message":"256"}]}}"#,
-    );
-    assert_eq!(
-        exit_code(Some(&failed)),
-        Err("error stream protocol error: invalid exit code value \"256\"".to_string())
-    );
-}
-
-#[test]
-fn another_failure_is_its_message() {
-    let failed = status(
-        r#"{"status":"Failure","message":"executable file not found in $PATH","reason":"InternalError"}"#,
-    );
-    assert_eq!(
-        exit_code(Some(&failed)),
-        Err("executable file not found in $PATH".to_string())
-    );
-}
-
-#[test]
-fn an_unknown_status_is_a_protocol_error() {
-    assert_eq!(
-        exit_code(Some(&status("{}"))),
-        Err("error stream protocol error: unknown error".to_string())
-    );
 }
 
 #[tokio::test]

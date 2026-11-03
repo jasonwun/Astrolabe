@@ -4,8 +4,8 @@
 //! #159–#160.
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
-//! has no tokio reactor; each answers through a future or receiver that
-//! any executor can poll.
+//! has no tokio reactor; each answers through a future, receiver or
+//! stream handle that any executor can poll.
 
 use std::future::Future;
 use std::sync::{Mutex, OnceLock, PoisonError};
