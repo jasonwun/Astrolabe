@@ -120,8 +120,8 @@ async fn namespace_watch_lists_then_streams_create_and_delete() {
     let client = astrolabe_kube::client_for_context(&contexts[0])
         .await
         .unwrap();
-    let events = astrolabe_kube::watch::namespaces(&client);
-    futures::pin_mut!(events);
+    let cluster = Cluster::from_client(client.clone(), &contexts[0]);
+    let mut events = cluster.watch_namespaces();
 
     tokio::time::timeout(Duration::from_secs(20), async {
         let mut saw_init = false;
@@ -462,7 +462,7 @@ spec:
     // Discovery serves the kind only once the CRD is established.
     let served = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            let served = Cluster::from_client(client.clone())
+            let served = Cluster::from_client(client.clone(), "e2e")
                 .discover()
                 .await
                 .unwrap();
@@ -485,8 +485,8 @@ spec:
     };
     assert_eq!(resource.plural, "widgets");
 
-    let events = astrolabe_kube::watch::objects(&client, resource, Some(&ns));
-    futures::pin_mut!(events);
+    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let mut events = cluster.watch_objects(resource, Some(&ns));
     let widget = format!(
         "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"
     );
@@ -539,8 +539,8 @@ async fn crd_watch_without_rbac_reports_forbidden() {
     let mut config = kube::Config::infer().await.unwrap();
     config.auth_info.impersonate = Some("astrolabe-e2e-nobody".to_string());
     let client = kube::Client::try_from(config).unwrap();
-    let events = astrolabe_kube::watch::custom_resource_definitions(&client);
-    futures::pin_mut!(events);
+    let cluster = Cluster::from_client(client, "e2e-nobody");
+    let mut events = cluster.watch_crds();
     // The watcher announces `Init` before its LIST; the LIST then fails.
     let error = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
@@ -553,7 +553,7 @@ async fn crd_watch_without_rbac_reports_forbidden() {
     })
     .await
     .expect("timed out waiting for the CRD list");
-    assert!(astrolabe_kube::watch::is_forbidden(&error), "{error}");
+    assert!(error.is_forbidden(), "{error}");
 }
 
 /// Applies the nginx Deployment in a fresh namespace and waits until one of

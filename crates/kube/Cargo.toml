@@ -13,15 +13,18 @@ thiserror.workspace = true
 futures.workspace = true
 tracing.workspace = true
 # Exec stream pump and port-forward listener (#17): the IO traits
-# kube-client's streams use, and the local TCP listener.
-tokio = { workspace = true, features = ["io-util", "macros", "net"] }
+# kube-client's streams use, and the local TCP listener. The watch relist
+# loop's retry timers (#156).
+tokio = { workspace = true, features = ["io-util", "macros", "net", "time"] }
 
 [dev-dependencies]
 http.workspace = true
 # The notify-cost churn example (#106): a multi-threaded runtime and its
-# rate timer.
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+# rate timer. The watch relist tests' paused clock (#156).
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
 tower.workspace = true
+# The watch relist test reads the cluster layer's logs (#156).
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

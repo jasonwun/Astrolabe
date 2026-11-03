@@ -2,14 +2,16 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use astrolabe::session::{ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey};
+use astrolabe::session::{ResourceKind, ScriptedCluster, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::Operation;
+use astrolabe_kube::watch::ObjectWatchMessage;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{TestAppContext, VisualTestContext};
@@ -17,7 +19,7 @@ use support::{deletion, object};
 
 mod support;
 
-type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
+type Sender<K> = mpsc::Sender<Result<Event<K>, ClusterError>>;
 
 /// Synthetic CRD (plausible shape, not captured from a server).
 fn crontab_crd(served_flag: bool) -> CustomResourceDefinition {
@@ -398,7 +400,7 @@ fn rbac_denied_crd_list_shows_an_empty_state_hint(cx: &mut TestAppContext) {
     let mut ui = open(cx, Vec::new());
     snapshot(&mut ui.namespaces, Vec::new());
     ui.crds
-        .try_send(Err(WatchError::forbidden("forbidden")))
+        .try_send(Err(ClusterError::forbidden("forbidden")))
         .unwrap();
     ui.settle();
 

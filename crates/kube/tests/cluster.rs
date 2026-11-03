@@ -39,7 +39,7 @@ fn mock_cluster(handler: impl Fn(&str) -> http::Response<Body> + Send + Sync + '
     let service = tower::service_fn(move |req: http::Request<Body>| {
         std::future::ready(Ok::<_, std::convert::Infallible>(handler(req.uri().path())))
     });
-    Cluster::from_client(Client::new(service, "default"))
+    Cluster::from_client(Client::new(service, "default"), "mock")
 }
 
 fn aggregated_server(path: &str) -> http::Response<Body> {

@@ -1,8 +1,9 @@
-use astrolabe::session::{NamespaceWatchMessage, WatchError};
 use astrolabe::workspace::{STALE_MESSAGE, WorkspaceView};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_kube::watch::NamespaceWatchMessage;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
@@ -58,7 +59,7 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
     });
 
     sender_a
-        .try_send(Err(WatchError::new("connection lost")))
+        .try_send(Err(ClusterError::new("connection lost")))
         .unwrap();
     cx.run_until_parked();
     cx.update(|window, cx| {

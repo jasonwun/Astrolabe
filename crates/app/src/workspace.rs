@@ -7,9 +7,10 @@ use gpui_kit::*;
 
 use crate::kube_bridge::spawn_cluster;
 use crate::perf;
-use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, NamespaceWatchMessage, ScriptedCluster};
+use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
+use astrolabe_kube::watch::NamespaceWatchMessage;
 
 pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
 

@@ -10,22 +10,24 @@ use std::time::Duration;
 
 use astrolabe::clock::Clock;
 use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
-    ObjectWatchMessage, ResourceKind, ScriptedCluster, WatchError, WatchKey,
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ResourceKind,
+    ScriptedCluster, WatchKey,
 };
 use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectRef, Operation};
+use astrolabe_kube::watch::ObjectWatchMessage;
 use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
 use tracing_subscriber::util::SubscriberInitExt as _;
 
-pub type Sender<K> = mpsc::Sender<Result<Event<K>, WatchError>>;
+pub type Sender<K> = mpsc::Sender<Result<Event<K>, ClusterError>>;
 
 pub fn key(kind: BuiltinKind, namespace: &str) -> WatchKey {
     key_on("kind-a", kind, namespace)

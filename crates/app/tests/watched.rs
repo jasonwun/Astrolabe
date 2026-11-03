@@ -1,4 +1,5 @@
-use astrolabe::session::{ConnectionHealth, SnapshotChange, WatchError, Watched};
+use astrolabe::session::{ConnectionHealth, SnapshotChange, Watched};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -109,7 +110,7 @@ fn an_error_marks_stale_and_records_forbidden() {
     relist(&mut watched, &["default"]);
 
     assert_eq!(
-        watched.apply(Err(WatchError::forbidden("403"))),
+        watched.apply(Err(ClusterError::forbidden("403"))),
         SnapshotChange::Unchanged
     );
     assert!(watched.show_stale_warning());
@@ -117,11 +118,11 @@ fn an_error_marks_stale_and_records_forbidden() {
     assert_eq!(watched.health(), ConnectionHealth::Stale);
     assert_eq!(names(&watched), ["default"]);
 
-    watched.apply(Err(WatchError::new("connection reset")));
+    watched.apply(Err(ClusterError::new("connection reset")));
     assert!(watched.show_stale_warning());
     assert!(!watched.forbidden());
 
-    watched.apply(Err(WatchError::forbidden("403")));
+    watched.apply(Err(ClusterError::forbidden("403")));
     relist(&mut watched, &["default"]);
     assert!(!watched.forbidden());
     assert!(!watched.show_stale_warning());
@@ -130,7 +131,7 @@ fn an_error_marks_stale_and_records_forbidden() {
 #[test]
 fn an_error_before_any_snapshot_is_not_stale_data() {
     let mut watched = namespace_watch();
-    watched.apply(Err(WatchError::forbidden("403")));
+    watched.apply(Err(ClusterError::forbidden("403")));
     assert!(!watched.show_stale_warning());
     assert!(watched.forbidden());
     assert_eq!(watched.health(), ConnectionHealth::Stale);
