@@ -17,7 +17,8 @@ use astrolabe_model::projection::{
     DetailModel, ResourceTable, custom_resource_detail, definition_detail, namespace_detail,
 };
 
-use crate::session::{CustomKindId, Session};
+use crate::session::Session;
+use astrolabe_model::session::CustomKindId;
 
 /// What a detail tab shows: one object, addressed in its list's store.
 /// Custom resources are version-free (#41): each resolve reads the watch at

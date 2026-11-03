@@ -16,9 +16,10 @@ use crate::exec::ExecPanel;
 use crate::logs::LogsPanel;
 use crate::resource_detail::{EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel};
 use crate::resource_list::{CRD_DENIED, ListView, OpenDetail, ResourceListPanel};
-use crate::session::{ConnectionHealth, CustomKindId, ScriptedCluster, Session};
+use crate::session::{ScriptedCluster, Session};
 use crate::workspace::{LaunchTab, STALE_MESSAGE};
 use crate::yaml_editor::YamlEditorView;
+use astrolabe_model::session::{ConnectionHealth, CustomKindId};
 
 pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource navigation may be stale";
 

@@ -2,10 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use astrolabe::session::{
-    ConnectionHealth, CustomKindId, DEFAULT_NAMESPACE, ResourceKind, ScriptedCluster, Session,
-    WatchKey,
-};
+use astrolabe::session::{DEFAULT_NAMESPACE, ScriptedCluster, Session};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -15,6 +12,7 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::watch::ObjectWatchMessage;
 use astrolabe_model::catalog::KindResource;
+use astrolabe_model::session::{ConnectionHealth, CustomKindId, ResourceKind, WatchKey};
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, Entity, TestAppContext};
 

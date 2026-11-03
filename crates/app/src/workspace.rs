@@ -6,11 +6,12 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::perf;
-use crate::session::{ConnectionHealth, DEFAULT_NAMESPACE, ScriptedCluster};
+use crate::session::{DEFAULT_NAMESPACE, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::watch::NamespaceWatchMessage;
+use astrolabe_model::session::ConnectionHealth;
 
 pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
 

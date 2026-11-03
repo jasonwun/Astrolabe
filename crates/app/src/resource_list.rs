@@ -24,8 +24,9 @@ use gpui_kit::*;
 use crate::clock;
 use crate::detail::{DetailTarget, forbidden_message};
 use crate::perf;
-use crate::session::{CustomKindId, Session};
+use crate::session::Session;
 use crate::workspace::STALE_MESSAGE;
+use astrolabe_model::session::CustomKindId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListView {
