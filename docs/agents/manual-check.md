@@ -135,6 +135,13 @@ path of `<name>.png`, shrunk to one pixel per window point.
 - To fill the YAML editor, put the text on the clipboard and paste it:
   `pbcopy < file.yaml`, then `dev/shot.sh "$D" pasted hotkey --key cmd+v`.
   `press-key` takes no modifier chord; `hotkey` does (#172).
+- `press-key` sends no function keys: `F6` fails with `unsupported
+  key 'F6'`. Reach the action another way: the YAML editor's Precheck
+  also runs on its own about a second after an edit (#160).
+- A YAML editor conflict (409) needs no extra setup. `dev/demo.sh` seeds
+  with `kubectl apply`, so `kubectl-client-side-apply` owns every demo
+  field. Change one in the editor and Apply to get the conflict and
+  Force Apply (#160).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - A view that changes with time (ages): `dev/demo.yaml` objects keep

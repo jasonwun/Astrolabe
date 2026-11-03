@@ -413,6 +413,17 @@ app's `kube_bridge`, removed in #159) runs through
 request and the ticket that moves it, and the last of those tickets
 has an acceptance criterion that removes the helper.
 
+A caller that holds its own `kube::Client` rather than a Session (the
+Workspace YAML editor until #161, an e2e test) wraps it in
+`Cluster::from_client` and calls the moved request there. It never
+keeps the free function public. Only the step with no `Cluster` yet,
+such as building that client, goes through `run_on_cluster_runtime`.
+
+Origin: #160's first draft kept `apply_documents` and
+`precheck_documents` `pub` for the Workspace editor and the e2e. The
+Standards reviewer found two public paths to Apply; the fix wrapped
+both callers' clients in `Cluster::from_client` (#160 retro).
+
 A request over a WebSocket upgrade (exec, port-forward, attach) is not
 refused through `kube::Error::Api`: kube-rs reports the refusal as
 `UpgradeConnection(ProtocolSwitch(status))`. `From<kube::Error> for
