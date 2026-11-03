@@ -153,7 +153,7 @@ impl YamlEditorView {
         Self::connecting(window, cx, initial, async move {
             client
                 .await
-                .unwrap_or(Err("cluster task dropped".to_string()))
+                .unwrap_or(Err("cluster task panicked".to_string()))
         })
     }
 

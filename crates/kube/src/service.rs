@@ -30,7 +30,8 @@ pub struct ResolvedForward {
 ///
 /// # Errors
 ///
-/// A message, worded as kubectl's, when the Service has no selector, no
+/// An [`Other`](crate::cluster::ClusterErrorKind::Other) failure, worded
+/// as kubectl's, when the Service has no selector, no
 /// Pod matches it, the chosen Pod is not Running, the Service has no port
 /// `port`, the Pod declares no container port its named target port names,
 /// or the container port is out of range.
@@ -38,7 +39,7 @@ pub fn forward_target(
     service: &Service,
     pods: &[Pod],
     port: u16,
-) -> Result<ResolvedForward, String> {
+) -> Result<ResolvedForward, ClusterError> {
     let name = service.metadata.name.clone().unwrap_or_default();
     let spec = service.spec.clone().unwrap_or_default();
     if spec
@@ -46,9 +47,9 @@ pub fn forward_target(
         .as_ref()
         .is_none_or(std::collections::BTreeMap::is_empty)
     {
-        return Err(format!(
+        return Err(ClusterError::new(format!(
             "invalid service '{name}': Service is defined without a selector"
-        ));
+        )));
     }
     let mut chosen: Option<&Pod> = None;
     for pod in pods {
@@ -56,16 +57,17 @@ pub fn forward_target(
             chosen = Some(pod);
         }
     }
-    let pod = chosen.ok_or_else(|| format!("no Pods match Service {name}'s selector"))?;
+    let pod = chosen
+        .ok_or_else(|| ClusterError::new(format!("no Pods match Service {name}'s selector")))?;
     let phase = pod
         .status
         .as_ref()
         .and_then(|status| status.phase.clone())
         .unwrap_or_default();
     if phase != "Running" {
-        return Err(format!(
+        return Err(ClusterError::new(format!(
             "unable to forward port because pod is not running. Current status={phase}"
-        ));
+        )));
     }
     // A headless Service's port is the container port, declared or not.
     let container_port = if spec.cluster_ip.as_deref() == Some("None") {
@@ -76,7 +78,11 @@ pub fn forward_target(
             .iter()
             .flatten()
             .find(|declared| declared.port == i32::from(port))
-            .ok_or_else(|| format!("Service {name} does not have a service port {port}"))?;
+            .ok_or_else(|| {
+                ClusterError::new(format!(
+                    "Service {name} does not have a service port {port}"
+                ))
+            })?;
         match &declared.target_port {
             None | Some(IntOrString::Int(0)) => i32::from(port),
             Some(IntOrString::Int(target)) => *target,
@@ -86,7 +92,7 @@ pub fn forward_target(
     Ok(ResolvedForward {
         pod: pod.metadata.name.clone().unwrap_or_default(),
         port: u16::try_from(container_port)
-            .map_err(|_| format!("invalid container port {container_port}"))?,
+            .map_err(|_| ClusterError::new(format!("invalid container port {container_port}")))?,
     })
 }
 
@@ -122,7 +128,7 @@ fn activity(pod: &Pod) -> (bool, u8, bool, bool, Option<Reverse<Timestamp>>) {
 
 /// `LookupContainerPortNumberByName`: app containers first, then init
 /// containers.
-fn named_port(pod: &Pod, name: &str) -> Result<i32, String> {
+fn named_port(pod: &Pod, name: &str) -> Result<i32, ClusterError> {
     pod.spec
         .iter()
         .flat_map(|spec| {
@@ -134,10 +140,10 @@ fn named_port(pod: &Pod, name: &str) -> Result<i32, String> {
         .find(|declared| declared.name.as_deref() == Some(name))
         .map(|declared| declared.container_port)
         .ok_or_else(|| {
-            format!(
+            ClusterError::new(format!(
                 "Pod '{}' does not have a named port '{name}'",
                 pod.metadata.name.as_deref().unwrap_or_default()
-            )
+            ))
         })
 }
 
@@ -181,7 +187,7 @@ pub(crate) async fn port_forward(
                     .await?
                     .items
             };
-            let target = forward_target(&service, &matched, port).map_err(ClusterError::new)?;
+            let target = forward_target(&service, &matched, port)?;
             Ok((pods, target.pod, target.port))
         }
     })

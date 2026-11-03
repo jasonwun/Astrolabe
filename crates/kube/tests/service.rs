@@ -90,7 +90,9 @@ fn a_named_target_port_the_pod_lacks_is_an_error() {
     pod.spec.as_mut().unwrap().containers[0].ports = None;
     assert_eq!(
         forward_target(&web_service(), &[pod], 9000),
-        Err("Pod 'web-1' does not have a named port 'admin'".to_string())
+        Err(ClusterError::new(
+            "Pod 'web-1' does not have a named port 'admin'"
+        ))
     );
 }
 
@@ -118,7 +120,9 @@ fn a_headless_service_forwards_an_undeclared_port_as_is() {
 fn an_undeclared_service_port_is_an_error() {
     assert_eq!(
         forward_target(&web_service(), &[running("web-1")], 81),
-        Err("Service web does not have a service port 81".to_string())
+        Err(ClusterError::new(
+            "Service web does not have a service port 81"
+        ))
     );
 }
 
@@ -127,7 +131,9 @@ fn a_service_without_a_selector_has_no_pod_to_forward_to() {
     let bare = service(&serde_json::json!({"ports": [{"port": 80}]}));
     assert_eq!(
         forward_target(&bare, &[running("web-1")], 80),
-        Err("invalid service 'web': Service is defined without a selector".to_string())
+        Err(ClusterError::new(
+            "invalid service 'web': Service is defined without a selector"
+        ))
     );
 }
 
@@ -135,7 +141,7 @@ fn a_service_without_a_selector_has_no_pod_to_forward_to() {
 fn no_matching_pod_is_an_error() {
     assert_eq!(
         forward_target(&web_service(), &[], 80),
-        Err("no Pods match Service web's selector".to_string())
+        Err(ClusterError::new("no Pods match Service web's selector"))
     );
 }
 
@@ -145,9 +151,9 @@ fn the_chosen_pod_must_be_running() {
     pending.status.as_mut().unwrap().phase = Some("Pending".to_string());
     assert_eq!(
         forward_target(&web_service(), &[pending], 80),
-        Err(
-            "unable to forward port because pod is not running. Current status=Pending".to_string()
-        )
+        Err(ClusterError::new(
+            "unable to forward port because pod is not running. Current status=Pending"
+        ))
     );
 }
 
@@ -242,10 +248,9 @@ fn pending_is_less_active_than_unknown() {
     ] {
         assert_eq!(
             forward_target(&web_service(), &pods, 80),
-            Err(
+            Err(ClusterError::new(
                 "unable to forward port because pod is not running. Current status=Unknown"
-                    .to_string()
-            )
+            ))
         );
     }
 }

@@ -57,17 +57,26 @@ fn spawn<T: Send + 'static>(
     request: impl Future<Output = Result<T, ClusterError>> + Send + 'static,
     panicked: ClusterError,
 ) -> impl Future<Output = Result<T, ClusterError>> + Send + 'static {
+    spawn_on(runtime, request).map(|answer| answer.unwrap_or(Err(panicked)))
+}
+
+/// Start `request` on `runtime` now; the returned future resolves with its
+/// answer, or with `None` if the task panicked.
+fn spawn_on<T: Send + 'static>(
+    runtime: &Handle,
+    request: impl Future<Output = T> + Send + 'static,
+) -> impl Future<Output = Option<T>> + Send + 'static {
     let (sender, receiver) = oneshot::channel();
     runtime.spawn(async move {
         let _ = sender.send(request.await);
     });
-    async move { receiver.await.unwrap_or(Err(panicked)) }
+    async move { receiver.await.ok() }
 }
 
 /// Run `request` on the cluster runtime, for the requests that do not go
 /// through [`Cluster`] yet: the YAML editors' Apply and Precheck (#160)
-/// and the Workspace editor's current-context client (#161). The last of
-/// them removes this. The answer is `None` if the task panicked.
+/// and the Workspace YAML editor's current-context client (#161). The last
+/// of them removes this. The answer is `None` if the task panicked.
 ///
 /// # Panics
 ///
@@ -75,11 +84,7 @@ fn spawn<T: Send + 'static>(
 pub fn run_on_cluster_runtime<T: Send + 'static>(
     request: impl Future<Output = T> + Send + 'static,
 ) -> impl Future<Output = Option<T>> + Send + 'static {
-    let (sender, receiver) = oneshot::channel();
-    runtime().spawn(async move {
-        let _ = sender.send(request.await);
-    });
-    async move { receiver.await.ok() }
+    spawn_on(runtime().handle(), request)
 }
 
 /// What kind of failure a [`ClusterError`] is.
@@ -148,8 +153,9 @@ impl ClusterError {
 }
 
 /// A 403 from the apiserver is [`Forbidden`](ClusterErrorKind::Forbidden),
-/// also when it refuses an exec's WebSocket upgrade, which kube-rs reports
-/// by status alone; anything else is [`Other`](ClusterErrorKind::Other).
+/// also when it refuses an exec's or a port-forward's WebSocket upgrade,
+/// which kube-rs reports by status alone; anything else is
+/// [`Other`](ClusterErrorKind::Other).
 impl From<kube::Error> for ClusterError {
     fn from(error: kube::Error) -> Self {
         let kind = match &error {
@@ -452,7 +458,7 @@ impl Cluster {
             let failed = |error: ClusterError| {
                 let _ = sender.unbounded_send(ForwardEvent::Failed(error));
             };
-            let bind =
+            let bind_failed =
                 |error: std::io::Error| ClusterError::new(format!("bind localhost: {error}"));
             let client = match client.await {
                 Ok(client) => client,
@@ -461,13 +467,13 @@ impl Cluster {
             let port = request.port;
             let listener = match pod::bind_local(port).await {
                 Ok(listener) => listener,
-                Err(error) => return failed(bind(error)),
+                Err(error) => return failed(bind_failed(error)),
             };
             match listener.local_addr() {
                 Ok(local) => {
                     let _ = sender.unbounded_send(ForwardEvent::Listening(local.port()));
                 }
-                Err(error) => return failed(bind(error)),
+                Err(error) => return failed(bind_failed(error)),
             }
             let connections = sender.clone();
             let on_error = move |error| {
@@ -548,7 +554,8 @@ impl Cluster {
     }
 
     /// The shared client, for the requests that do not go through this
-    /// handle yet. Apply moves behind it in #160, which removes this.
+    /// handle yet: Apply moves behind it in #160, and #161, which moves the
+    /// Workspace YAML editor, removes this.
     pub fn client(&self) -> SharedClient {
         self.client.clone()
     }
