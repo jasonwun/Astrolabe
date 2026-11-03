@@ -245,15 +245,18 @@ retro).
 A view test opens a built-in kind's list with `support::open_list`, its
 detail with `support::open_detail`, and builds a `DynamicObject` with
 `support::object`, and clicks a dock tab or its close button with
-`support::mouse_click`; a test asserting on `tracing` output captures it with
-`support::LogCapture`, or `LogCapture::with_filter` when it needs a
-filter other than the default `astrolabe=debug` one (`dev/log-capture.sh`
-checks the last; it and `dev/comment-width.sh` also read files not yet
-added); one asserting a log line also follows "Tests that assert log
-lines" below. A local
-helper or an inline run that repeats `open_list`'s or `open_detail`'s steps
-(select the namespace, click the nav item, send the snapshot, click the
-row) is a finding, whatever its name.
+`support::mouse_click`; one over several Clusters opens the Workspace
+with `support::open_workspace` and reads a label with `support::label`;
+a scripted Apply or Precheck answers with `support::conflict_report` or
+`support::unknown_field_report`; a test asserting on `tracing` output
+captures it with `support::LogCapture`, or `LogCapture::with_filter`
+when it needs a filter other than the default `astrolabe=debug` one
+(`dev/log-capture.sh` checks the last; it and `dev/comment-width.sh`
+also read files not yet added); one asserting a log line also follows
+"Tests that assert log lines" below. A local helper or an inline run
+that repeats `open_list`'s or `open_detail`'s steps (select the
+namespace, click the nav item, send the snapshot, click the row) is a
+finding, whatever its name.
 
 A PR that moves steps tests repeat into a `support` helper names the
 helper in a rule here, and a UI-test helper also in
@@ -398,26 +401,25 @@ path to it. The free function it wraps becomes `pub(crate)` in the same
 diff, and the tests and e2e that called it go through `Cluster`. The
 answer is a plain `Future` from `cluster.rs`'s `spawn`, never a tokio
 type such as `oneshot::Receiver`, so GPUI and any executor can await it.
-The module doc and `Cluster::client()`'s doc list only the requests that
-have not moved yet. A method that runs on the handle's stored `runtime`
-has no `# Panics` for building the cluster runtime: only `connect` and
-`from_client` can reach that.
+The module doc lists the requests that go through the handle. A method
+that runs on the handle's stored `runtime` has no `# Panics` for
+building the cluster runtime: only `connect` and `from_client` can
+reach that.
 
 A request left with two public paths, an answer that exposes a tokio
 type, or a doc that names a moved request as pending (or a pending one
 as moved) is a finding.
 
-A request that has not moved yet but loses the path it ran on (the
-app's `kube_bridge`, removed in #159) runs through
-`cluster::run_on_cluster_runtime`. That helper's doc names each such
-request and the ticket that moves it, and the last of those tickets
-has an acceptance criterion that removes the helper.
+Every request has moved (#161): the app reaches a Cluster only through
+`Session`, and only `crates/app/src/cluster_io.rs` names `Cluster`;
+`dev/layer-check.sh` fails on a `kube::Client` or a `Cluster` anywhere
+else in the app. A stopgap that runs a request off the handle (such as
+the removed `run_on_cluster_runtime`, #159–#161) names the ticket that
+removes it, and that ticket has the removal as an acceptance criterion.
 
-A caller that holds its own `kube::Client` rather than a Session (the
-Workspace YAML editor until #161, an e2e test) wraps it in
-`Cluster::from_client` and calls the moved request there. It never
-keeps the free function public. Only the step with no `Cluster` yet,
-such as building that client, goes through `run_on_cluster_runtime`.
+A test that holds its own `kube::Client` (an e2e or mock test) wraps it
+in `Cluster::from_client` and calls the request there, never a public
+free function.
 
 Origin: #160's first draft kept `apply_documents` and
 `precheck_documents` `pub` for the Workspace editor and the e2e. The
@@ -445,4 +447,6 @@ Standards reviewer caught it (#156 retro).
 #159 removed `kube_bridge` while the YAML editors' Apply, Precheck and
 current-context client still needed a tokio runtime; their tickets
 (#160, #161) were blocked by #159 and named no removal of the stopgap
-(#159 retro).
+(#159 retro). #161 moved the last caller, the Workspace YAML editor, onto
+the selected Cluster's Session, removed the stopgap, and added the app
+rules to `dev/layer-check.sh`.

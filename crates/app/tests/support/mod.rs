@@ -88,10 +88,6 @@ pub fn open(
     cx: &mut TestAppContext,
     watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
 ) -> Ui<'_> {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        astrolabe::keymap::bind(cx);
-    });
     let (namespaces, namespace_events) = mpsc::channel(32);
     let deleted: Deleted = Rc::default();
     let operated: Operated = Rc::default();
@@ -169,14 +165,7 @@ pub fn open(
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
-    let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(
-            vec![("kind-a".to_string(), cluster)],
-            Preselection::default(),
-            window,
-            cx,
-        )
-    });
+    let cx = open_workspace(cx, vec![("kind-a".to_string(), cluster)]);
     Ui {
         cx,
         namespaces,
@@ -187,6 +176,22 @@ pub fn open(
         forwarded,
         applied,
     }
+}
+
+/// A Workspace window over `clusters`, with the app's key bindings. For a
+/// test that needs more than [`open`]'s one Cluster.
+pub fn open_workspace(
+    cx: &mut TestAppContext,
+    clusters: Vec<(String, ScriptedCluster)>,
+) -> &mut VisualTestContext {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        astrolabe::keymap::bind(cx);
+    });
+    let (_workspace, cx) = cx.add_window_view(|window, cx| {
+        WorkspaceView::from_clusters(clusters, Preselection::default(), window, cx)
+    });
+    cx
 }
 
 /// The one document every scripted Apply and Precheck reports on.
@@ -224,7 +229,7 @@ fn failed_report(snapshot: &str, status: serde_json::Value) -> ApplyReport {
 }
 
 /// What a plain Apply answers: `kubectl` owns `metadata.name` (409).
-fn conflict_report(snapshot: &str) -> ApplyReport {
+pub fn conflict_report(snapshot: &str) -> ApplyReport {
     failed_report(
         snapshot,
         serde_json::json!({
@@ -237,7 +242,7 @@ fn conflict_report(snapshot: &str) -> ApplyReport {
 }
 
 /// What a Precheck answers: an unknown field, which a real Apply ignores.
-fn unknown_field_report(snapshot: &str) -> ApplyReport {
+pub fn unknown_field_report(snapshot: &str) -> ApplyReport {
     failed_report(
         snapshot,
         serde_json::json!({
@@ -322,14 +327,7 @@ impl Ui<'_> {
     ///
     /// When `id` is not rendered.
     pub fn label(&mut self, id: &'static str) -> String {
-        self.frame(|window, _| {
-            window
-                .try_find(id)
-                .unwrap_or_else(|| panic!("{id} not rendered"))
-                .label()
-                .unwrap_or_default()
-                .to_string()
-        })
+        label(self.cx, id)
     }
 
     pub fn frame<R>(
@@ -341,6 +339,24 @@ impl Ui<'_> {
             f(window, cx)
         })
     }
+}
+
+/// The accessible label of `id` in a freshly drawn frame; empty when `id`
+/// has none. For tests that build their window without [`open`].
+///
+/// # Panics
+///
+/// When `id` is not rendered.
+pub fn label(cx: &mut VisualTestContext, id: &'static str) -> String {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window
+            .try_find(id)
+            .unwrap_or_else(|| panic!("{id} not rendered"))
+            .label()
+            .unwrap_or_default()
+            .to_string()
+    })
 }
 
 /// Press and release the left button on the centre `id` was last drawn at,

@@ -12,9 +12,7 @@ use std::ops::Range;
 use std::time::Duration;
 
 use astrolabe_kube::apply::{self, ApplyError, ApplyMode, ApplyReport, Location};
-use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind, run_on_cluster_runtime};
-use astrolabe_kube::kube;
-use futures::FutureExt as _;
+use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind};
 use futures::future::BoxFuture;
 use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::input::language_config::LanguageConfig;
@@ -87,26 +85,7 @@ enum PrecheckStatus {
     Unavailable,
 }
 
-/// Where the editor's Apply and Precheck go.
-enum Target {
-    /// Nowhere: the editor says "no cluster".
-    Detached,
-    /// A Session's Cluster: the detail tab's Edit YAML.
-    Session(Entity<Session>),
-    /// The current kubeconfig context's Cluster, once its connect
-    /// resolves; `Err` carries the connect failure. The Workspace editor's,
-    /// until #161 moves it onto the selected Cluster's Session.
-    CurrentContext(Option<Result<Cluster, String>>),
-}
-
-/// Why a request had nowhere to go.
-enum Unsent {
-    NoCluster,
-    Connecting,
-    ConnectFailed(String),
-}
-
-/// The report an Apply or Precheck answers with, or why there is none.
+/// The report an Apply or Precheck answers with.
 type ApplyAnswer = BoxFuture<'static, Result<ApplyReport, ClusterError>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +107,12 @@ fn palette_entries() -> &'static [(PaletteCommand, &'static str)] {
 pub struct YamlEditorView {
     state: Entity<EditorState>,
     window_handle: AnyWindowHandle,
-    target: Target,
+    /// Where Apply and Precheck go; with none, the editor says "no
+    /// cluster" and sends nothing.
+    session: Option<Entity<Session>>,
+    /// Bumped when `session` changes, so an Apply or Precheck answered by
+    /// the previous Cluster is dropped.
+    session_version: u64,
     /// Monotonic buffer version; precheck results older than the current
     /// version are discarded.
     buffer_version: u64,
@@ -166,46 +150,22 @@ pub struct YamlEditorView {
 }
 
 impl YamlEditorView {
-    /// Editor on the current kubeconfig context's cluster.
-    pub fn new(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
-        let client = run_on_cluster_runtime(async move {
-            astrolabe_kube::default_client()
-                .await
-                .map_err(|e| e.to_string())
-        });
-        let mut view = Self::without_cluster(window, cx, initial);
-        view.target = Target::CurrentContext(None);
-        view.status_line = "connecting to cluster…".to_string();
-        view.connect(
-            async move {
-                client
-                    .await
-                    .unwrap_or(Err("cluster task panicked".to_string()))
-            },
-            cx,
-        );
-        view
-    }
-
     /// Editor that applies through `session` (#16 Edit YAML tabs), so to
-    /// that Session's Cluster rather than the ambient default.
+    /// that Session's Cluster.
     pub fn with_session(
         window: &mut Window,
         cx: &mut Context<Self>,
         initial: String,
         session: Entity<Session>,
     ) -> Self {
-        let mut view = Self::without_cluster(window, cx, initial);
-        // The Session connects lazily and Apply waits on it, so the status
-        // names where Apply goes rather than a connection state.
-        view.status_line = format!("cluster {}", session.read(cx).watch_key().cluster);
-        view.target = Target::Session(session);
+        let mut view = Self::without_session(window, cx, initial);
+        view.set_session(session, cx);
         view
     }
 
-    /// Editor without a cluster connection: for hosts that supply their own
-    /// client wiring (#16/#17) and for tests.
-    pub fn without_cluster(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
+    /// Editor that applies nowhere until [`set_session`](Self::set_session)
+    /// gives it a Session.
+    pub fn without_session(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("yaml")
@@ -223,7 +183,8 @@ impl YamlEditorView {
         Self {
             state,
             window_handle: window.window_handle(),
-            target: Target::Detached,
+            session: None,
+            session_version: 0,
             buffer_version: 0,
             precheck_version: None,
             precheck_status: PrecheckStatus::Idle,
@@ -247,57 +208,41 @@ impl YamlEditorView {
         self.state.clone()
     }
 
+    /// Send Apply and Precheck through `session` from now on. The
+    /// Workspace's editor follows the selected Cluster this way (#161).
+    pub fn set_session(&mut self, session: Entity<Session>, cx: &mut Context<Self>) {
+        if self.session.as_ref() == Some(&session) {
+            return;
+        }
+        // The Session connects lazily and Apply waits on it, so the status
+        // names where Apply goes rather than a connection state.
+        self.status_line = format!("cluster {}", session.read(cx).watch_key().cluster);
+        self.session = Some(session);
+        self.session_version += 1;
+        // The last Apply's result describes the previous Cluster: its Force
+        // Apply would overwrite this Cluster's fields.
+        self.applying = false;
+        self.pending_snapshot = None;
+        self.panel.clear();
+        self.conflict_managers.clear();
+        self.force_apply_available = false;
+        self.global_notice = None;
+        self.clear_apply_decorations(cx);
+        // So does the last Precheck's; the next edit checks against this one.
+        self.clear_precheck(cx);
+        cx.notify();
+    }
+
     // ------------------------------------------------------------ cluster I/O
 
-    fn send_apply(
+    /// Send `request` through the Session; `None` when there is none.
+    fn send(
         &self,
-        snapshot: &str,
-        mode: ApplyMode,
+        request: impl FnOnce(&mut Session) -> ApplyAnswer,
         cx: &mut Context<Self>,
-    ) -> Result<ApplyAnswer, Unsent> {
-        match &self.target {
-            Target::Session(session) => {
-                Ok(session.update(cx, |session, _| session.apply(snapshot, mode)))
-            }
-            Target::CurrentContext(cluster) => {
-                Ok(connected(cluster.as_ref())?.apply(snapshot, mode).boxed())
-            }
-            Target::Detached => Err(Unsent::NoCluster),
-        }
-    }
-
-    fn send_precheck(&self, snapshot: &str, cx: &mut Context<Self>) -> Result<ApplyAnswer, Unsent> {
-        match &self.target {
-            Target::Session(session) => {
-                Ok(session.update(cx, |session, _| session.precheck(snapshot)))
-            }
-            Target::CurrentContext(cluster) => {
-                Ok(connected(cluster.as_ref())?.precheck(snapshot).boxed())
-            }
-            Target::Detached => Err(Unsent::NoCluster),
-        }
-    }
-
-    fn connect(
-        &mut self,
-        client: impl std::future::Future<Output = Result<kube::Client, String>> + 'static,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn(async move |view, cx| {
-            let result = client.await;
-            view.update(cx, |this, cx| {
-                this.status_line = match &result {
-                    Ok(_) => "connected".to_string(),
-                    Err(e) => format!("no cluster: {e}"),
-                };
-                this.target = Target::CurrentContext(Some(
-                    result.map(|client| Cluster::from_client(client, "current context")),
-                ));
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+    ) -> Option<ApplyAnswer> {
+        let session = self.session.as_ref()?;
+        Some(session.update(cx, |session, _| request(session)))
     }
 
     fn apply(&mut self, mode: ApplyMode, cx: &mut Context<Self>) {
@@ -305,13 +250,10 @@ impl YamlEditorView {
             return;
         }
         let snapshot = self.state.read(cx).value().to_string();
-        let applied = match self.send_apply(&snapshot, mode, cx) {
-            Ok(applied) => applied,
-            Err(unsent) => {
-                self.global_notice = Some(unsent.notice("apply"));
-                cx.notify();
-                return;
-            }
+        let Some(applied) = self.send(|session| session.apply(&snapshot, mode), cx) else {
+            self.global_notice = Some(no_cluster_notice("apply"));
+            cx.notify();
+            return;
         };
         self.applying = true;
         self.pending_snapshot = Some(snapshot.clone());
@@ -328,10 +270,13 @@ impl YamlEditorView {
         };
         cx.notify();
 
+        let session_version = self.session_version;
         cx.spawn(async move |view, cx| {
             let result = applied.await;
             view.update(cx, |this, cx| {
-                this.finish_apply(result, cx);
+                if this.session_version == session_version {
+                    this.finish_apply(result, cx);
+                }
             })
             .ok();
         })
@@ -443,28 +388,27 @@ impl YamlEditorView {
             return;
         }
         let snapshot = self.state.read(cx).value().to_string();
-        let checked = match self.send_precheck(&snapshot, cx) {
-            Ok(checked) => checked,
-            Err(unsent) => {
-                if manual {
-                    self.global_notice = Some(unsent.notice("precheck"));
-                } else if matches!(unsent, Unsent::ConnectFailed(_)) {
-                    self.precheck_status = PrecheckStatus::Unavailable;
-                }
-                // Still connecting: stay silent; the next debounce retries.
+        let Some(checked) = self.send(|session| session.precheck(&snapshot), cx) else {
+            // The debounced Precheck stays silent: the status already says
+            // "no cluster".
+            if manual {
+                self.global_notice = Some(no_cluster_notice("precheck"));
                 cx.notify();
-                return;
             }
+            return;
         };
         let version = self.buffer_version;
         self.precheck_version = Some(version);
         self.precheck_status = PrecheckStatus::Checking;
         cx.notify();
 
+        let session_version = self.session_version;
         cx.spawn(async move |view, cx| {
             let result = checked.await;
             view.update(cx, |this, cx| {
-                this.finish_precheck(version, manual, result, cx);
+                if this.session_version == session_version {
+                    this.finish_precheck(version, manual, result, cx);
+                }
             })
             .ok();
         })
@@ -875,6 +819,8 @@ impl Render for YamlEditorView {
             root = root.child(
                 div()
                     .id("global-notice")
+                    .aria_label(notice.clone())
+                    .test_support()
                     .w_full()
                     .px_2()
                     .py_1()
@@ -909,24 +855,10 @@ impl Render for YamlEditorView {
 
 // ---------------------------------------------------------------- helpers
 
-/// The current context's Cluster, once it has connected.
-fn connected(cluster: Option<&Result<Cluster, String>>) -> Result<&Cluster, Unsent> {
-    match cluster {
-        Some(Ok(cluster)) => Ok(cluster),
-        Some(Err(e)) => Err(Unsent::ConnectFailed(e.clone())),
-        None => Err(Unsent::Connecting),
-    }
-}
-
-impl Unsent {
-    /// The notice for a `verb` ("apply", "precheck") that had nowhere to go.
-    fn notice(&self, verb: &str) -> String {
-        match self {
-            Self::NoCluster => format!("cannot {verb}: no cluster"),
-            Self::Connecting => format!("cannot {verb}: still connecting to cluster"),
-            Self::ConnectFailed(e) => format!("cannot {verb}: cluster unreachable ({e})"),
-        }
-    }
+/// The notice for a `verb` ("apply", "precheck") that had no Cluster to go
+/// to.
+fn no_cluster_notice(verb: &str) -> String {
+    format!("cannot {verb}: no cluster")
 }
 
 /// The notice for a `verb` ("apply", "precheck") the Cluster failed.

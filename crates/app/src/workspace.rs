@@ -67,6 +67,8 @@ pub struct WorkspaceView {
     sources: BTreeMap<String, Option<ScriptedCluster>>,
     sessions: BTreeMap<String, Entity<SessionView>>,
     selected_cluster: Option<String>,
+    /// Applies to the selected Cluster's Session, and nowhere while none
+    /// is selected (#161).
     yaml: Entity<YamlEditorView>,
     show_yaml: bool,
     discovery_error: Option<String>,
@@ -76,7 +78,7 @@ pub struct WorkspaceView {
 
 impl WorkspaceView {
     pub fn new(preselection: Preselection, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let yaml = cx.new(|cx| YamlEditorView::new(window, cx, String::new()));
+        let yaml = cx.new(|cx| YamlEditorView::without_session(window, cx, String::new()));
         let mut workspace = Self {
             clusters: Vec::new(),
             sources: BTreeMap::new(),
@@ -117,7 +119,7 @@ impl WorkspaceView {
             .into_iter()
             .map(|(cluster, scripted)| (cluster, Some(scripted)))
             .collect();
-        let yaml = cx.new(|cx| YamlEditorView::without_cluster(window, cx, String::new()));
+        let yaml = cx.new(|cx| YamlEditorView::without_session(window, cx, String::new()));
         let mut workspace = Self {
             clusters,
             sources,
@@ -217,6 +219,9 @@ impl WorkspaceView {
                 .detach();
             self.sessions.insert(cluster.clone(), session);
         }
+        let session = self.sessions[&cluster].read(cx).session();
+        self.yaml
+            .update(cx, |yaml, cx| yaml.set_session(session, cx));
         self.selected_cluster = Some(cluster);
         self.show_yaml = false;
         cx.notify();
@@ -317,8 +322,9 @@ impl WorkspaceView {
                     theme.sidebar_foreground
                 })
                 .child("YAML editor")
-                .on_click(cx.listener(|workspace, _, _, cx| {
+                .on_click(cx.listener(|workspace, _, window, cx| {
                     workspace.show_yaml = true;
+                    workspace.yaml.focus_handle(cx).focus(window, cx);
                     cx.notify();
                 })),
         )
