@@ -8,13 +8,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use astrolabe::session::ScriptedCluster;
-use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
 use astrolabe_kube::watch::NamespaceWatchMessage;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Keystroke, TestAppContext, VisualTestContext};
-use support::label;
+use support::{label, open_workspace};
 
 /// Each Apply a scripted Cluster received: the Cluster, the snapshot and
 /// the mode.
@@ -62,21 +61,6 @@ fn cluster(
             })
         });
     ((name.to_string(), scripted), namespaces)
-}
-
-fn open_workspace(
-    cx: &mut TestAppContext,
-    clusters: Vec<(String, ScriptedCluster)>,
-) -> &mut VisualTestContext {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        astrolabe::keymap::bind(cx);
-    });
-    let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(clusters, Preselection::default(), window, cx)
-    });
-    cx.run_until_parked();
-    cx
 }
 
 fn click(cx: &mut VisualTestContext, id: &'static str) {

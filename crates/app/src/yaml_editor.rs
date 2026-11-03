@@ -151,21 +151,21 @@ pub struct YamlEditorView {
 
 impl YamlEditorView {
     /// Editor that applies through `session` (#16 Edit YAML tabs), so to
-    /// that Session's Cluster rather than the ambient default.
+    /// that Session's Cluster.
     pub fn with_session(
         window: &mut Window,
         cx: &mut Context<Self>,
         initial: String,
         session: Entity<Session>,
     ) -> Self {
-        let mut view = Self::without_cluster(window, cx, initial);
-        view.set_session(Some(session), cx);
+        let mut view = Self::without_session(window, cx, initial);
+        view.set_session(session, cx);
         view
     }
 
     /// Editor that applies nowhere until [`set_session`](Self::set_session)
     /// gives it a Session.
-    pub fn without_cluster(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
+    pub fn without_session(window: &mut Window, cx: &mut Context<Self>, initial: String) -> Self {
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("yaml")
@@ -208,19 +208,16 @@ impl YamlEditorView {
         self.state.clone()
     }
 
-    /// Send Apply and Precheck through `session` from now on, or nowhere.
-    /// The Workspace's editor follows the selected Cluster this way (#161).
-    pub fn set_session(&mut self, session: Option<Entity<Session>>, cx: &mut Context<Self>) {
-        if self.session == session {
+    /// Send Apply and Precheck through `session` from now on. The
+    /// Workspace's editor follows the selected Cluster this way (#161).
+    pub fn set_session(&mut self, session: Entity<Session>, cx: &mut Context<Self>) {
+        if self.session.as_ref() == Some(&session) {
             return;
         }
         // The Session connects lazily and Apply waits on it, so the status
         // names where Apply goes rather than a connection state.
-        self.status_line = match &session {
-            Some(session) => format!("cluster {}", session.read(cx).watch_key().cluster),
-            None => "no cluster".to_string(),
-        };
-        self.session = session;
+        self.status_line = format!("cluster {}", session.read(cx).watch_key().cluster);
+        self.session = Some(session);
         self.session_version += 1;
         // The last Apply's result describes the previous Cluster: its Force
         // Apply would overwrite this Cluster's fields.
@@ -238,19 +235,14 @@ impl YamlEditorView {
 
     // ------------------------------------------------------------ cluster I/O
 
-    fn send_apply(
+    /// Send `request` through the Session; `None` when there is none.
+    fn send(
         &self,
-        snapshot: &str,
-        mode: ApplyMode,
+        request: impl FnOnce(&mut Session) -> ApplyAnswer,
         cx: &mut Context<Self>,
     ) -> Option<ApplyAnswer> {
         let session = self.session.as_ref()?;
-        Some(session.update(cx, |session, _| session.apply(snapshot, mode)))
-    }
-
-    fn send_precheck(&self, snapshot: &str, cx: &mut Context<Self>) -> Option<ApplyAnswer> {
-        let session = self.session.as_ref()?;
-        Some(session.update(cx, |session, _| session.precheck(snapshot)))
+        Some(session.update(cx, |session, _| request(session)))
     }
 
     fn apply(&mut self, mode: ApplyMode, cx: &mut Context<Self>) {
@@ -258,7 +250,7 @@ impl YamlEditorView {
             return;
         }
         let snapshot = self.state.read(cx).value().to_string();
-        let Some(applied) = self.send_apply(&snapshot, mode, cx) else {
+        let Some(applied) = self.send(|session| session.apply(&snapshot, mode), cx) else {
             self.global_notice = Some(no_cluster_notice("apply"));
             cx.notify();
             return;
@@ -396,7 +388,7 @@ impl YamlEditorView {
             return;
         }
         let snapshot = self.state.read(cx).value().to_string();
-        let Some(checked) = self.send_precheck(&snapshot, cx) else {
+        let Some(checked) = self.send(|session| session.precheck(&snapshot), cx) else {
             // The debounced Precheck stays silent: the status already says
             // "no cluster".
             if manual {

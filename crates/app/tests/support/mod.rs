@@ -88,10 +88,6 @@ pub fn open(
     cx: &mut TestAppContext,
     watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
 ) -> Ui<'_> {
-    cx.update(|cx| {
-        gpui_kit::init(cx);
-        astrolabe::keymap::bind(cx);
-    });
     let (namespaces, namespace_events) = mpsc::channel(32);
     let deleted: Deleted = Rc::default();
     let operated: Operated = Rc::default();
@@ -169,14 +165,7 @@ pub fn open(
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
-    let (_workspace, cx) = cx.add_window_view(|window, cx| {
-        WorkspaceView::from_clusters(
-            vec![("kind-a".to_string(), cluster)],
-            Preselection::default(),
-            window,
-            cx,
-        )
-    });
+    let cx = open_workspace(cx, vec![("kind-a".to_string(), cluster)]);
     Ui {
         cx,
         namespaces,
@@ -187,6 +176,22 @@ pub fn open(
         forwarded,
         applied,
     }
+}
+
+/// A Workspace window over `clusters`, with the app's key bindings. For a
+/// test that needs more than [`open`]'s one Cluster.
+pub fn open_workspace(
+    cx: &mut TestAppContext,
+    clusters: Vec<(String, ScriptedCluster)>,
+) -> &mut VisualTestContext {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        astrolabe::keymap::bind(cx);
+    });
+    let (_workspace, cx) = cx.add_window_view(|window, cx| {
+        WorkspaceView::from_clusters(clusters, Preselection::default(), window, cx)
+    });
+    cx
 }
 
 /// The one document every scripted Apply and Precheck reports on.

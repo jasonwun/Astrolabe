@@ -15,7 +15,7 @@ fn enter_at(cx: &mut TestAppContext, initial: &str, line: u32, col: u32, expecte
         register_yaml_language(cx);
     });
     let (view, cx) = cx.add_window_view(|window, cx| {
-        YamlEditorView::without_cluster(window, cx, initial.to_string())
+        YamlEditorView::without_session(window, cx, initial.to_string())
     });
     let state = cx.read(|cx| view.read(cx).editor_state());
     cx.update(|window, cx| {

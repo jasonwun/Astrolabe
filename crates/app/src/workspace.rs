@@ -78,7 +78,7 @@ pub struct WorkspaceView {
 
 impl WorkspaceView {
     pub fn new(preselection: Preselection, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let yaml = cx.new(|cx| YamlEditorView::without_cluster(window, cx, String::new()));
+        let yaml = cx.new(|cx| YamlEditorView::without_session(window, cx, String::new()));
         let mut workspace = Self {
             clusters: Vec::new(),
             sources: BTreeMap::new(),
@@ -119,7 +119,7 @@ impl WorkspaceView {
             .into_iter()
             .map(|(cluster, scripted)| (cluster, Some(scripted)))
             .collect();
-        let yaml = cx.new(|cx| YamlEditorView::without_cluster(window, cx, String::new()));
+        let yaml = cx.new(|cx| YamlEditorView::without_session(window, cx, String::new()));
         let mut workspace = Self {
             clusters,
             sources,
@@ -221,7 +221,7 @@ impl WorkspaceView {
         }
         let session = self.sessions[&cluster].read(cx).session();
         self.yaml
-            .update(cx, |yaml, cx| yaml.set_session(Some(session), cx));
+            .update(cx, |yaml, cx| yaml.set_session(session, cx));
         self.selected_cluster = Some(cluster);
         self.show_yaml = false;
         cx.notify();
