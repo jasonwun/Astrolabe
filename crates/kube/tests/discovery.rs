@@ -162,3 +162,78 @@ async fn unresolvable_kinds_and_versions_are_not_served() {
             .is_none()
     );
 }
+
+const LEGACY_GROUPS_WITH_NEW_CRD: &str = r#"{"kind":"APIGroupList","apiVersion":"v1","groups":[
+    {"name":"new.example.com","versions":[{"groupVersion":"new.example.com/v1","version":"v1"}],
+     "preferredVersion":{"groupVersion":"new.example.com/v1","version":"v1"}},
+    {"name":"stable.example.com","versions":[{"groupVersion":"stable.example.com/v1","version":"v1"}],
+     "preferredVersion":{"groupVersion":"stable.example.com/v1","version":"v1"}}
+]}"#;
+
+fn status(code: u16, reason: &str) -> http::Response<Body> {
+    http::Response::builder()
+        .status(code)
+        .header("content-type", "application/json")
+        .body(Body::from(
+            format!(
+                r#"{{"kind":"Status","apiVersion":"v1","status":"Failure","code":{code},"reason":"{reason}","message":"{reason} by the mock"}}"#
+            )
+            .into_bytes(),
+        ))
+        .unwrap()
+}
+
+/// A pre-aggregated apiserver that lists `new.example.com` under `/apis`
+/// while `/apis/new.example.com/v1` answers `new_group_version`: a CRD
+/// group mid-registration answers 404 there.
+fn legacy_server_with_new_crd(
+    new_group_version: fn() -> http::Response<Body>,
+) -> impl Fn(&str, bool) -> http::Response<Body> + Send + Sync + 'static {
+    move |path, aggregated| match path {
+        "/apis" => json(LEGACY_GROUPS_WITH_NEW_CRD),
+        "/apis/new.example.com/v1" => new_group_version(),
+        _ => legacy_server(path, aggregated),
+    }
+}
+
+#[tokio::test]
+async fn per_group_discovery_skips_a_group_version_that_404s() {
+    let (client, seen) = mock_client(legacy_server_with_new_crd(not_found));
+
+    let served = discover(&client).await.unwrap();
+
+    assert!(
+        seen.lock()
+            .unwrap()
+            .contains(&"/apis/new.example.com/v1".to_string())
+    );
+    assert!(served.resolve("new.example.com", "v1", "Widget").is_none());
+    assert!(
+        served
+            .resolve("stable.example.com", "v1", "CronTab")
+            .is_some()
+    );
+    assert!(served.resolve("", "v1", "Namespace").is_some());
+}
+
+#[tokio::test]
+async fn per_group_discovery_fails_when_a_group_version_errors_otherwise() {
+    let (client, _) = mock_client(legacy_server_with_new_crd(|| status(500, "InternalError")));
+
+    let error = discover(&client).await.unwrap_err();
+
+    assert!(!error.is_forbidden(), "{error}");
+    assert!(
+        error.to_string().contains("InternalError by the mock"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn per_group_discovery_is_forbidden_when_a_group_version_403s() {
+    let (client, _) = mock_client(legacy_server_with_new_crd(|| status(403, "Forbidden")));
+
+    let error = discover(&client).await.unwrap_err();
+
+    assert!(error.is_forbidden(), "{error}");
+}
