@@ -18,4 +18,4 @@ mod resource;
 pub mod service;
 pub mod watch;
 
-pub use client::{client_for_context, context_names, default_client};
+pub use client::{client_for, clusters, default_client};

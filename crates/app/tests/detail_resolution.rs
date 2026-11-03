@@ -7,7 +7,7 @@ mod support;
 
 use astrolabe::detail::{DetailTarget, NeededWatch, RelatedOutcome, Resolved, resolve, watches};
 use astrolabe::session::{ScriptedCluster, Session};
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::core::v1::ObjectReference;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -55,7 +55,16 @@ fn session(
             key(related_watch.kind, &related_watch.namespace),
             related_events,
         );
-    let session = cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", "default", cluster, cx)));
+    let session = cx.update(|cx| {
+        cx.new(|cx| {
+            Session::scripted(
+                ClusterId::kubeconfig_context("kind-a"),
+                "default",
+                cluster,
+                cx,
+            )
+        })
+    });
     session.update(cx, |session, cx| {
         for watch in &needed {
             session.watch_builtin(watch.kind, &watch.namespace, cx);
@@ -213,7 +222,15 @@ fn a_section_lists_only_the_selected_objects(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn an_involved_definition_opens_as_a_definition(cx: &mut TestAppContext) {
     let (_namespaces, namespace_events) = mpsc::channel(32);
-    let session = cx.update(|cx| cx.new(|cx| Session::from_events("kind-a", namespace_events, cx)));
+    let session = cx.update(|cx| {
+        cx.new(|cx| {
+            Session::from_events(
+                ClusterId::kubeconfig_context("kind-a"),
+                namespace_events,
+                cx,
+            )
+        })
+    });
     let reference = ObjectReference {
         api_version: Some("apiextensions.k8s.io/v1".to_string()),
         kind: Some("CustomResourceDefinition".to_string()),

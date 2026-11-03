@@ -23,6 +23,8 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio::task::AbortHandle;
 
+pub use crate::client::ClusterId;
+
 use crate::apply::{self, ApplyMode, ApplyReport};
 use crate::discovery::{self, ServedResources};
 use crate::object::Operation;
@@ -178,8 +180,8 @@ type SharedClient = Shared<BoxFuture<'static, Result<Client, ClusterError>>>;
 /// request with a [`Connect`](ClusterErrorKind::Connect) error. Dropping
 /// the handle stops its watches.
 pub struct Cluster {
-    /// The kubeconfig context, for logs.
-    name: String,
+    /// Which Cluster, for logs.
+    id: ClusterId,
     client: SharedClient,
     /// Where requests run: the cluster runtime, or the caller's for
     /// `from_client`, so a test's paused clock drives the watch retries.
@@ -188,36 +190,35 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    /// Start connecting to kubeconfig context `context` and return at
-    /// once.
+    /// Start connecting to `cluster` and return at once.
     ///
     /// # Panics
     ///
     /// When the cluster runtime cannot be created on first use.
-    pub fn connect(context: &str) -> Self {
-        let name = context.to_owned();
-        let context = name.clone();
+    pub fn connect(cluster: &ClusterId) -> Self {
+        let id = cluster.clone();
+        let cluster = id.clone();
         let runtime = runtime().handle().clone();
         // A credential plugin's first run blocks inside config loading, so
         // the connect runs on the cluster runtime, never the caller's thread.
         let client = spawn(
             &runtime,
             async move {
-                crate::client_for_context(&context)
+                crate::client_for(&cluster)
                     .await
                     .map_err(|error| ClusterError::connect(error.to_string()))
             },
             ClusterError::connect("cluster connect task panicked"),
         );
         Self {
-            name,
+            id,
             client: client.boxed().shared(),
             runtime,
             watches: Mutex::default(),
         }
     }
 
-    /// A handle named `name` over an already built `client`, such as a
+    /// A handle to `id` over an already built `client`, such as a
     /// mock one in tests. Requests run on the caller's tokio runtime when
     /// there is one, so a test's paused clock drives them; otherwise on the
     /// cluster runtime.
@@ -226,9 +227,9 @@ impl Cluster {
     ///
     /// Outside a tokio runtime, when the cluster runtime cannot be created
     /// on first use.
-    pub fn from_client(client: Client, name: impl Into<String>) -> Self {
+    pub fn from_client(client: Client, id: ClusterId) -> Self {
         Self {
-            name: name.into(),
+            id,
             client: futures::future::ready(Ok(client)).boxed().shared(),
             runtime: Handle::try_current().unwrap_or_else(|_| runtime().handle().clone()),
             watches: Mutex::default(),
@@ -592,7 +593,7 @@ impl Cluster {
         F: Fn(&Client) -> S + Send + 'static,
         S: futures::Stream<Item = Result<watcher::Event<K>, watcher::Error>> + Send,
     {
-        let (receiver, task) = watch::relist(self.name.clone(), label, self.client.clone(), stream);
+        let (receiver, task) = watch::relist(self.id.clone(), label, self.client.clone(), stream);
         let task = self.runtime.spawn(task).abort_handle();
         let mut watches = self.watches.lock().unwrap_or_else(PoisonError::into_inner);
         watches.retain(|watch| !watch.is_finished());

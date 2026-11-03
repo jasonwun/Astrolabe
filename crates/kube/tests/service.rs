@@ -3,7 +3,7 @@
 //! resolves `port-forward svc/name`. Synthetic objects (plausible shapes,
 //! never captured from a real apiserver).
 
-use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind};
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Container, Pod, Service};
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
@@ -294,7 +294,7 @@ fn mock_client(pods: &[Pod]) -> (astrolabe_kube::kube::Client, Uris) {
 /// connection's failure.
 async fn first_failure(client: astrolabe_kube::kube::Client, port: u16) -> ClusterError {
     use std::time::Duration;
-    let cluster = Cluster::from_client(client, "mock");
+    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("mock"));
     let mut forward = cluster.port_forward(ForwardRequest {
         target: ForwardTarget::Service(ObjectKey::new(Some("team-a".into()), "web")),
         port,

@@ -1,3 +1,4 @@
+use astrolabe_kube::cluster::{Cluster, ClusterErrorKind, ClusterId};
 use std::{env, ffi::OsString, fs, path::PathBuf};
 
 struct KubeconfigGuard {
@@ -60,14 +61,28 @@ users:
     )
 }
 
-#[tokio::test]
-async fn context_selection_uses_kubeconfig_contexts() {
-    let kubeconfig = KubeconfigGuard::new(&config("zeta"));
-    assert_eq!(
-        astrolabe_kube::context_names().unwrap(),
-        ["zeta", "alpha", "beta"]
-    );
+fn names(clusters: &[ClusterId]) -> Vec<String> {
+    clusters.iter().map(ToString::to_string).collect()
+}
 
+/// One test, as both steps point `KUBECONFIG` at a file: tests in one
+/// binary run in parallel and share the environment.
+#[tokio::test]
+async fn clusters_are_the_kubeconfig_contexts_current_first() {
+    let kubeconfig = KubeconfigGuard::new(&config("zeta"));
+    let clusters = astrolabe_kube::clusters().unwrap();
+    assert_eq!(names(&clusters), ["zeta", "alpha", "beta"]);
+
+    // A listed Cluster connects whatever `current-context` names.
     kubeconfig.replace(&config("missing"));
-    astrolabe_kube::client_for_context("alpha").await.unwrap();
+    assert_eq!(
+        names(&astrolabe_kube::clusters().unwrap()),
+        ["alpha", "beta", "zeta"]
+    );
+    let alpha = clusters
+        .iter()
+        .find(|cluster| cluster.name() == "alpha")
+        .unwrap();
+    let error = Cluster::connect(alpha).discover().await.unwrap_err();
+    assert_ne!(error.kind(), ClusterErrorKind::Connect, "{error}");
 }

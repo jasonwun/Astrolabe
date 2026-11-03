@@ -3,6 +3,7 @@
 
 use astrolabe::session::{ScriptedCluster, WatchKey};
 use astrolabe::workspace::{LaunchTab, Preselection, WorkspaceView};
+use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::watch::{NamespaceWatchMessage, ObjectWatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
@@ -32,8 +33,11 @@ fn launch(
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
         WorkspaceView::from_clusters(
             vec![
-                ("kind-a".to_string(), ScriptedCluster::new(namespaces_a)),
-                ("kind-b".to_string(), kind_b),
+                (
+                    ClusterId::kubeconfig_context("kind-a"),
+                    ScriptedCluster::new(namespaces_a),
+                ),
+                (ClusterId::kubeconfig_context("kind-b"), kind_b),
             ],
             preselection,
             window,

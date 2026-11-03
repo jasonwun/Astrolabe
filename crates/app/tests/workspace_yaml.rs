@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use astrolabe::session::ScriptedCluster;
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
+use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::watch::NamespaceWatchMessage;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
@@ -35,7 +36,7 @@ fn cluster(
     applied: &Applied,
     answer: Answer,
 ) -> (
-    (String, ScriptedCluster),
+    (ClusterId, ScriptedCluster),
     mpsc::Sender<NamespaceWatchMessage>,
 ) {
     let (namespaces, events) = mpsc::channel(8);
@@ -60,7 +61,7 @@ fn cluster(
                 Answer::Applied => clean(),
             })
         });
-    ((name.to_string(), scripted), namespaces)
+    ((ClusterId::kubeconfig_context(name), scripted), namespaces)
 }
 
 fn click(cx: &mut VisualTestContext, id: &'static str) {

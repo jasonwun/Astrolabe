@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
@@ -50,7 +50,7 @@ pub enum ResourceKind {
 /// #8's `(cluster, kind, ns)` key to `(cluster, kind, Option<ns>)`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WatchKey {
-    pub cluster: String,
+    pub cluster: ClusterId,
     pub kind: ResourceKind,
     pub namespace: Option<String>,
 }
@@ -100,7 +100,7 @@ pub enum SnapshotChange {
 /// One watcher's snapshot plus its connection state: old data stays visible
 /// (stale) through a relist until the complete replacement arrives.
 pub struct Watched<K> {
-    cluster: String,
+    cluster: ClusterId,
     label: String,
     /// The snapshot readers see.
     committed: BTreeMap<ObjectKey, K>,
@@ -114,9 +114,9 @@ pub struct Watched<K> {
 
 impl<K: ResourceExt> Watched<K> {
     /// `label` names the watched resource in logs.
-    pub fn new(cluster: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn new(cluster: ClusterId, label: impl Into<String>) -> Self {
         Self {
-            cluster: cluster.into(),
+            cluster,
             label: label.into(),
             committed: BTreeMap::new(),
             staging: BTreeMap::new(),
@@ -268,19 +268,14 @@ pub struct Session {
 impl Session {
     /// Connect to `cluster`, with `namespace` selected from the start: the
     /// first namespaced watch already uses it.
-    pub fn new(
-        cluster: impl Into<String>,
-        namespace: impl Into<String>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let cluster = cluster.into();
+    pub fn new(cluster: ClusterId, namespace: impl Into<String>, cx: &mut Context<Self>) -> Self {
         let io = ClusterIo::connect(&cluster);
         Self::start(cluster, io, namespace.into(), cx)
     }
 
     /// Namespace events only: CRDs never arrive, discovery finds nothing.
     pub fn from_events(
-        cluster: impl Into<String>,
+        cluster: ClusterId,
         receiver: mpsc::Receiver<NamespaceWatchMessage>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -293,20 +288,15 @@ impl Session {
     }
 
     pub fn scripted(
-        cluster: impl Into<String>,
+        cluster: ClusterId,
         namespace: impl Into<String>,
         scripted: ScriptedCluster,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::start(
-            cluster.into(),
-            ClusterIo::Scripted(scripted),
-            namespace.into(),
-            cx,
-        )
+        Self::start(cluster, ClusterIo::Scripted(scripted), namespace.into(), cx)
     }
 
-    fn start(cluster: String, io: ClusterIo, namespace: String, cx: &mut Context<Self>) -> Self {
+    fn start(cluster: ClusterId, io: ClusterIo, namespace: String, cx: &mut Context<Self>) -> Self {
         let mut session = Self {
             namespaces: Watched::new(cluster.clone(), "namespace"),
             crds: Watched::new(cluster.clone(), "CRD"),

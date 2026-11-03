@@ -1,5 +1,5 @@
 use astrolabe::session::{ConnectionHealth, ResourceKind, Session};
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -32,11 +32,13 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     let logs = LogCapture::default();
     logs.install();
     let (mut sender, receiver) = mpsc::channel(32);
-    let session = cx.update(|cx| cx.new(|cx| Session::from_events("kind-a", receiver, cx)));
+    let session = cx.update(|cx| {
+        cx.new(|cx| Session::from_events(ClusterId::kubeconfig_context("kind-a"), receiver, cx))
+    });
 
     cx.read(|cx| {
         let session = session.read(cx);
-        assert_eq!(session.watch_key().cluster, "kind-a");
+        assert_eq!(session.watch_key().cluster.name(), "kind-a");
         assert_eq!(session.watch_key().kind, ResourceKind::Namespaces);
         assert_eq!(session.watch_key().namespace, None);
         assert_eq!(session.health(), ConnectionHealth::Connecting);
@@ -119,7 +121,9 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn session_coalesces_queued_events_into_one_notification(cx: &mut TestAppContext) {
     let (mut sender, receiver) = mpsc::channel(32);
-    let session = cx.update(|cx| cx.new(|cx| Session::from_events("kind-a", receiver, cx)));
+    let session = cx.update(|cx| {
+        cx.new(|cx| Session::from_events(ClusterId::kubeconfig_context("kind-a"), receiver, cx))
+    });
     let notifications = std::rc::Rc::new(std::cell::Cell::new(0));
     cx.update(|cx| {
         cx.observe(&session, {

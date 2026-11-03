@@ -6,7 +6,7 @@ use astrolabe::session::{
     ConnectionHealth, CustomKindId, DEFAULT_NAMESPACE, ResourceKind, ScriptedCluster, Session,
     WatchKey,
 };
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
@@ -61,7 +61,7 @@ fn object(namespace: Option<&str>, name: &str) -> DynamicObject {
 
 fn custom_key(namespace: Option<&str>, kind: &str) -> WatchKey {
     WatchKey {
-        cluster: "kind-a".to_string(),
+        cluster: ClusterId::kubeconfig_context("kind-a"),
         kind: ResourceKind::Custom {
             group: "stable.example.com".to_string(),
             version: "v1".to_string(),
@@ -115,8 +115,16 @@ fn harness(
     for (key, receiver) in custom {
         cluster = cluster.watch(key, receiver);
     }
-    let session =
-        cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", DEFAULT_NAMESPACE, cluster, cx)));
+    let session = cx.update(|cx| {
+        cx.new(|cx| {
+            Session::scripted(
+                ClusterId::kubeconfig_context("kind-a"),
+                DEFAULT_NAMESPACE,
+                cluster,
+                cx,
+            )
+        })
+    });
     Harness {
         session,
         namespaces,
@@ -234,8 +242,16 @@ fn a_first_crd_snapshot_already_discovered_does_not_rediscover(cx: &mut TestAppC
                 )]))
             }
         });
-    let _session =
-        cx.update(|cx| cx.new(|cx| Session::scripted("kind-a", DEFAULT_NAMESPACE, cluster, cx)));
+    let _session = cx.update(|cx| {
+        cx.new(|cx| {
+            Session::scripted(
+                ClusterId::kubeconfig_context("kind-a"),
+                DEFAULT_NAMESPACE,
+                cluster,
+                cx,
+            )
+        })
+    });
     snapshot(
         &mut crds,
         vec![crd("stable.example.com", "CronTab", "Namespaced")],

@@ -14,7 +14,7 @@
 use std::time::Duration;
 
 use astrolabe_kube::apply::{ApplyError, ApplyMode, ApplyReport, Location};
-use astrolabe_kube::cluster::Cluster;
+use astrolabe_kube::cluster::{Cluster, ClusterId};
 use astrolabe_kube::default_client;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
@@ -97,8 +97,13 @@ fn line_of(snapshot: &str, needle: &str) -> usize {
 }
 
 /// Apply `snapshot` the plain way, as the editor's Apply button does.
+/// A handle over the ambient kubeconfig's `client`.
+fn handle(client: &kube::Client) -> Cluster {
+    Cluster::from_client(client.clone(), ClusterId::kubeconfig_context("e2e"))
+}
+
 async fn apply(client: &kube::Client, snapshot: &str) -> ApplyReport {
-    Cluster::from_client(client.clone(), "e2e")
+    handle(client)
         .apply(snapshot, ApplyMode::Normal)
         .await
         .unwrap()
@@ -115,9 +120,9 @@ async fn delete_ns(client: &kube::Client, ns: &str) {
 #[tokio::test]
 #[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
 async fn cluster_connects_and_discovers() {
-    let contexts = astrolabe_kube::context_names().unwrap();
-    assert!(!contexts.is_empty(), "kubeconfig must contain a context");
-    let cluster = Cluster::connect(&contexts[0]);
+    let clusters = astrolabe_kube::clusters().unwrap();
+    assert!(!clusters.is_empty(), "kubeconfig must contain a context");
+    let cluster = Cluster::connect(&clusters[0]);
 
     let served = cluster.discover().await.unwrap();
 
@@ -131,12 +136,10 @@ async fn cluster_connects_and_discovers() {
 #[tokio::test]
 #[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
 async fn namespace_watch_lists_then_streams_create_and_delete() {
-    let contexts = astrolabe_kube::context_names().unwrap();
-    assert!(!contexts.is_empty(), "kubeconfig must contain a context");
-    let client = astrolabe_kube::client_for_context(&contexts[0])
-        .await
-        .unwrap();
-    let cluster = Cluster::from_client(client.clone(), &contexts[0]);
+    let clusters = astrolabe_kube::clusters().unwrap();
+    assert!(!clusters.is_empty(), "kubeconfig must contain a context");
+    let client = astrolabe_kube::client_for(&clusters[0]).await.unwrap();
+    let cluster = Cluster::from_client(client.clone(), clusters[0].clone());
     let mut events = cluster.watch_namespaces();
 
     tokio::time::timeout(Duration::from_secs(20), async {
@@ -353,7 +356,7 @@ async fn apply_409_then_force_apply() {
     );
 
     // Force Apply takes ownership and succeeds.
-    let report = Cluster::from_client(client.clone(), "e2e")
+    let report = handle(&client)
         .apply(&snapshot, ApplyMode::Force)
         .await
         .unwrap();
@@ -389,10 +392,7 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
     for (label, report) in [
         (
             "precheck",
-            Cluster::from_client(client.clone(), "e2e")
-                .precheck(&snapshot)
-                .await
-                .unwrap(),
+            handle(&client).precheck(&snapshot).await.unwrap(),
         ),
         ("apply", apply(&client, &snapshot).await),
     ] {
@@ -485,7 +485,7 @@ spec:
     let mut last_error = None;
     let served = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
-            match Cluster::from_client(client.clone(), "e2e").discover().await {
+            match handle(&client).discover().await {
                 Ok(served) if served.resolve(&group, "v1", "Widget").is_some() => break served,
                 Ok(_) => {}
                 Err(error) => last_error = Some(error),
@@ -508,7 +508,7 @@ spec:
     };
     assert_eq!(resource.plural, "widgets");
 
-    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let cluster = handle(&client);
     let mut events = cluster.watch_objects(resource, Some(&ns));
     let widget = format!(
         "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"
@@ -563,7 +563,7 @@ async fn crd_watch_without_rbac_reports_forbidden() {
     let mut config = kube::Config::infer().await.unwrap();
     config.auth_info.impersonate = Some("astrolabe-e2e-nobody".to_string());
     let client = kube::Client::try_from(config).unwrap();
-    let cluster = Cluster::from_client(client, "e2e-nobody");
+    let cluster = Cluster::from_client(client, ClusterId::kubeconfig_context("e2e-nobody"));
     let mut events = cluster.watch_crds();
     // The watcher announces `Init` before its LIST; the LIST then fails.
     let error = tokio::time::timeout(Duration::from_secs(20), async {
@@ -628,7 +628,7 @@ async fn scale_and_rollout_restart_a_deployment() {
         key: ObjectKey::new(Some(ns.clone()), "nginx"),
     };
 
-    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let cluster = handle(&client);
     let scale = |replicas| Operation::Scale {
         object: deployment.clone(),
         replicas,
@@ -703,7 +703,7 @@ async fn suspend_and_trigger_a_cronjob() {
         key: ObjectKey::new(Some(ns.clone()), "nightly"),
     };
 
-    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let cluster = handle(&client);
 
     cluster
         .operate(&Operation::SetSuspend {
@@ -748,7 +748,7 @@ async fn pod_logs_exec_and_port_forward() {
     let ns = unique_ns();
     let pod_name = running_nginx(&client, &ns).await;
 
-    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let cluster = handle(&client);
     let mut logs = cluster.logs(LogRequest {
         pod: ObjectKey::new(Some(ns.clone()), &pod_name),
         container: "nginx".to_string(),
@@ -847,7 +847,7 @@ async fn service_port_forward_reaches_a_selected_pod() {
     let report = apply(&client, &service).await;
     assert!(report.ok, "service should apply: {:?}", report.outcomes);
 
-    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let cluster = handle(&client);
     let forward = cluster.port_forward(ForwardRequest {
         target: ForwardTarget::Service(ObjectKey::new(Some(ns.clone()), "web")),
         port: 8081,
