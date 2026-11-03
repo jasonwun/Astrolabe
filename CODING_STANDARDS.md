@@ -249,10 +249,8 @@ detail with `support::open_detail`, and builds a `DynamicObject` with
 `support::LogCapture`, or `LogCapture::with_filter` when it needs a
 filter other than the default `astrolabe=debug` one (`dev/log-capture.sh`
 checks the last; it and `dev/comment-width.sh` also read files not yet
-added). A test asserting a log line is the only one in its test binary
-that reaches the line's callsite: in #106 another test logging the same
-`warn!` with no subscriber left the assertion failing whenever both ran
-in parallel, and passing alone. A local
+added); one asserting a log line also follows "Tests that assert log
+lines" below. A local
 helper or an inline run that repeats `open_list`'s or `open_detail`'s steps
 (select the namespace, click the nav item, send the snapshot, click the
 row) is a finding, whatever its name.
@@ -270,6 +268,22 @@ neither reviewer noticed (#111 retro). #136 added `support::list` /
 `support::detail` and no doc named them until its retro (#137); #117
 added `open_list` and named it in neither file until the Standards
 review asked (#117 retro).
+
+## Tests that assert log lines
+
+In every crate, not only view tests: a test asserting a log line is the
+only one in its test binary that reaches the line's callsite. Put it in
+a binary of its own when its siblings reach the callsite too, sharing
+their fixtures through `tests/support/mod.rs`
+(`crates/kube/tests/watch_relist.rs`). A second test reaching an
+asserted callsite in the same binary is a finding.
+
+Origin: in #106 another test logging the same `warn!` with no
+subscriber left the assertion failing whenever both ran in parallel,
+and passing alone. #156's relist test in `crates/kube/tests/watch.rs`
+asserted the watch-failure logs that the 403 test beside it also hits;
+the rule then sat under "View-test steps…", which reads as app-only,
+and the Standards reviewer caught it (#156 retro).
 
 ## Rules belong in the model layer
 
@@ -385,7 +399,9 @@ diff, and the tests and e2e that called it go through `Cluster`. The
 answer is a plain `Future` from `cluster.rs`'s `spawn`, never a tokio
 type such as `oneshot::Receiver`, so GPUI and any executor can await it.
 The module doc and `Cluster::client()`'s doc list only the requests that
-have not moved yet.
+have not moved yet. A method that runs on the handle's stored `runtime`
+has no `# Panics` for building the cluster runtime: only `connect` and
+`from_client` can reach that.
 
 A request left with two public paths, an answer that exposes a tokio
 type, or a doc that names a moved request as pending (or a pending one
@@ -397,3 +413,6 @@ spawned task's `oneshot::Receiver`, and its module doc said every
 request went through the handle while only Discovery did. The
 Standards reviewer caught the receiver and the doc, the Spec reviewer
 the second path; all three were fixed before merge (#155 retro).
+#156 kept `discover`'s runtime `# Panics` after it moved onto the
+stored handle, and copied it onto the three `watch_*` methods; the
+Standards reviewer caught it (#156 retro).

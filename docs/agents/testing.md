@@ -160,6 +160,19 @@ timeout before chasing a hang:
 dev/mutants.sh -p astrolabe-model --iterate --timeout 180 -j 3
 ```
 
+Before each push, review fixes included, run CI's own command; scoped
+to the diff, it takes about a minute:
+
+```sh
+git diff origin/main...HEAD > "$SCRATCH/pr.diff"
+cargo mutants -p astrolabe-kube -p astrolabe-model --in-diff "$SCRATCH/pr.diff" -j 2
+```
+
+Origin: #156 ran an unscoped `dev/mutants.sh` after its review fixes,
+which also mutated the app crate. It ran past ten minutes, so the PR was
+pushed without its result. CI then missed `delete !` in a pruning line
+the fixes had added (#156 retro).
+
 CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff,
 and fails on every missed mutant there: a justification in the PR does not
 pass it. When no input can tell a mutant from the original (an equivalent
