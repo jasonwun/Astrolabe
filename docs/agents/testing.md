@@ -147,9 +147,30 @@ result into a failure.
 A `TIMEOUT` fails the run too (cargo-mutants 27.1 exits `Timeout` ahead of
 `FoundProblems`): a mutant that silences a callback leaves an unbounded
 `recv().await` hanging. Bound every wait on a channel or stream in kube
-tests with `tokio::time::timeout`.
+tests with `tokio::time::timeout`. A loop that runs until nothing changes
+hangs the same way under a mutant: cap its passes (`column_widths` runs
+at most one pass per column, plus one).
 
-CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff.
+A `TIMEOUT` can also come from load alone: cargo-mutants' automatic test
+timeout (about 20s for the model crate) is too short while `-j 3` builds
+run alongside. Retest only the missed and timed-out mutants with a longer
+timeout before chasing a hang:
+
+```sh
+dev/mutants.sh -p astrolabe-model --iterate --timeout 180 -j 3
+```
+
+CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff,
+and fails on every missed mutant there: a justification in the PR does not
+pass it. When no input can tell a mutant from the original (an equivalent
+mutant), change the code so the mutated branch no longer exists: drop a
+`< 0` branch that `max(0)` already covers, or a match arm or branch that
+prints what another one does.
+
+Origin: #153 moved the projections into `astrolabe-model`. A full run
+reported TIMEOUTs that `--timeout 180` cleared, two real hangs in
+`column_widths`, and equivalent mutants in `format_age`,
+`format_duration`, `condition_priority` and `quantity_value` (#153 retro).
 
 CI leaves the app crate out, so its `mutants` check passes on any
 app-only PR. After changing app logic (state, selection, branching; not
