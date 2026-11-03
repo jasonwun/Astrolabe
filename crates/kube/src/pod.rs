@@ -1,6 +1,7 @@
 //! Pod streams: container logs, interactive exec and port-forward (#17).
-//! Logs and exec are requested through [`Cluster`](crate::cluster::Cluster)
-//! and answered with the handles here (#158).
+//! Each is requested through [`Cluster`](crate::cluster::Cluster) and
+//! answered with a handle here (#158, #159); a Service forward resolves
+//! its Pod in [`service`](crate::service).
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -134,6 +135,67 @@ impl ExecSession {
     /// The next output; `None` once the session is gone.
     pub async fn next(&mut self) -> Option<ExecOutput> {
         self.output.next().await
+    }
+}
+
+/// What a port-forward reaches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardTarget {
+    /// A container port of the Pod (#17).
+    Pod(ObjectKey),
+    /// A service port of the Service, reaching one of its Pods (#18).
+    Service(ObjectKey),
+}
+
+/// Forward a localhost port to `port` of `target`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForwardRequest {
+    pub target: ForwardTarget,
+    pub port: u16,
+}
+
+/// What a port-forward reports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForwardEvent {
+    /// Accepting on this localhost port.
+    Listening(u16),
+    /// One connection's forward failed; the listener goes on.
+    ConnectionFailed(ClusterError),
+    /// The forward stopped: the client, the bind or the listener failed.
+    Failed(ClusterError),
+}
+
+/// A running port-forward; dropping it closes the listener and its
+/// connections.
+pub struct PortForward {
+    events: mpsc::UnboundedReceiver<ForwardEvent>,
+    _work: AbortOnDrop,
+}
+
+impl PortForward {
+    /// A forward whose reports are what is sent on `events`; it ends once
+    /// their sender is dropped.
+    pub fn new(events: mpsc::UnboundedReceiver<ForwardEvent>) -> Self {
+        Self {
+            events,
+            _work: AbortOnDrop::default(),
+        }
+    }
+
+    /// The forward, owning the task that runs it.
+    pub(crate) fn with_work(
+        events: mpsc::UnboundedReceiver<ForwardEvent>,
+        work: AbortHandle,
+    ) -> Self {
+        Self {
+            events,
+            _work: AbortOnDrop(Some(work)),
+        }
+    }
+
+    /// The next report; `None` once the forward is gone.
+    pub async fn next(&mut self) -> Option<ForwardEvent> {
+        self.events.next().await
     }
 }
 
@@ -300,7 +362,7 @@ pub(crate) fn exit_code(status: Option<&Status>) -> Result<u8, String> {
 /// # Errors
 ///
 /// The [`std::io::Error`] from binding a free port, once `port` failed too.
-pub async fn bind_local(port: u16) -> std::io::Result<TcpListener> {
+pub(crate) async fn bind_local(port: u16) -> std::io::Result<TcpListener> {
     match TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await {
         Ok(listener) => Ok(listener),
         Err(_) => TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await,
@@ -317,13 +379,13 @@ pub async fn bind_local(port: u16) -> std::io::Result<TcpListener> {
 ///
 /// The [`std::io::Error`] that ends the run: the listener's `accept`
 /// failing. A connection's own failure is not one; it goes to `on_error`.
-pub async fn port_forward(
+pub(crate) async fn port_forward(
     client: &Client,
     namespace: &str,
     name: &str,
     port: u16,
     listener: TcpListener,
-    on_error: impl Fn(String) + Send + Sync + 'static,
+    on_error: impl Fn(ClusterError) + Send + Sync + 'static,
 ) -> std::io::Result<()> {
     let api: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let name = name.to_string();
@@ -343,11 +405,11 @@ pub async fn port_forward(
 /// The [`std::io::Error`] from the listener's `accept`, which ends the run.
 pub(crate) async fn serve_forwards<T>(
     listener: TcpListener,
-    on_error: impl Fn(String) + Send + Sync + 'static,
+    on_error: impl Fn(ClusterError) + Send + Sync + 'static,
     target: impl Fn() -> T,
 ) -> std::io::Result<()>
 where
-    T: Future<Output = Result<(Api<Pod>, String, u16), String>> + Send + 'static,
+    T: Future<Output = Result<(Api<Pod>, String, u16), ClusterError>> + Send + 'static,
 {
     let on_error = Arc::new(on_error);
     let mut connections = JoinSet::new();
@@ -377,23 +439,25 @@ async fn forward(
     name: &str,
     port: u16,
     mut local: TcpStream,
-) -> Result<(), String> {
-    let mut forwarder = api
-        .portforward(name, &[port])
-        .await
-        .map_err(|error| error.to_string())?;
+) -> Result<(), ClusterError> {
+    let mut forwarder = api.portforward(name, &[port]).await?;
     let requested = "the forwarder carries the requested port";
     let mut remote = forwarder.take_stream(port).expect(requested);
     let remote_error = forwarder.take_error(port).expect(requested);
     let copied = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
     drop(remote);
-    forwarder.join().await.map_err(|error| error.to_string())?;
+    forwarder
+        .join()
+        .await
+        .map_err(|error| ClusterError::new(error.to_string()))?;
     // The server's own report (e.g. nothing listening on the port) says
     // more than the copy's broken pipe.
     if let Some(error) = remote_error.await {
-        return Err(error);
+        return Err(ClusterError::new(error));
     }
-    copied.map(|_| ()).map_err(|error| error.to_string())
+    copied
+        .map(|_| ())
+        .map_err(|error| ClusterError::new(error.to_string()))
 }
 
 #[cfg(test)]

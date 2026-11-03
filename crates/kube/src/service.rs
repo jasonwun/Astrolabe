@@ -10,6 +10,8 @@ use kube::api::ListParams;
 use kube::{Api, Client};
 use tokio::net::TcpListener;
 
+use crate::cluster::ClusterError;
+
 /// Where one Service forward connection goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedForward {
@@ -150,13 +152,13 @@ fn named_port(pod: &Pod, name: &str) -> Result<i32, String> {
 /// The [`std::io::Error`] that ends the run: the listener's `accept`
 /// failing. A connection's own failure is not one, resolution included;
 /// it goes to `on_error`.
-pub async fn port_forward(
+pub(crate) async fn port_forward(
     client: &Client,
     namespace: &str,
     name: &str,
     port: u16,
     listener: TcpListener,
-    on_error: impl Fn(String) + Send + Sync + 'static,
+    on_error: impl Fn(ClusterError) + Send + Sync + 'static,
 ) -> std::io::Result<()> {
     let services: Api<Service> = Api::namespaced(client.clone(), namespace);
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
@@ -164,10 +166,7 @@ pub async fn port_forward(
     crate::pod::serve_forwards(listener, on_error, move || {
         let (services, pods, name) = (services.clone(), pods.clone(), name.clone());
         async move {
-            let service = services
-                .get(&name)
-                .await
-                .map_err(|error| error.to_string())?;
+            let service = services.get(&name).await?;
             let selector = service
                 .spec
                 .iter()
@@ -179,11 +178,10 @@ pub async fn port_forward(
                 Vec::new()
             } else {
                 pods.list(&ListParams::default().labels(&selector))
-                    .await
-                    .map_err(|error| error.to_string())?
+                    .await?
                     .items
             };
-            let target = forward_target(&service, &matched, port)?;
+            let target = forward_target(&service, &matched, port).map_err(ClusterError::new)?;
             Ok((pods, target.pod, target.port))
         }
     })

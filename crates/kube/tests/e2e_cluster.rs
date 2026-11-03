@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use astrolabe_kube::apply::{ApplyError, Location, apply_documents, precheck_documents};
 use astrolabe_kube::cluster::Cluster;
+use astrolabe_kube::default_client;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
@@ -25,8 +26,10 @@ use astrolabe_kube::kube::core::{DynamicObject, GroupVersionKind};
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher;
 use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
-use astrolabe_kube::pod::{self, ExecInput, ExecOutput, ExecRequest, LogRequest};
-use astrolabe_kube::{default_client, service};
+use astrolabe_kube::pod::{
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, ForwardTarget, LogRequest,
+    PortForward,
+};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -785,35 +788,37 @@ async fn pod_logs_exec_and_port_forward() {
     );
     drop(input);
 
-    let listener = pod::bind_local(0).await.unwrap();
-    let local = listener.local_addr().unwrap();
-    let forward = pod::port_forward(&client, &ns, &pod_name, 80, listener, |e| {
-        panic!("connection failed: {e}")
+    let forward = cluster.port_forward(ForwardRequest {
+        target: ForwardTarget::Pod(ObjectKey::new(Some(ns.clone()), &pod_name)),
+        port: 80,
     });
-    let response = http_get_through(local, forward).await;
+    let response = http_get_through(forward).await;
     assert!(response.starts_with("HTTP/1.1 200"), "response: {response}");
 
     delete_ns(&client, &ns).await;
 }
 
-/// GET / on `local` while `forward` serves it.
-async fn http_get_through(
-    local: std::net::SocketAddr,
-    forward: impl std::future::Future<Output = std::io::Result<()>>,
-) -> String {
-    let request = async {
-        let mut stream = tokio::net::TcpStream::connect(local).await.unwrap();
-        stream
-            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
-            .await
-            .unwrap();
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).await.unwrap();
-        String::from_utf8_lossy(&response).into_owned()
-    };
+/// GET / through `forward`, on the port it reports listening on; any
+/// other report fails the test.
+async fn http_get_through(mut forward: PortForward) -> String {
     tokio::time::timeout(Duration::from_secs(20), async {
+        let Some(ForwardEvent::Listening(local)) = forward.next().await else {
+            panic!("the forward listens first");
+        };
+        let request = async {
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", local))
+                .await
+                .unwrap();
+            stream
+                .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await.unwrap();
+            String::from_utf8_lossy(&response).into_owned()
+        };
         tokio::select! {
-            ended = forward => panic!("port-forward ended: {ended:?}"),
+            report = forward.next() => panic!("port-forward reported {report:?}"),
             response = request => response,
         }
     })
@@ -835,12 +840,12 @@ async fn service_port_forward_reaches_a_selected_pod() {
     let report = apply_documents(&client, &service, false).await.unwrap();
     assert!(report.ok, "service should apply: {:?}", report.outcomes);
 
-    let listener = pod::bind_local(0).await.unwrap();
-    let local = listener.local_addr().unwrap();
-    let forward = service::port_forward(&client, &ns, "web", 8081, listener, |e| {
-        panic!("connection failed: {e}")
+    let cluster = Cluster::from_client(client.clone(), "e2e");
+    let forward = cluster.port_forward(ForwardRequest {
+        target: ForwardTarget::Service(ObjectKey::new(Some(ns.clone()), "web")),
+        port: 8081,
     });
-    let response = http_get_through(local, forward).await;
+    let response = http_get_through(forward).await;
     assert!(response.starts_with("HTTP/1.1 200"), "response: {response}");
 
     delete_ns(&client, &ns).await;

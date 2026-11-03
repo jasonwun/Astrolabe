@@ -135,3 +135,16 @@ fn a_new_error_is_other_and_shows_its_message() {
     assert!(!error.is_forbidden());
     assert_eq!(error.to_string(), "scripted failure");
 }
+
+/// The YAML editors' Apply still runs outside the handle (#160): it must
+/// reach a tokio reactor when awaited from an executor without one.
+#[test]
+fn a_request_not_behind_the_handle_yet_runs_on_the_cluster_runtime() {
+    let answer =
+        futures::executor::block_on(astrolabe_kube::cluster::run_on_cluster_runtime(async {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            42
+        }));
+
+    assert_eq!(answer, Some(42));
+}

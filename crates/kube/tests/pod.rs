@@ -9,7 +9,8 @@ use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{
-    ExecOutput, ExecRequest, LOG_TAIL_LINES, LogRequest, bind_local, port_forward,
+    ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, ForwardTarget, LOG_TAIL_LINES,
+    LogRequest, PortForward,
 };
 use tokio::sync::oneshot;
 
@@ -189,25 +190,56 @@ async fn dropping_an_exec_session_stops_its_request() {
     dropping_stops_the_request(session, on_start, on_drop).await;
 }
 
+fn forward_request(port: u16) -> ForwardRequest {
+    ForwardRequest {
+        target: ForwardTarget::Pod(web_1()),
+        port,
+    }
+}
+
+/// The port the forward listens on, from its first report.
+async fn listening(forward: &mut PortForward) -> u16 {
+    match next_report(forward).await {
+        Some(ForwardEvent::Listening(port)) => port,
+        other => panic!("expected Listening first, got {other:?}"),
+    }
+}
+
+async fn next_report(forward: &mut PortForward) -> Option<ForwardEvent> {
+    tokio::time::timeout(Duration::from_secs(5), forward.next())
+        .await
+        .expect("the forward reports")
+}
+
 #[tokio::test]
-async fn a_free_local_port_is_used_as_asked() {
+async fn a_forward_listens_on_the_asked_port_when_it_is_free() {
     let free = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port();
-    let listener = bind_local(free).await.unwrap();
-    assert_eq!(listener.local_addr().unwrap().port(), free);
+    let (client, _) = mock_client(200, "");
+    let cluster = Cluster::from_client(client, "mock");
+
+    let mut forward = cluster.port_forward(forward_request(free));
+
+    assert_eq!(listening(&mut forward).await, free);
 }
 
 #[tokio::test]
-async fn a_taken_local_port_falls_back_to_a_free_one() {
+async fn a_forward_whose_port_is_taken_listens_on_a_free_one() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = taken.local_addr().unwrap().port();
-    let listener = bind_local(port).await.unwrap();
-    let local = listener.local_addr().unwrap();
-    assert!(local.ip().is_loopback());
-    assert_ne!(local.port(), port);
+    let (client, _) = mock_client(200, "");
+    let cluster = Cluster::from_client(client, "mock");
+
+    let mut forward = cluster.port_forward(forward_request(port));
+
+    let local = listening(&mut forward).await;
+    assert_ne!(local, port);
+    tokio::net::TcpStream::connect(("127.0.0.1", local))
+        .await
+        .expect("the forward accepts on the port it reported");
 }
 
 #[tokio::test]
@@ -218,29 +250,76 @@ async fn each_local_connection_forwards_to_the_pod_port() {
         403,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"pods \"web-1\" is forbidden: User \"dev\" cannot create resource \"pods/portforward\""}"#,
     );
-    let listener = bind_local(0).await.unwrap();
-    let local = listener.local_addr().unwrap();
-    let (failures, mut failed) = tokio::sync::mpsc::unbounded_channel();
-    let forward = tokio::spawn(async move {
-        port_forward(&client, "team-a", "web-1", 8080, listener, move |error| {
-            let _ = failures.send(error);
-        })
-        .await
-    });
+    let cluster = Cluster::from_client(client, "mock");
 
+    let mut forward = cluster.port_forward(forward_request(8080));
+    let local = listening(&mut forward).await;
     for _ in 0..2 {
-        let _connection = tokio::net::TcpStream::connect(local).await.unwrap();
-        let error = tokio::time::timeout(Duration::from_secs(5), failed.recv())
+        let _connection = tokio::net::TcpStream::connect(("127.0.0.1", local))
             .await
-            .expect("a failed connection is reported")
             .unwrap();
+        let Some(ForwardEvent::ConnectionFailed(error)) = next_report(&mut forward).await else {
+            panic!("a failed connection is reported");
+        };
         // kube-rs reports a refused upgrade by its status, not its body.
-        assert!(error.contains("403 Forbidden"), "{error}");
+        assert!(error.to_string().contains("403 Forbidden"), "{error}");
+        assert_eq!(error.kind(), ClusterErrorKind::Forbidden);
     }
+
     assert_eq!(
         *seen.lock().unwrap(),
         ["/api/v1/namespaces/team-a/pods/web-1/portforward?&ports=8080"; 2]
     );
-    assert!(!forward.is_finished());
-    forward.abort();
+}
+
+#[tokio::test]
+async fn a_connection_refused_another_way_is_not_forbidden() {
+    let (client, _) = mock_client(
+        404,
+        r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"pods \"web-1\" not found"}"#,
+    );
+    let cluster = Cluster::from_client(client, "mock");
+
+    let mut forward = cluster.port_forward(forward_request(8080));
+    let local = listening(&mut forward).await;
+    let _connection = tokio::net::TcpStream::connect(("127.0.0.1", local))
+        .await
+        .unwrap();
+    let Some(ForwardEvent::ConnectionFailed(error)) = next_report(&mut forward).await else {
+        panic!("a failed connection is reported");
+    };
+
+    assert_eq!(error.kind(), ClusterErrorKind::Other, "{error}");
+    assert!(error.to_string().contains("404 Not Found"), "{error}");
+}
+
+#[tokio::test]
+async fn dropping_a_port_forward_stops_its_listener_and_connections() {
+    let (client, on_start, on_drop) = hanging_client();
+    let cluster = Cluster::from_client(client, "mock");
+    let mut forward = cluster.port_forward(forward_request(8080));
+    let local = listening(&mut forward).await;
+    let _connection = tokio::net::TcpStream::connect(("127.0.0.1", local))
+        .await
+        .unwrap();
+
+    dropping_stops_the_request(forward, on_start, on_drop).await;
+
+    tokio::net::TcpStream::connect(("127.0.0.1", local))
+        .await
+        .expect_err("the listener is closed");
+}
+
+#[tokio::test]
+async fn a_forward_that_cannot_connect_fails_without_listening() {
+    // No kubeconfig names this context, so building the client fails.
+    let cluster = Cluster::connect("astrolabe-test-no-such-context");
+
+    let mut forward = cluster.port_forward(forward_request(8080));
+    let Some(ForwardEvent::Failed(error)) = next_report(&mut forward).await else {
+        panic!("a forward without a client fails first");
+    };
+
+    assert_eq!(error.kind(), ClusterErrorKind::Connect, "{error}");
+    assert_eq!(next_report(&mut forward).await, None);
 }

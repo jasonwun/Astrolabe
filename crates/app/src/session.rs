@@ -11,7 +11,9 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, Operation};
-use astrolabe_kube::pod::{ExecRequest, ExecSession, LogRequest, LogStream};
+use astrolabe_kube::pod::{
+    ExecRequest, ExecSession, ForwardEvent, ForwardRequest, ForwardTarget, LogRequest, LogStream,
+};
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::{self, CustomGroup, CustomKind, KindResource};
@@ -21,7 +23,7 @@ use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{ForwardEvent, PortForward, ScriptedCluster, SharedClient};
+pub use crate::cluster_io::{ScriptedCluster, SharedClient};
 use crate::perf;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
@@ -221,22 +223,6 @@ impl<K: ResourceExt> Watched<K> {
     pub fn forbidden(&self) -> bool {
         self.forbidden
     }
-}
-
-/// What a port-forward reaches.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ForwardTarget {
-    /// A container port of the Pod (#17).
-    Pod(ObjectKey),
-    /// A service port of the Service, reaching one of its Pods (#18).
-    Service(ObjectKey),
-}
-
-/// Forward a localhost port to `port` of `target`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ForwardRequest {
-    pub target: ForwardTarget,
-    pub port: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -664,8 +650,10 @@ impl Session {
         let forward = &mut self.forwards[index];
         match event {
             ForwardEvent::Listening(port) => forward.state = ForwardState::Listening(port),
-            ForwardEvent::ConnectionFailed(error) => forward.last_error = Some(error),
-            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error),
+            ForwardEvent::ConnectionFailed(error) => {
+                forward.last_error = Some(error.to_string());
+            }
+            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error.to_string()),
         }
         cx.notify();
     }

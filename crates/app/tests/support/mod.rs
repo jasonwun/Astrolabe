@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use astrolabe::clock::Clock;
-use astrolabe::session::{ForwardEvent, ForwardRequest, ResourceKind, ScriptedCluster, WatchKey};
+use astrolabe::session::{ResourceKind, ScriptedCluster, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -17,7 +17,9 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectRef, Operation};
-use astrolabe_kube::pod::{ExecInput, ExecOutput, ExecRequest, LogRequest};
+use astrolabe_kube::pod::{
+    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
+};
 use astrolabe_kube::watch::ObjectWatchMessage;
 use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
@@ -137,9 +139,9 @@ pub fn open(
                 forwarded.borrow_mut().push(request.clone());
                 let mut events = vec![ForwardEvent::Listening(request.port + 10_000)];
                 if request.port == 9901 {
-                    events.push(ForwardEvent::ConnectionFailed(
-                        "error forwarding port 9901: connection refused".to_string(),
-                    ));
+                    events.push(ForwardEvent::ConnectionFailed(ClusterError::new(
+                        "error forwarding port 9901: connection refused",
+                    )));
                 }
                 events
             }
