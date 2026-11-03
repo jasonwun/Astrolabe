@@ -76,7 +76,8 @@ fn spawn_on<T: Send + 'static>(
 
 /// Run `request` on the cluster runtime, for the requests that do not go
 /// through [`Cluster`] yet: the Workspace YAML editor's current-context
-/// connect, which #161 moves onto a Session's Cluster and so removes this. The answer is `None` if the task panicked.
+/// connect, which #161 moves onto a Session's Cluster and so removes this.
+/// The answer is `None` if the task panicked.
 ///
 /// # Panics
 ///
