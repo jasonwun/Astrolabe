@@ -407,6 +407,12 @@ A request left with two public paths, an answer that exposes a tokio
 type, or a doc that names a moved request as pending (or a pending one
 as moved) is a finding.
 
+A request that has not moved yet but loses the path it ran on (the
+app's `kube_bridge`, removed in #159) runs through
+`cluster::run_on_cluster_runtime`. That helper's doc names each such
+request and the ticket that moves it, and the last of those tickets
+has an acceptance criterion that removes the helper.
+
 A request over a WebSocket upgrade (exec, port-forward, attach) is not
 refused through `kube::Error::Api`: kube-rs reports the refusal as
 `UpgradeConnection(ProtocolSwitch(status))`. `From<kube::Error> for
@@ -425,3 +431,7 @@ stored handle, and copied it onto the three `watch_*` methods; the
 Standards reviewer caught it (#156 retro).
 #158's 403 exec test first saw `Other`: the refusal came as
 `UpgradeConnection`, which the mapping did not cover (#158 retro).
+#159 removed `kube_bridge` while the YAML editors' Apply, Precheck and
+current-context client still needed a tokio runtime; their tickets
+(#160, #161) were blocked by #159 and named no removal of the stopgap
+(#159 retro).
