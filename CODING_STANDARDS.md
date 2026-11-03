@@ -355,9 +355,9 @@ checks that Clippy cannot make. `ApplyMode`, which this entry names but
 - **C-CTOR.** A type is built by an inherent `new`, `with_…` or
   `from_…`, a `From` impl, or a domain verb where one reads better
   (`Cluster::connect`, `File::open`), not a free `make_…` function. A
-  handle another crate must build (`ClusterError::new(message)`, and
-  `LogStream` once #147 moves it into `astrolabe-kube`) has a public
-  constructor, not a `pub` field or a test-only back door.
+  handle another crate must build (`ClusterError::new(message)`,
+  `LogStream::new(chunks)`, `ExecSession::new(input, output)`) has a
+  public constructor, not a `pub` field or a test-only back door.
 - **C-GOOD-ERR.** An error type implements `Display` and
   `std::error::Error`, is `Send + Sync`, and lets the caller tell its
   kinds apart without matching on text. `Result<_, String>` or

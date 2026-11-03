@@ -3,14 +3,13 @@
 
 use std::sync::Arc;
 
+use astrolabe_kube::pod::LogStream;
 use astrolabe_terminal::backend::display_only;
 use astrolabe_terminal::{TerminalBackend, TerminalView};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
-
-use crate::session::LogStream;
 
 /// Initial grid; the view resizes it to the tab.
 const COLS: usize = 160;
@@ -63,7 +62,7 @@ impl LogsPanel {
             let state = loop {
                 match stream.next().await {
                     Some(Ok(chunk)) => backend.feed_output(&terminal_bytes(&chunk)),
-                    Some(Err(error)) => break StreamState::Failed(error),
+                    Some(Err(error)) => break StreamState::Failed(error.to_string()),
                     None => break StreamState::Ended,
                 }
             };

@@ -11,6 +11,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, Operation};
+use astrolabe_kube::pod::{ExecRequest, ExecSession, LogRequest, LogStream};
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::{self, CustomGroup, CustomKind, KindResource};
@@ -20,12 +21,8 @@ use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{
-    ExecOutput, ExecSession, ForwardEvent, LogChunk, LogStream, PortForward, ScriptedCluster,
-    SharedClient,
-};
+pub use crate::cluster_io::{ForwardEvent, PortForward, ScriptedCluster, SharedClient};
 use crate::perf;
-pub use astrolabe_kube::pod::ExecInput;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
 /// new CRD is served only once it turns Established, which arrives as an
@@ -224,21 +221,6 @@ impl<K: ResourceExt> Watched<K> {
     pub fn forbidden(&self) -> bool {
         self.forbidden
     }
-}
-
-/// Follow `container`'s log in Pod `pod` (#17).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LogRequest {
-    pub pod: ObjectKey,
-    pub container: String,
-}
-
-/// Run `shell` interactively in `container` of Pod `pod` (#17).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecRequest {
-    pub pod: ObjectKey,
-    pub container: String,
-    pub shell: String,
 }
 
 /// What a port-forward reaches.

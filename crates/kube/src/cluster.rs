@@ -1,7 +1,7 @@
 //! The live Cluster handle (#147): requests to a Cluster go through
-//! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches and
-//! operations do today; logs, exec, port-forward and Apply follow in
-//! #158–#160.
+//! [`Cluster`] and fail with a [`ClusterError`]. Discovery, watches,
+//! operations, logs and exec do today; port-forward and Apply follow in
+//! #159–#160.
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future or receiver that
@@ -10,12 +10,13 @@
 use std::future::Future;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-use futures::FutureExt as _;
 use futures::channel::mpsc;
 use futures::future::{BoxFuture, Shared};
+use futures::{FutureExt as _, StreamExt as _};
 use k8s_openapi::api::core::v1::Namespace;
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::Client;
+use kube::client::UpgradeConnectionError;
 use kube::core::DynamicObject;
 use kube::discovery::ApiResource;
 use kube::runtime::watcher;
@@ -25,6 +26,7 @@ use tokio::task::AbortHandle;
 
 use crate::discovery::{self, ServedResources};
 use crate::object::Operation;
+use crate::pod::{self, ExecOutput, ExecRequest, ExecSession, LogRequest, LogStream};
 use crate::resource;
 use crate::watch::{self, WatchMessage};
 
@@ -123,12 +125,18 @@ impl ClusterError {
     }
 }
 
-/// A 403 from the apiserver is [`Forbidden`](ClusterErrorKind::Forbidden);
-/// anything else is [`Other`](ClusterErrorKind::Other).
+/// A 403 from the apiserver is [`Forbidden`](ClusterErrorKind::Forbidden),
+/// also when it refuses an exec's WebSocket upgrade, which kube-rs reports
+/// by status alone; anything else is [`Other`](ClusterErrorKind::Other).
 impl From<kube::Error> for ClusterError {
     fn from(error: kube::Error) -> Self {
         let kind = match &error {
             kube::Error::Api(status) if status.code == 403 => ClusterErrorKind::Forbidden,
+            kube::Error::UpgradeConnection(UpgradeConnectionError::ProtocolSwitch(status))
+                if status.as_u16() == 403 =>
+            {
+                ClusterErrorKind::Forbidden
+            }
             _ => ClusterErrorKind::Other,
         };
         Self {
@@ -295,6 +303,101 @@ impl Cluster {
         )
     }
 
+    /// Follow one container's log from a bounded tail
+    /// ([`LOG_TAIL_LINES`](pod::LOG_TAIL_LINES)), started at once on the
+    /// cluster runtime. Dropping the stream stops the request.
+    ///
+    /// # Errors
+    ///
+    /// The stream's last chunk is an error when:
+    /// - the client could not be built
+    ///   ([`Connect`](ClusterErrorKind::Connect));
+    /// - the apiserver refuses the request, e.g. the container does not
+    ///   exist ([`Forbidden`](ClusterErrorKind::Forbidden) for a 403,
+    ///   [`Other`](ClusterErrorKind::Other) otherwise);
+    /// - reading the stream fails ([`Other`](ClusterErrorKind::Other)).
+    ///
+    /// The stream just ends when the server closes it, or when the
+    /// request's task panicked.
+    pub fn logs(&self, request: LogRequest) -> LogStream {
+        let (sender, chunks) = mpsc::unbounded();
+        let client = self.client.clone();
+        let work = self.runtime.spawn(async move {
+            let stream = async {
+                let pod = &request.pod;
+                let namespace = pod.namespace.as_deref().unwrap_or_default();
+                let client = client.await?;
+                Ok::<_, ClusterError>(
+                    pod::logs(&client, namespace, &pod.name, &request.container).await?,
+                )
+            };
+            let stream = match stream.await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    let _ = sender.unbounded_send(Err(error));
+                    return;
+                }
+            };
+            // A read failure is the stream's last item, so no check for it.
+            futures::pin_mut!(stream);
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|error| ClusterError::new(error.to_string()));
+                if sender.unbounded_send(chunk).is_err() {
+                    return;
+                }
+            }
+        });
+        LogStream::with_work(chunks, work.abort_handle())
+    }
+
+    /// Open an interactive shell in one container, started at once on the
+    /// cluster runtime. Dropping the session ends it.
+    ///
+    /// # Errors
+    ///
+    /// The session's last output is
+    /// [`ExecOutput::Exited`] with an error when:
+    /// - the client could not be built
+    ///   ([`Connect`](ClusterErrorKind::Connect));
+    /// - the apiserver refuses the request
+    ///   ([`Forbidden`](ClusterErrorKind::Forbidden) for a 403,
+    ///   [`Other`](ClusterErrorKind::Other) otherwise);
+    /// - the remote streams fail, or the server ends the command with a
+    ///   failure that is not an exit code
+    ///   ([`Other`](ClusterErrorKind::Other)).
+    ///
+    /// The session just ends, with no `Exited`, when the request's task
+    /// panicked.
+    pub fn exec(&self, request: ExecRequest) -> ExecSession {
+        let (input, inputs) = mpsc::unbounded();
+        let (sender, output) = mpsc::unbounded();
+        let client = self.client.clone();
+        let work = self.runtime.spawn(async move {
+            let exit = async {
+                let pod = &request.pod;
+                let namespace = pod.namespace.as_deref().unwrap_or_default();
+                let client = client.await?;
+                let output = |bytes| {
+                    let _ = sender.unbounded_send(ExecOutput::Bytes(bytes));
+                };
+                let command = std::slice::from_ref(&request.shell);
+                Ok(pod::exec(
+                    &client,
+                    namespace,
+                    &pod.name,
+                    &request.container,
+                    command,
+                    inputs,
+                    output,
+                )
+                .await?)
+            };
+            let exit = exit.await;
+            let _ = sender.unbounded_send(ExecOutput::Exited(exit));
+        });
+        ExecSession::with_work(input, output, work.abort_handle())
+    }
+
     /// Watch the Cluster's Namespaces, resident until the handle is
     /// dropped. See [`watch_objects`](Self::watch_objects) for the
     /// messages.
@@ -345,8 +448,8 @@ impl Cluster {
     }
 
     /// The shared client, for the requests that do not go through this
-    /// handle yet. Logs, exec, port-forward and Apply move behind it in
-    /// #158–#160; the last of them removes this.
+    /// handle yet. Port-forward and Apply move behind it in #159–#160; the
+    /// last of them removes this.
     pub fn client(&self) -> SharedClient {
         self.client.clone()
     }

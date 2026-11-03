@@ -1,8 +1,11 @@
 //! Pod streams: container logs, interactive exec and port-forward (#17).
+//! Logs and exec are requested through [`Cluster`](crate::cluster::Cluster)
+//! and answered with the handles here (#158).
 
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 
+use futures::channel::mpsc;
 use futures::{AsyncBufReadExt, SinkExt as _, Stream, StreamExt as _};
 use k8s_openapi::api::core::v1::Pod;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
@@ -10,10 +13,129 @@ use kube::api::{AttachParams, LogParams, TerminalSize};
 use kube::{Api, Client};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, JoinSet};
+
+use crate::cluster::ClusterError;
+use crate::object::ObjectKey;
 
 /// How much history a log view starts from before following.
 pub const LOG_TAIL_LINES: i64 = 1000;
+
+/// Follow `container`'s log in Pod `pod`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogRequest {
+    pub pod: ObjectKey,
+    pub container: String,
+}
+
+/// A piece of a log stream, or why the stream stopped.
+pub type LogChunk = Result<Vec<u8>, ClusterError>;
+
+/// A followed container log; dropping it stops the stream.
+pub struct LogStream {
+    chunks: mpsc::UnboundedReceiver<LogChunk>,
+    work: Option<AbortHandle>,
+}
+
+impl LogStream {
+    /// A stream of the chunks sent on `chunks`; it ends once their sender
+    /// is dropped.
+    pub fn new(chunks: mpsc::UnboundedReceiver<LogChunk>) -> Self {
+        Self { chunks, work: None }
+    }
+
+    /// The stream, owning the task that feeds it.
+    pub(crate) fn with_work(chunks: mpsc::UnboundedReceiver<LogChunk>, work: AbortHandle) -> Self {
+        Self {
+            chunks,
+            work: Some(work),
+        }
+    }
+
+    /// The next chunk; `None` once the server closed the stream.
+    pub async fn next(&mut self) -> Option<LogChunk> {
+        self.chunks.next().await
+    }
+}
+
+impl Drop for LogStream {
+    fn drop(&mut self) {
+        if let Some(work) = self.work.take() {
+            work.abort();
+        }
+    }
+}
+
+/// Run `shell` interactively in `container` of Pod `pod`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecRequest {
+    pub pod: ObjectKey,
+    pub container: String,
+    pub shell: String,
+}
+
+/// What an exec session sends back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExecOutput {
+    /// Remote TTY output.
+    Bytes(Vec<u8>),
+    /// The command's exit code, or why the session failed; the last item.
+    Exited(Result<u8, ClusterError>),
+}
+
+/// A running `kubectl exec -it`; dropping it ends the session.
+pub struct ExecSession {
+    input: mpsc::UnboundedSender<ExecInput>,
+    output: mpsc::UnboundedReceiver<ExecOutput>,
+    work: Option<AbortHandle>,
+}
+
+impl ExecSession {
+    /// A session whose keystrokes and resizes go to `input` and whose
+    /// output is what is sent on `output`; it ends once that sender is
+    /// dropped.
+    pub fn new(
+        input: mpsc::UnboundedSender<ExecInput>,
+        output: mpsc::UnboundedReceiver<ExecOutput>,
+    ) -> Self {
+        Self {
+            input,
+            output,
+            work: None,
+        }
+    }
+
+    /// The session, owning the task that runs it.
+    pub(crate) fn with_work(
+        input: mpsc::UnboundedSender<ExecInput>,
+        output: mpsc::UnboundedReceiver<ExecOutput>,
+        work: AbortHandle,
+    ) -> Self {
+        Self {
+            input,
+            output,
+            work: Some(work),
+        }
+    }
+
+    /// Where keystrokes and resizes go; closing it sends EOF.
+    pub fn input(&self) -> mpsc::UnboundedSender<ExecInput> {
+        self.input.clone()
+    }
+
+    /// The next output; `None` once the session is gone.
+    pub async fn next(&mut self) -> Option<ExecOutput> {
+        self.output.next().await
+    }
+}
+
+impl Drop for ExecSession {
+    fn drop(&mut self) {
+        if let Some(work) = self.work.take() {
+            work.abort();
+        }
+    }
+}
 
 /// `kubectl logs -f --tail=LOG_TAIL_LINES -c container`: the stream yields
 /// raw byte chunks as the server sends them, ANSI sequences intact.
@@ -23,7 +145,7 @@ pub const LOG_TAIL_LINES: i64 = 1000;
 /// A [`kube::Error`] when the log request fails, e.g. the Pod or container
 /// does not exist. A read failure after that ends the stream with an
 /// `std::io::Error` item.
-pub async fn logs(
+pub(crate) async fn logs(
     client: &Client,
     namespace: &str,
     name: &str,
@@ -60,7 +182,7 @@ pub enum ExecInput {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ExecError {
+pub(crate) enum ExecError {
     #[error(transparent)]
     Connect(#[from] kube::Error),
     #[error("exec stream: {0}")]
@@ -81,12 +203,7 @@ pub enum ExecError {
 /// [`ExecError::Stream`] when reading or writing the remote streams fails,
 /// and [`ExecError::Failed`] when the server ends the command with a
 /// failure that is not an exit code (see [`exit_code`]).
-#[expect(
-    clippy::missing_panics_doc,
-    reason = "the expects hold by construction: interactive_tty attaches stdin, stdout \
-              and a TTY, and stdin is written only while the select guard holds it"
-)]
-pub async fn exec(
+pub(crate) async fn exec(
     client: &Client,
     namespace: &str,
     name: &str,
@@ -128,6 +245,18 @@ pub async fn exec(
         }
     }
     exit_code(status.await.as_ref()).map_err(ExecError::Failed)
+}
+
+/// A refused exec request keeps its kind (a 403 is
+/// [`Forbidden`](crate::cluster::ClusterErrorKind::Forbidden)); a stream
+/// or command failure is [`Other`](crate::cluster::ClusterErrorKind::Other).
+impl From<ExecError> for ClusterError {
+    fn from(error: ExecError) -> Self {
+        match error {
+            ExecError::Connect(error) => error.into(),
+            error => ClusterError::new(error.to_string()),
+        }
+    }
 }
 
 /// The exit code a remotecommand v4 status reports, as client-go's

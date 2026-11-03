@@ -9,10 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use astrolabe::clock::Clock;
-use astrolabe::session::{
-    ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest, ResourceKind,
-    ScriptedCluster, WatchKey,
-};
+use astrolabe::session::{ForwardEvent, ForwardRequest, ResourceKind, ScriptedCluster, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -20,6 +17,7 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectRef, Operation};
+use astrolabe_kube::pod::{ExecInput, ExecOutput, ExecRequest, LogRequest};
 use astrolabe_kube::watch::ObjectWatchMessage;
 use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
@@ -113,7 +111,10 @@ pub fn open(
             let logged = logged.clone();
             move |request: &LogRequest| {
                 logged.borrow_mut().push(request.clone());
-                vec![Ok(b"starting\n".to_vec()), Err("stream reset".to_string())]
+                vec![
+                    Ok(b"starting\n".to_vec()),
+                    Err(ClusterError::new("stream reset")),
+                ]
             }
         })
         .exec({
@@ -122,7 +123,7 @@ pub fn open(
                 execed.borrow_mut().push((request.clone(), input));
                 let exit = match request.shell.as_str() {
                     "bash" => Ok(0),
-                    _ => Err("container not found (\"app\")".to_string()),
+                    _ => Err(ClusterError::new("container not found (\"app\")")),
                 };
                 vec![
                     ExecOutput::Bytes(b"/ # ".to_vec()),

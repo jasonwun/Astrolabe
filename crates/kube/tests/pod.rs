@@ -4,13 +4,15 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use astrolabe_kube::cluster::{Cluster, ClusterErrorKind};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::Status;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
+use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{
-    ExecError, LOG_TAIL_LINES, bind_local, exec, exit_code, logs, port_forward,
+    ExecOutput, ExecRequest, LOG_TAIL_LINES, LogRequest, bind_local, exit_code, port_forward,
 };
-use futures::TryStreamExt;
+use tokio::sync::oneshot;
 
 type Uris = Arc<Mutex<Vec<String>>>;
 
@@ -32,18 +34,72 @@ fn mock_client(status: u16, reply: &'static str) -> (Client, Uris) {
     (Client::new(service, "default"), seen)
 }
 
+/// A client whose first request never completes; the receiver resolves
+/// once that request's future is dropped, i.e. once its work stopped.
+fn hanging_client() -> (Client, oneshot::Receiver<()>, oneshot::Receiver<()>) {
+    let (started, on_start) = oneshot::channel();
+    let (alive, on_drop) = oneshot::channel::<()>();
+    let pending = Arc::new(Mutex::new(Some((started, alive))));
+    let service = tower::service_fn(move |_: http::Request<Body>| {
+        let pending = pending.lock().unwrap().take();
+        async move {
+            let (started, _alive) = pending.expect("one request only");
+            let _ = started.send(());
+            std::future::pending::<Result<http::Response<Body>, std::convert::Infallible>>().await
+        }
+    });
+    (Client::new(service, "default"), on_start, on_drop)
+}
+
+fn web_1() -> ObjectKey {
+    ObjectKey::new(Some("team-a".into()), "web-1")
+}
+
+fn log_request(container: &str) -> LogRequest {
+    LogRequest {
+        pod: web_1(),
+        container: container.to_string(),
+    }
+}
+
+fn exec_request() -> ExecRequest {
+    ExecRequest {
+        pod: web_1(),
+        container: "app".to_string(),
+        shell: "bash".to_string(),
+    }
+}
+
+/// Waits for the hanging request to start, drops `handle`, and expects the
+/// request's work to stop.
+async fn dropping_stops_the_request<T>(
+    handle: T,
+    on_start: oneshot::Receiver<()>,
+    on_drop: oneshot::Receiver<()>,
+) {
+    tokio::time::timeout(Duration::from_secs(5), on_start)
+        .await
+        .expect("the request starts")
+        .unwrap();
+    drop(handle);
+    tokio::time::timeout(Duration::from_secs(5), on_drop)
+        .await
+        .expect("dropping the handle stops the request")
+        .unwrap_err();
+}
+
 #[tokio::test]
 async fn logs_follow_one_container_from_a_bounded_tail() {
     let (client, seen) = mock_client(200, "starting\n\x1b[32mready\x1b[0m\n");
+    let cluster = Cluster::from_client(client, "mock");
 
-    let chunks: Vec<Vec<u8>> = logs(&client, "team-a", "web-1", "app")
-        .await
-        .unwrap()
-        .try_collect()
-        .await
-        .unwrap();
+    let mut stream = cluster.logs(log_request("app"));
+    let mut chunks = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        chunks.extend(chunk.unwrap());
+    }
 
-    assert_eq!(chunks.concat(), b"starting\n\x1b[32mready\x1b[0m\n");
+    assert_eq!(chunks, b"starting\n\x1b[32mready\x1b[0m\n");
     assert_eq!(
         *seen.lock().unwrap(),
         [format!(
@@ -53,16 +109,32 @@ async fn logs_follow_one_container_from_a_bounded_tail() {
 }
 
 #[tokio::test]
-async fn a_refused_log_request_is_an_error() {
+async fn a_refused_log_request_is_the_streams_last_chunk() {
     let (client, _) = mock_client(
         400,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":400,"reason":"BadRequest","message":"container \"db\" is not valid for pod \"web-1\""}"#,
     );
-    let error = logs(&client, "team-a", "web-1", "db").await.err().unwrap();
+    let cluster = Cluster::from_client(client, "mock");
+
+    let mut stream = cluster.logs(log_request("db"));
+    let error = stream.next().await.unwrap().unwrap_err();
+
     assert!(
         error.to_string().contains("is not valid for pod"),
         "{error}"
     );
+    assert_eq!(error.kind(), ClusterErrorKind::Other);
+    assert_eq!(stream.next().await, None);
+}
+
+#[tokio::test]
+async fn dropping_a_log_stream_stops_its_request() {
+    let (client, on_start, on_drop) = hanging_client();
+    let cluster = Cluster::from_client(client, "mock");
+
+    let stream = cluster.logs(log_request("app"));
+
+    dropping_stops_the_request(stream, on_start, on_drop).await;
 }
 
 #[tokio::test]
@@ -73,25 +145,48 @@ async fn exec_asks_for_an_interactive_tty_in_one_container() {
         403,
         r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"pods \"web-1\" is forbidden: User \"dev\" cannot create resource \"pods/exec\""}"#,
     );
-    let error = exec(
-        &client,
-        "team-a",
-        "web-1",
-        "app",
-        &["bash".to_string()],
-        futures::stream::empty(),
-        |_| {},
-    )
-    .await
-    .unwrap_err();
+    let cluster = Cluster::from_client(client, "mock");
 
-    assert!(matches!(error, ExecError::Connect(_)), "{error}");
+    let mut session = cluster.exec(exec_request());
+    let Some(ExecOutput::Exited(Err(error))) = session.next().await else {
+        panic!("a refused exec ends the session with an error");
+    };
+
+    assert_eq!(error.kind(), ClusterErrorKind::Forbidden, "{error}");
+    assert_eq!(session.next().await, None);
     assert_eq!(
         *seen.lock().unwrap(),
         [
             "/api/v1/namespaces/team-a/pods/web-1/exec?&stdin=true&stdout=true&tty=true&container=app&command=bash"
         ]
     );
+}
+
+#[tokio::test]
+async fn an_exec_refused_another_way_is_not_forbidden() {
+    let (client, _) = mock_client(
+        404,
+        r#"{"kind":"Status","apiVersion":"v1","status":"Failure","code":404,"reason":"NotFound","message":"pods \"web-1\" not found"}"#,
+    );
+    let cluster = Cluster::from_client(client, "mock");
+
+    let mut session = cluster.exec(exec_request());
+    let Some(ExecOutput::Exited(Err(error))) = session.next().await else {
+        panic!("a refused exec ends the session with an error");
+    };
+
+    assert_eq!(error.kind(), ClusterErrorKind::Other, "{error}");
+    assert!(error.to_string().contains("404 Not Found"), "{error}");
+}
+
+#[tokio::test]
+async fn dropping_an_exec_session_stops_its_request() {
+    let (client, on_start, on_drop) = hanging_client();
+    let cluster = Cluster::from_client(client, "mock");
+
+    let session = cluster.exec(exec_request());
+
+    dropping_stops_the_request(session, on_start, on_drop).await;
 }
 
 /// Synthetic remotecommand v4 status (plausible shape, not captured from a

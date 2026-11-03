@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use astrolabe_kube::pod::{ExecInput, ExecOutput, ExecSession};
 use astrolabe_terminal::backend::{AlacrittyBackend, ExitStatus, RemoteSink, remote};
 use astrolabe_terminal::{TerminalBackend, TerminalView};
 use futures::channel::mpsc;
@@ -10,8 +11,6 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
-
-use crate::session::{ExecInput, ExecOutput, ExecSession};
 
 /// Initial grid; the view resizes it to the tab.
 const COLS: usize = 160;
@@ -78,7 +77,9 @@ impl ExecPanel {
                         });
                         break SessionState::Exited(code);
                     }
-                    Some(ExecOutput::Exited(Err(error))) => break SessionState::Failed(error),
+                    Some(ExecOutput::Exited(Err(error))) => {
+                        break SessionState::Failed(error.to_string());
+                    }
                     None => break SessionState::Failed("session dropped".to_string()),
                 }
             };
