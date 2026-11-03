@@ -14,7 +14,7 @@ use astrolabe::workspace::{Preselection, WorkspaceView};
 use astrolabe_kube::apply::{
     ApplyMode, ApplyReport, DocError, DocOutcome, LocatedCause, locate_field, parse_status,
 };
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -38,7 +38,7 @@ pub fn key(kind: BuiltinKind, namespace: &str) -> WatchKey {
 
 pub fn key_on(cluster: &str, kind: BuiltinKind, namespace: &str) -> WatchKey {
     WatchKey {
-        cluster: cluster.to_string(),
+        cluster: ClusterId::named(cluster),
         kind: ResourceKind::Builtin(kind),
         namespace: Some(namespace.to_string()),
     }
@@ -165,7 +165,7 @@ pub fn open(
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
-    let cx = open_workspace(cx, vec![("kind-a".to_string(), cluster)]);
+    let cx = open_workspace(cx, vec![(ClusterId::named("kind-a"), cluster)]);
     Ui {
         cx,
         namespaces,
@@ -182,7 +182,7 @@ pub fn open(
 /// test that needs more than [`open`]'s one Cluster.
 pub fn open_workspace(
     cx: &mut TestAppContext,
-    clusters: Vec<(String, ScriptedCluster)>,
+    clusters: Vec<(ClusterId, ScriptedCluster)>,
 ) -> &mut VisualTestContext {
     cx.update(|cx| {
         gpui_kit::init(cx);

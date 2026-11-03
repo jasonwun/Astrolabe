@@ -12,6 +12,10 @@
 # is `astrolabe-kube`'s alone (#159). Its sources and tests name no
 # `kube::Client`, and only the I/O seam (crates/app/src/cluster_io.rs)
 # names the live `Cluster` handle, so no view holds a client (#161).
+# Its sources build no `ClusterId` from a name: ids come from
+# `astrolabe_kube::clusters()`, so a second source leaves the app as it is
+# (#162). Its tests may, to name scripted clusters. An alias of `ClusterId`
+# slips past.
 # The search is line-based: it catches a full path or a one-line
 # `use a::{.., X, ..}`, not a `use` list split over several lines. Comment
 # lines are skipped, so a doc comment may name a forbidden item.
@@ -76,5 +80,7 @@ forbid "$model_dir" '::now[[:space:]]*\(' 'the clock (`::now(`); pass the time i
 forbid "$app_dir" "$(names kube Client)" '`kube::Client`; requests go through Session'
 forbid "$app_dir" "$(names '(astrolabe_kube|cluster)' Cluster)" \
     "\`astrolabe_kube::Cluster\` outside $app_seam; views go through Session" "$app_seam"
+forbid "$app_dir/src" '\bClusterId[[:space:]]*::[[:space:]]*named\b' \
+    '`ClusterId::named`; list Clusters with `astrolabe_kube::clusters()`'
 
 exit $status

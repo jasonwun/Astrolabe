@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use astrolabe_kube::cluster::{Cluster, ClusterError};
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
@@ -38,7 +38,7 @@ fn not_found() -> http::Response<Body> {
 
 /// Discovery through the `Cluster` handle, the only way to discover.
 async fn discover(client: &Client) -> Result<ServedResources, ClusterError> {
-    Cluster::from_client(client.clone(), "mock")
+    Cluster::from_client(client.clone(), ClusterId::named("mock"))
         .discover()
         .await
 }

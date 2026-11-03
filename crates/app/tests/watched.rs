@@ -1,5 +1,5 @@
 use astrolabe::session::{ConnectionHealth, SnapshotChange, Watched};
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -23,7 +23,7 @@ fn names(watched: &Watched<Namespace>) -> Vec<String> {
 }
 
 fn namespace_watch() -> Watched<Namespace> {
-    Watched::new("kind-test", "namespace")
+    Watched::new(ClusterId::named("kind-test"), "namespace")
 }
 
 fn relist(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {

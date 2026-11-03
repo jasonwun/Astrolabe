@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind};
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind, ClusterId};
 use astrolabe_kube::kube::core::Status;
 use astrolabe_kube::kube::runtime::watcher::{Error, Event};
 use futures::StreamExt as _;
@@ -61,11 +61,13 @@ async fn dropping_the_cluster_stops_its_watches() {
 }
 
 /// No kubeconfig names this context, on CI or a dev machine.
-const NO_SUCH_CONTEXT: &str = "astrolabe-test-no-such-context";
+fn no_such_cluster() -> ClusterId {
+    ClusterId::named("astrolabe-test-no-such-context")
+}
 
 #[tokio::test]
 async fn a_connect_failure_is_the_watch_only_message() {
-    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+    let cluster = Cluster::connect(&no_such_cluster());
     let mut watch = cluster.watch_crds();
 
     let error = watch.next().await.unwrap().unwrap_err();

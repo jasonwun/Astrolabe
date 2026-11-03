@@ -14,7 +14,7 @@ use kube::{
     runtime::{WatchStreamExt, watcher},
 };
 
-use crate::cluster::ClusterError;
+use crate::cluster::{ClusterError, ClusterId};
 
 /// One watch message: an event, or why the watch failed. A failure is
 /// followed by a fresh LIST, which starts with `Event::Init`.
@@ -80,7 +80,7 @@ pub(crate) fn is_forbidden(error: &watcher::Error) -> bool {
 /// stale. The loop ends once the receiver is dropped and the loop next
 /// sends.
 pub(crate) fn relist<K, F, S>(
-    cluster: String,
+    cluster: ClusterId,
     label: &'static str,
     client: impl Future<Output = Result<Client, ClusterError>> + Send + 'static,
     stream: F,

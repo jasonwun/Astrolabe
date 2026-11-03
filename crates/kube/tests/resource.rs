@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use astrolabe_kube::cluster::{Cluster, ClusterErrorKind};
+use astrolabe_kube::cluster::{Cluster, ClusterErrorKind, ClusterId};
 use astrolabe_kube::k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use astrolabe_kube::k8s_openapi::api::batch::v1::CronJob;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -59,7 +59,7 @@ fn mock_cluster(status: u16, reply: &'static str) -> (Cluster, Log) {
         }
     });
     (
-        Cluster::from_client(Client::new(service, "default"), "mock"),
+        Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock")),
         seen,
     )
 }
@@ -230,13 +230,15 @@ async fn a_missing_object_is_other() {
 }
 
 /// No kubeconfig names this context, on CI or a dev machine.
-const NO_SUCH_CONTEXT: &str = "astrolabe-test-no-such-context";
+fn no_such_cluster() -> ClusterId {
+    ClusterId::named("astrolabe-test-no-such-context")
+}
 
 /// GPUI's executor has no tokio reactor: an operation must resolve when
 /// awaited outside any tokio runtime, and a failed connect fails it.
 #[test]
 fn an_operation_on_a_failed_connect_is_a_connect_error() {
-    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+    let cluster = Cluster::connect(&no_such_cluster());
 
     let error = futures::executor::block_on(cluster.operate(&Operation::Delete { object: web() }))
         .unwrap_err();

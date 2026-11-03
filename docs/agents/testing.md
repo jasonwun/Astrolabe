@@ -239,8 +239,8 @@ Origin: #152 changed `ClusterIo::operate` in `cluster_io.rs`. `-f` found
 107 mutants at about two minutes each, so the run was stopped; the diff
 held 4 (#152 retro).
 
-Paths a scripted test cannot reach stay missed: kubeconfig discovery
-(`discover_contexts`) and styling such as the selected row's colours.
+Paths a scripted test cannot reach stay missed: Cluster listing
+(`list_clusters`) and styling such as the selected row's colours.
 
 ### Assertions that something is dropped
 

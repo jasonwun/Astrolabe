@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use astrolabe::session::{ResourceKind, ScriptedCluster, WatchKey};
 use astrolabe::workspace::{Preselection, WorkspaceView};
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -103,7 +103,7 @@ fn default_key() -> WatchKey {
 
 fn key_at(version: &str, namespace: &str) -> WatchKey {
     WatchKey {
-        cluster: "kind-a".to_string(),
+        cluster: ClusterId::named("kind-a"),
         kind: ResourceKind::Custom {
             group: "stable.example.com".to_string(),
             version: version.to_string(),
@@ -163,7 +163,7 @@ fn open(
     }
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
         WorkspaceView::from_clusters(
-            vec![("kind-a".to_string(), cluster)],
+            vec![(ClusterId::named("kind-a"), cluster)],
             Preselection::default(),
             window,
             cx,

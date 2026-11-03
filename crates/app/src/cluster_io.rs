@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
-use astrolabe_kube::cluster::{Cluster, ClusterError};
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::Operation;
@@ -152,10 +152,9 @@ pub(crate) enum ClusterIo {
 }
 
 impl ClusterIo {
-    /// Connect to kubeconfig context `context`; every request waits on the
-    /// shared connect.
-    pub(crate) fn connect(context: &str) -> Self {
-        Self::Live(Cluster::connect(context))
+    /// Connect to `cluster`; every request waits on the shared connect.
+    pub(crate) fn connect(cluster: &ClusterId) -> Self {
+        Self::Live(Cluster::connect(cluster))
     }
 
     /// The Namespace watch; `None` when a scripted cluster scripts none.

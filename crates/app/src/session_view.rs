@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{ExecRequest, LogRequest};
 use astrolabe_model::builtin::BuiltinKind;
@@ -37,7 +38,7 @@ pub struct SessionView {
 
 impl SessionView {
     pub fn new(
-        cluster: String,
+        cluster: ClusterId,
         namespace: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -47,7 +48,7 @@ impl SessionView {
     }
 
     pub fn scripted(
-        cluster: String,
+        cluster: ClusterId,
         namespace: String,
         scripted: ScriptedCluster,
         window: &mut Window,

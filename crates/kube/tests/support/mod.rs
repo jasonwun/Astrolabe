@@ -7,7 +7,7 @@ use std::convert::Infallible;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use astrolabe_kube::cluster::Cluster;
+use astrolabe_kube::cluster::{Cluster, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
@@ -119,7 +119,7 @@ pub fn mock_cluster(apiserver: &Arc<Apiserver>) -> Cluster {
         let target = request.uri().to_string();
         apiserver.answer(target).map(Ok::<_, Infallible>)
     });
-    Cluster::from_client(Client::new(service, "default"), "mock")
+    Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock"))
 }
 
 pub async fn next(watch: &mut mpsc::Receiver<NamespaceWatchMessage>) -> NamespaceWatchMessage {

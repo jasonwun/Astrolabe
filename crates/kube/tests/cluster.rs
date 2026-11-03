@@ -3,7 +3,7 @@
 //! apiserver.
 
 use astrolabe_kube::apply::{ApplyError, ApplyMode};
-use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind};
+use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind, ClusterId};
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 
@@ -40,7 +40,7 @@ fn mock_cluster(handler: impl Fn(&str) -> http::Response<Body> + Send + Sync + '
     let service = tower::service_fn(move |req: http::Request<Body>| {
         std::future::ready(Ok::<_, std::convert::Infallible>(handler(req.uri().path())))
     });
-    Cluster::from_client(Client::new(service, "default"), "mock")
+    Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock"))
 }
 
 fn aggregated_server(path: &str) -> http::Response<Body> {
@@ -103,11 +103,13 @@ async fn a_failed_discovery_is_other() {
 
 /// No kubeconfig names this context, on CI or a dev machine, so building
 /// the client fails whatever the ambient kubeconfig holds.
-const NO_SUCH_CONTEXT: &str = "astrolabe-test-no-such-context";
+fn no_such_cluster() -> ClusterId {
+    ClusterId::named("astrolabe-test-no-such-context")
+}
 
 #[tokio::test]
 async fn connect_returns_at_once_and_its_failure_surfaces_per_request() {
-    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+    let cluster = Cluster::connect(&no_such_cluster());
 
     let first = cluster.discover().await.unwrap_err();
     let second = cluster.discover().await.unwrap_err();
@@ -121,7 +123,7 @@ async fn connect_returns_at_once_and_its_failure_surfaces_per_request() {
 /// awaited outside any tokio runtime.
 #[test]
 fn discover_resolves_outside_a_tokio_runtime() {
-    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+    let cluster = Cluster::connect(&no_such_cluster());
 
     let error = futures::executor::block_on(cluster.discover()).unwrap_err();
 
@@ -174,7 +176,7 @@ fn configmap_cluster(patched: fn() -> http::Response<Body>) -> (Cluster, Patches
         std::future::ready(Ok::<_, std::convert::Infallible>(response))
     });
     (
-        Cluster::from_client(Client::new(service, "default"), "mock"),
+        Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock")),
         recorded,
     )
 }
@@ -307,7 +309,7 @@ async fn an_unparsable_snapshot_fails_before_anything_is_sent() {
 
 #[tokio::test]
 async fn apply_and_precheck_fail_with_the_connect_failure() {
-    let cluster = Cluster::connect(NO_SUCH_CONTEXT);
+    let cluster = Cluster::connect(&no_such_cluster());
 
     let apply = cluster
         .apply(CONFIGMAP_YAML, ApplyMode::Normal)

@@ -1,5 +1,5 @@
 use astrolabe::workspace::{STALE_MESSAGE, WorkspaceView};
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
@@ -40,8 +40,8 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
     let (_workspace, cx) = cx.add_window_view(|window, cx| {
         WorkspaceView::from_events(
             vec![
-                ("kind-a".to_string(), receiver_a),
-                ("kind-b".to_string(), receiver_b),
+                (ClusterId::named("kind-a"), receiver_a),
+                (ClusterId::named("kind-b"), receiver_b),
             ],
             window,
             cx,
