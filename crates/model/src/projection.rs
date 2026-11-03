@@ -677,11 +677,9 @@ pub fn format_age(since: Timestamp, now: Timestamp) -> String {
     if seconds < -1 {
         return "<invalid>".to_string();
     }
-    if seconds < 0 {
-        return "0s".to_string();
-    }
     if seconds < 120 {
-        return format!("{seconds}s");
+        // kubectl rounds -1s (clock skew) to 0s.
+        return format!("{}s", seconds.max(0));
     }
     let minutes = seconds / 60;
     if minutes < 10 {
