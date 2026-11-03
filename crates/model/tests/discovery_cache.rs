@@ -1,22 +1,15 @@
 //! The Discovery cache, fed Discovery results built by hand.
 
 use astrolabe_kube::cluster::ClusterError;
-use astrolabe_kube::discovery::{ServedResource, ServedResources};
-use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::discovery::ServedResources;
 use astrolabe_model::discovery_cache::DiscoveryCache;
+use support::served;
+
+mod support;
 
 /// A Discovery result that serves `stable.example.com/v1` `CronTab`.
 fn crontab_served() -> ServedResources {
-    ServedResources::new([ServedResource {
-        resource: ApiResource {
-            group: "stable.example.com".to_string(),
-            version: "v1".to_string(),
-            api_version: "stable.example.com/v1".to_string(),
-            kind: "CronTab".to_string(),
-            plural: "crontabs".to_string(),
-        },
-        namespaced: true,
-    }])
+    ServedResources::new([served("stable.example.com", "v1", "CronTab", true)])
 }
 
 #[test]

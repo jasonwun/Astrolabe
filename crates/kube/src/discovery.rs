@@ -1,6 +1,5 @@
 //! API discovery (#16): run once on connect and again whenever the CRD set
-//! changes. `astrolabe-model`'s `DiscoveryCache` keeps the result, and a
-//! failed refresh keeps the old one.
+//! changes. Caching the result is the caller's job.
 
 use std::collections::HashMap;
 

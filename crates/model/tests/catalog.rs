@@ -1,7 +1,9 @@
-use astrolabe_kube::discovery::{ServedResource, ServedResources};
+use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_model::catalog::{KindResource, catalog};
+use support::served;
+
+mod support;
 
 /// Synthetic CRD manifest: the shape `kubectl apply` accepts, not a capture.
 fn crd(group: &str, kind: &str, scope: &str, versions: &str) -> CustomResourceDefinition {
@@ -14,19 +16,6 @@ fn crd(group: &str, kind: &str, scope: &str, versions: &str) -> CustomResourceDe
               "versions":{versions}}}}}"#
     ))
     .unwrap()
-}
-
-fn served(group: &str, version: &str, kind: &str, namespaced: bool) -> ServedResource {
-    ServedResource {
-        resource: ApiResource {
-            group: group.to_string(),
-            version: version.to_string(),
-            api_version: format!("{group}/{version}"),
-            kind: kind.to_string(),
-            plural: format!("{}s", kind.to_lowercase()),
-        },
-        namespaced,
-    }
 }
 
 const ONE_VERSION: &str = r#"[{"name":"v1","served":true,"storage":true,

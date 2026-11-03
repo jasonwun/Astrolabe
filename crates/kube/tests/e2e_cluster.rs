@@ -417,13 +417,14 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
 }
 
 /// The #16 CRD pipeline end to end: a fresh CRD shows up in the CRD watch,
-/// discovery serves its version once established, a per-namespace instance
-/// watch streams it, and delete removes it. The Catalog's resolution of
-/// such a kind is `astrolabe-model`'s plain tests' job.
+/// discovery serves its preferred version once established, the catalog
+/// resolves it, a per-namespace instance watch streams it, and delete
+/// removes it.
 #[tokio::test]
 #[ignore = "needs a reachable cluster (kind-astrolabe-dev)"]
 async fn crd_kind_is_discovered_watched_and_deleted() {
     use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+    use astrolabe_model::catalog::{KindResource, catalog};
 
     let client = default_client().await.unwrap();
     let ns = unique_ns();
@@ -475,11 +476,13 @@ spec:
     .expect("CRD never became discoverable");
     assert!(served.resolve("", "v1", "Namespace").is_some());
 
-    let widget_kind = served.resolve(&group, "v1", "Widget").unwrap();
-    assert!(widget_kind.namespaced);
-    let columns = crd.spec.versions[0].additional_printer_columns.as_ref();
-    assert_eq!(columns.unwrap()[0].name, "Size");
-    let resource = &widget_kind.resource;
+    let groups = catalog(&[&crd], Some(&served));
+    let kind = &groups[0].kinds[0];
+    assert!(kind.namespaced);
+    assert_eq!(kind.columns[0].name, "Size");
+    let KindResource::Served(resource) = &kind.resource else {
+        panic!("Widget not served: {:?}", kind.resource);
+    };
     assert_eq!(resource.plural, "widgets");
 
     let cluster = Cluster::from_client(client.clone(), "e2e");
