@@ -16,6 +16,23 @@ through the changed path. #172 (field-path parsing in `astrolabe-kube`)
 applied a Deployment with `image: ""` from the YAML editor and read the
 422's line mark.
 
+`kind-astrolabe-dev` serves aggregated discovery, so a change to the
+per-group fallback never runs there. Check it there anyway, then again on
+a throwaway pre-1.27 kind cluster with its own kubeconfig, and confirm
+the debug log line `using per-group discovery`:
+
+```sh
+K="$SCRATCH/legacy.kubeconfig"
+kind create cluster --name legacy-<issue> --image kindest/node:v1.25.16 --kubeconfig "$K" --wait 120s
+kubectl --kubeconfig "$K" apply -f dev/demo-crd.yaml   # then the objects the check needs
+KUBECONFIG="$K" ASTROLABE_CLUSTER=kind-legacy-<issue> ASTROLABE_NAMESPACE=<ns> \
+    RUST_LOG=astrolabe_kube=debug cargo run -p astrolabe
+kind delete cluster --name legacy-<issue>
+```
+
+Origin: #190 rewrote the per-group path. The `kind-astrolabe-dev`
+screenshots alone would have shown only the aggregated path (#190 retro).
+
 Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the
 change adds (populated, empty, forbidden), each screenshot has been read
