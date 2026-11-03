@@ -328,8 +328,8 @@ the Standards reviewer flagged the mix (#149 retro).
 ## API shape
 
 A `pub` item the diff adds or changes follows the Rust API Guidelines
-checks that Clippy cannot make. Types this entry names but `crates/`
-lacks (`ClusterError`, `ApplyMode`) are #147's planned ones:
+checks that Clippy cannot make. `ApplyMode`, which this entry names but
+`crates/` lacks, is #147's planned type:
 
 - **C-CONV.** `as_` is free and borrows, `to_` costs (it clones or
   computes), `into_` consumes `self`. Clippy's `wrong_self_convention`
@@ -376,3 +376,24 @@ the Rust API Guidelines plus Clippy, and this Clean Code subset; at the
 time errors crossed the seam as `String` (`Session::operate`,
 `DiscoveryCache::record`) and Apply took `force: bool`
 (`crates/kube/src/apply/run.rs`).
+
+## Requests moved behind the Cluster handle
+
+A diff that moves a request behind `Cluster` (#156–#160) leaves one
+path to it. The free function it wraps becomes `pub(crate)` in the same
+diff, and the tests and e2e that called it go through `Cluster`. The
+answer is a plain `Future` from `cluster.rs`'s `spawn`, never a tokio
+type such as `oneshot::Receiver`, so GPUI and any executor can await it.
+The module doc and `Cluster::client()`'s doc list only the requests that
+have not moved yet.
+
+A request left with two public paths, an answer that exposes a tokio
+type, or a doc that names a moved request as pending (or a pending one
+as moved) is a finding.
+
+Origin: #155's first draft wrapped `discovery::discover` in
+`Cluster::discover` but left the free function `pub`, returned the
+spawned task's `oneshot::Receiver`, and its module doc said every
+request went through the handle while only Discovery did. The
+Standards reviewer caught the receiver and the doc, the Spec reviewer
+the second path; all three were fixed before merge (#155 retro).
