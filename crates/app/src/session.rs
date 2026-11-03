@@ -355,22 +355,18 @@ impl Session {
             forwards: Vec::new(),
             io,
         };
-        if let Some(events) = session.io.watch_namespaces() {
-            spawn_drain(
-                events,
-                cx,
-                |session| Some(&mut session.namespaces),
-                |_, _, _| {},
-            );
-        }
-        if let Some(events) = session.io.watch_crds() {
-            spawn_drain(
-                events,
-                cx,
-                |session| Some(&mut session.crds),
-                Self::crds_changed,
-            );
-        }
+        spawn_drain(
+            session.io.watch_namespaces(),
+            cx,
+            |session| Some(&mut session.namespaces),
+            |_, _, _| {},
+        );
+        spawn_drain(
+            session.io.watch_crds(),
+            cx,
+            |session| Some(&mut session.crds),
+            Self::crds_changed,
+        );
         session.run_discovery(cx);
         session
     }
@@ -557,14 +553,12 @@ impl Session {
             key.clone(),
             Watched::new(key.cluster.clone(), resource.kind.clone()),
         );
-        if let Some(events) = self.io.watch_objects(&key, resource) {
-            spawn_drain(
-                events,
-                cx,
-                move |session| session.objects.get_mut(&key),
-                |_, _, _| {},
-            );
-        }
+        spawn_drain(
+            self.io.watch_objects(&key, resource),
+            cx,
+            move |session| session.objects.get_mut(&key),
+            |_, _, _| {},
+        );
         cx.notify();
     }
 
@@ -755,13 +749,17 @@ impl Session {
 
 /// Resident drain loop (#8 bridge): applies every queued message to the
 /// `Watched` that `watched` selects, then notifies once; the channel
-/// closing marks the watch stale.
+/// closing marks the watch stale. No receiver (a scripted cluster with no
+/// script for the watch) starts nothing.
 fn spawn_drain<K: ResourceExt + 'static>(
-    mut receiver: mpsc::Receiver<WatchMessage<K>>,
+    receiver: Option<mpsc::Receiver<WatchMessage<K>>>,
     cx: &mut Context<Session>,
     watched: impl Fn(&mut Session) -> Option<&mut Watched<K>> + 'static,
     changed: impl Fn(&mut Session, SnapshotChange, &mut Context<Session>) + 'static,
 ) {
+    let Some(mut receiver) = receiver else {
+        return;
+    };
     let watched = Rc::new(watched);
     let apply_to = watched.clone();
     let apply = move |session: &mut Session, message, cx: &mut Context<Session>| {

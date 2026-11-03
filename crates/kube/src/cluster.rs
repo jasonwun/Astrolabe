@@ -5,7 +5,7 @@
 //!
 //! Requests run on this crate's own tokio runtime, because GPUI's executor
 //! has no tokio reactor; each answers through a future or receiver that
-//! any executor can await.
+//! any executor can poll.
 
 use std::future::Future;
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -166,7 +166,8 @@ pub struct Cluster {
     /// The kubeconfig context, for logs.
     name: String,
     client: SharedClient,
-    /// Where requests run.
+    /// Where requests run: the cluster runtime, or the caller's for
+    /// `from_client`, so a test's paused clock drives the watch retries.
     runtime: Handle,
     watches: Mutex<Vec<AbortHandle>>,
 }
@@ -230,10 +231,6 @@ impl Cluster {
     ///   (the fallback after any aggregated failure) gets a 403;
     /// - [`Other`](ClusterErrorKind::Other) when it fails any other way, or
     ///   the request's task panicked.
-    ///
-    /// # Panics
-    ///
-    /// When the cluster runtime cannot be created on first use.
     pub fn discover(
         &self,
     ) -> impl Future<Output = Result<ServedResources, ClusterError>> + Send + 'static {
@@ -248,10 +245,6 @@ impl Cluster {
     /// Watch the Cluster's Namespaces, resident until the handle is
     /// dropped. See [`watch_objects`](Self::watch_objects) for the
     /// messages.
-    ///
-    /// # Panics
-    ///
-    /// When the cluster runtime cannot be created on first use.
     pub fn watch_namespaces(&self) -> mpsc::Receiver<WatchMessage<Namespace>> {
         self.watch("namespace", watch::namespaces)
     }
@@ -259,10 +252,6 @@ impl Cluster {
     /// Watch the Cluster's `CustomResourceDefinition`s, resident until the
     /// handle is dropped. See [`watch_objects`](Self::watch_objects) for
     /// the messages.
-    ///
-    /// # Panics
-    ///
-    /// When the cluster runtime cannot be created on first use.
     pub fn watch_crds(&self) -> mpsc::Receiver<WatchMessage<CustomResourceDefinition>> {
         self.watch("CRD", watch::custom_resource_definitions)
     }
@@ -275,10 +264,6 @@ impl Cluster {
     /// and is followed 1 s later by a fresh LIST; 30 s later after a
     /// [`Forbidden`](ClusterErrorKind::Forbidden) one. A connect failure
     /// arrives as the only message.
-    ///
-    /// # Panics
-    ///
-    /// When the cluster runtime cannot be created on first use.
     pub fn watch_objects(
         &self,
         resource: &ApiResource,
@@ -300,10 +285,9 @@ impl Cluster {
     {
         let (receiver, task) = watch::relist(self.name.clone(), label, self.client.clone(), stream);
         let task = self.runtime.spawn(task).abort_handle();
-        self.watches
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(task);
+        let mut watches = self.watches.lock().unwrap_or_else(PoisonError::into_inner);
+        watches.retain(|watch| !watch.is_finished());
+        watches.push(task);
         receiver
     }
 

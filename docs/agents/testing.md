@@ -200,7 +200,7 @@ Paths a scripted test cannot reach stay missed: kubeconfig discovery
 
 Relist and the 403 backoff are tested in the cluster layer, through
 `Cluster::watch_*` over a mock `kube::Client` — reference implementation:
-`crates/kube/tests/watch.rs`. No TCP server and no GPUI. Three gotchas:
+`crates/kube/tests/support/mod.rs` and `crates/kube/tests/watch.rs`. No TCP server and no GPUI. Three gotchas:
 
 - Use `#[tokio::test(start_paused = true)]` and build the handle with
   `Cluster::from_client` inside the test: it runs the watch on the caller's
@@ -210,9 +210,10 @@ Relist and the 403 backoff are tested in the cluster layer, through
   (`future::pending()`). An empty `200` ends the watch at once and the
   watcher re-watches in a busy loop; awaiting a message that never comes,
   with no timer pending, hangs the test instead of failing it.
-- Capture logs with a process-wide subscriber, installed by one test per
-  binary. A thread-scoped one (`set_default`) races other tests' threads
-  over tracing's per-callsite cache and loses events.
+- Capture logs with a process-wide subscriber, in a binary whose only test
+  reaches the asserted callsites (`crates/kube/tests/watch_relist.rs`). A
+  thread-scoped one (`set_default`) races other tests' threads over
+  tracing's per-callsite cache and loses events.
 
 Origin: #156 (replaced the scripted TCP apiserver test from #28/#16).
 
