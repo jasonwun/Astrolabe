@@ -81,6 +81,19 @@ CI also runs the `crd_` e2e tests on a v1.25 kind node
 (`e2e-legacy-discovery`), the real-server check of discovery's per-group
 fallback.
 
+A poll that waits for the cluster to converge (a CRD becoming served, a
+rollout finishing) treats an error from the polled call as "not yet":
+keep the last error, sleep, poll again, and name that error in the
+timeout's panic. Only the timeout fails the test. While the apiserver is
+still registering what the test just applied, a call that succeeds a
+moment later can fail outright.
+
+Origin: `crd_kind_is_discovered_watched_and_deleted` unwrapped
+`discover()` inside its 30 s poll. On `e2e-legacy-discovery` the new
+group was already listed under `/apis` while its group version still
+answered 404, so per-group discovery failed and the unwrap panicked on a
+docs-only PR (#186, fixed in #187).
+
 A kube-rs `watcher` emits `Event::Init` before its LIST, so a test waiting
 for a LIST failure (e.g. a 403) skips `Init` until the `Err` arrives (#16).
 
