@@ -209,6 +209,35 @@ mod custom {
     }
 
     #[test]
+    fn ages_change_unit_at_kubectl_boundaries() {
+        let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);
+        let cases = [
+            (-2, "<invalid>"),
+            (-1, "0s"),
+            (0, "0s"),
+            (119, "119s"),
+            (120, "2m"),
+            (10 * 60 - 1, "9m59s"),
+            (10 * 60, "10m"),
+            (180 * 60 - 1, "179m"),
+            (180 * 60, "3h"),
+            (8 * 3600 - 1, "7h59m"),
+            (8 * 3600, "8h"),
+            (48 * 3600 - 1, "47h"),
+            (48 * 3600, "2d"),
+            (8 * 86400 - 1, "7d23h"),
+            (8 * 86400, "8d"),
+            (2 * 365 * 86400 - 1, "729d"),
+            (2 * 365 * 86400, "2y"),
+            (8 * 365 * 86400 - 1, "7y364d"),
+            (8 * 365 * 86400, "8y"),
+        ];
+        for (seconds, age) in cases {
+            assert_eq!(format_age(ago(seconds), now()), age, "{seconds}s ago");
+        }
+    }
+
+    #[test]
     fn ages_tick_every_second_below_ten_minutes_then_every_minute() {
         // Freelens 113abe5 `computeUpdateInterval`, compact: `minutes < 10`.
         let ago = |seconds: i64| now() - SignedDuration::from_secs(seconds);

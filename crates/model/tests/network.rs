@@ -721,3 +721,60 @@ fn an_ingress_detail_follows_lens() {
         ]
     );
 }
+
+#[test]
+fn a_zero_node_port_falls_back_to_the_target_port() {
+    let service = service_object(
+        serde_json::json!({
+            "type": "ClusterIP",
+            "ports": [{"port": 80, "targetPort": 8080, "nodePort": 0, "protocol": "TCP"}]
+        }),
+        serde_json::json!({}),
+    );
+    assert_eq!(cells(service)[4], "80:8080/TCP");
+}
+
+/// The Client IP Timeout a Service with `timeout` seconds shows.
+fn client_ip_timeout(timeout: i64) -> String {
+    let model = detail(
+        BuiltinKind::Services,
+        service_object(
+            serde_json::json!({
+                "type": "ClusterIP", "sessionAffinity": "ClientIP",
+                "sessionAffinityConfig": {"clientIP": {"timeoutSeconds": timeout}}
+            }),
+            serde_json::json!({}),
+        ),
+        now(),
+    );
+    let affinity = section(&model.sections, "Session Affinity Config").unwrap();
+    value(field(affinity, "Client IP Timeout"))
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn a_client_ip_timeout_changes_unit_at_freelens_boundaries() {
+    const MINUTE: i64 = 60;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    // Two years in Freelens's 400-year Gregorian average.
+    const TWO_YEARS: i64 = 86_400 * 146_097 / 200;
+    let cases = [
+        (-1, "0s"),
+        (0, "0s"),
+        (119, "119s"),
+        (120, "2m"),
+        (180 * MINUTE - 1, "179m 59s"),
+        (180 * MINUTE, "3h"),
+        (48 * HOUR - 1, "47h 59m"),
+        (48 * HOUR, "2d"),
+        (8 * DAY - 1, "7d 23h 59m"),
+        (8 * DAY, "8d"),
+        (TWO_YEARS - 1, "730d 11h 38m"),
+        (TWO_YEARS, "2y 29d 11h 38m"),
+    ];
+    for (seconds, shown) in cases {
+        assert_eq!(client_ip_timeout(seconds), shown, "{seconds}s");
+    }
+}

@@ -139,6 +139,14 @@ fn an_unnamed_involved_object_shows_its_kind() {
         list(BuiltinKind::Events, vec![node], now()).rows[0].cells[2],
         "node"
     );
+    let unnamed = event_json(
+        "unnamed",
+        serde_json::json!({"involvedObject": {"kind": "Node", "name": ""}}),
+    );
+    assert_eq!(
+        list(BuiltinKind::Events, vec![unnamed], now()).rows[0].cells[2],
+        "node"
+    );
 }
 
 #[test]

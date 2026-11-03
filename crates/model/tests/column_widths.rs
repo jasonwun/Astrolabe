@@ -76,3 +76,10 @@ fn every_builtin_list_but_hpa_weighs_its_first_column_two_and_the_rest_one() {
         );
     }
 }
+
+#[test]
+fn a_share_of_exactly_the_minimum_is_not_clamped() {
+    // The second column's share is exactly 80, so it stays unclamped and,
+    // as the last unclamped column, takes the first's rounding remainder.
+    assert_eq!(column_widths(160.5, &[161., 160.]), vec![80., 80.5]);
+}
