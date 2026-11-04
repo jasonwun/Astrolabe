@@ -31,7 +31,7 @@ use astrolabe_model::session::CustomKindId;
 /// Why a row cannot be opened; shown as the list's notice.
 #[derive(Debug, PartialEq, Eq)]
 enum OpenRowError {
-    /// The row's object left its watch, or has no reference to follow.
+    /// The row's object left its watch, or its kind has no reference to follow.
     ObjectUnavailable {
         kind: String,
         key: ObjectKey,
@@ -50,7 +50,20 @@ impl std::fmt::Display for OpenRowError {
     }
 }
 
-impl std::error::Error for OpenRowError {}
+impl std::error::Error for OpenRowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ObjectUnavailable { .. } => None,
+            Self::Reference(error) => Some(error),
+        }
+    }
+}
+
+impl From<ReferenceError> for OpenRowError {
+    fn from(error: ReferenceError) -> Self {
+        Self::Reference(error)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListView {
@@ -190,7 +203,7 @@ impl ResourceListPanel {
             object.metadata.namespace.clone(),
             session.state(),
         )
-        .map_err(OpenRowError::Reference)
+        .map_err(OpenRowError::from)
     }
 
     fn toggle_group(&mut self, group: String, cx: &mut Context<Self>) {
@@ -655,4 +668,31 @@ fn text_cell(id: String, text: String) -> Stateful<Div> {
         .w_full()
         .text_ellipsis()
         .child(text)
+}
+
+#[cfg(test)]
+mod open_row_error_tests {
+    use super::{ObjectKey, OpenRowError, ReferenceError};
+
+    #[test]
+    fn an_unavailable_object_names_its_kind_and_key() {
+        let error = OpenRowError::ObjectUnavailable {
+            kind: "Event".to_string(),
+            key: ObjectKey::new(Some("default".to_string()), "e1"),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Cannot open Event default/e1: object is unavailable"
+        );
+    }
+
+    #[test]
+    fn a_reference_error_shows_its_own_text() {
+        let reference = ReferenceError::MissingName {
+            kind: "Pod".to_string(),
+        };
+        let error = OpenRowError::from(reference.clone());
+        assert_eq!(error, OpenRowError::Reference(reference.clone()));
+        assert_eq!(error.to_string(), reference.to_string());
+    }
 }
