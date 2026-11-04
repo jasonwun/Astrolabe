@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -7,9 +6,7 @@ use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use astrolabe_kube::kube::ResourceExt;
 use astrolabe_kube::kube::core::DynamicObject;
-use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::{
     ExecRequest, ExecSession, ForwardEvent, ForwardRequest, ForwardTarget, LogRequest, LogStream,
@@ -19,8 +16,9 @@ use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::{self, CustomGroup, CustomKind, KindResource};
 use astrolabe_model::discovery_cache::DiscoveryCache;
 use astrolabe_model::session::{
-    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey, Watched,
+    ConnectionHealth, CustomKindId, ForwardState, SnapshotChange, WatchKey, Watched,
 };
+use astrolabe_model::session_state::{self, Command, SessionState};
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
@@ -33,13 +31,6 @@ use crate::perf;
 /// new CRD is served only once it turns Established, which arrives as an
 /// update of the same object.
 pub const CRD_DEBOUNCE: Duration = Duration::from_millis(400);
-
-/// The list on screen, whose watch follows the namespace selection.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Viewing {
-    Builtin(BuiltinKind),
-    Custom(CustomKindId),
-}
 
 /// A port-forward the session keeps until stopped, whether or not its
 /// target's detail tab is open.
@@ -56,18 +47,13 @@ pub struct Forward {
 pub const DEFAULT_NAMESPACE: &str = "default";
 
 pub struct Session {
-    watch_key: WatchKey,
-    namespaces: Watched<Namespace>,
-    crds: Watched<CustomResourceDefinition>,
+    state: SessionState,
     discovery: DiscoveryCache,
     /// Bumped by every CRD change; a debounce timer fires only if no
     /// later change superseded it.
     crd_generation: u64,
     discovery_runs: u64,
     catalog: Vec<CustomGroup>,
-    objects: BTreeMap<WatchKey, Watched<DynamicObject>>,
-    namespace: String,
-    viewing: Option<Viewing>,
     forwards: Vec<Forward>,
     io: ClusterIo,
 }
@@ -105,33 +91,26 @@ impl Session {
 
     fn start(cluster: ClusterId, io: ClusterIo, namespace: String, cx: &mut Context<Self>) -> Self {
         let mut session = Self {
-            namespaces: Watched::new(cluster.clone(), "namespace"),
-            crds: Watched::new(cluster.clone(), "CRD"),
-            watch_key: WatchKey {
-                cluster,
-                kind: ResourceKind::Namespaces,
-                namespace: None,
-            },
+            state: SessionState::new(cluster, namespace),
             discovery: DiscoveryCache::default(),
             crd_generation: 0,
             discovery_runs: 0,
             catalog: Vec::new(),
-            objects: BTreeMap::new(),
-            namespace,
-            viewing: None,
             forwards: Vec::new(),
             io,
         };
         spawn_drain(
             session.io.watch_namespaces(),
             cx,
-            |session| Some(&mut session.namespaces),
+            |session, message| session.state.namespaces_message(message),
+            |session| session.state.namespaces_ended(),
             |_, _, _| {},
         );
         spawn_drain(
             session.io.watch_crds(),
             cx,
-            |session| Some(&mut session.crds),
+            |session, message| session.state.crds_message(message),
+            |session| session.state.crds_ended(),
             Self::crds_changed,
         );
         session.run_discovery(cx);
@@ -200,7 +179,7 @@ impl Session {
             return;
         }
         if let Err(error) = &result {
-            tracing::warn!(cluster = %self.watch_key.cluster, error = %error, "discovery failed");
+            tracing::warn!(cluster = %self.state.watch_key().cluster, error = %error, "discovery failed");
         }
         self.discovery.record(result);
         self.rebuild_catalog(cx);
@@ -208,9 +187,28 @@ impl Session {
     }
 
     fn rebuild_catalog(&mut self, cx: &mut Context<Self>) {
-        self.catalog = catalog::catalog(&self.crds.objects(), self.discovery.served());
-        if let Some(Viewing::Custom(id)) = self.viewing.clone() {
-            self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
+        self.catalog = catalog::catalog(&self.state.crds().objects(), self.discovery.served());
+        let commands = self.state.catalog_changed(&self.catalog);
+        self.carry_out(commands, cx);
+    }
+
+    /// Carry out what `SessionState` asked for.
+    fn carry_out(&mut self, commands: Vec<Command>, cx: &mut Context<Self>) {
+        for command in commands {
+            match command {
+                Command::StartWatch { key, resource } => {
+                    let message_key = key.clone();
+                    let ended_key = key.clone();
+                    spawn_drain(
+                        self.io.watch_objects(&key, &resource),
+                        cx,
+                        move |session, message| session.state.object_message(&message_key, message),
+                        move |session| session.state.object_ended(&ended_key),
+                        |_, _, _| {},
+                    );
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -222,15 +220,17 @@ impl Session {
         id: &CustomKindId,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
-        self.viewing = Some(Viewing::Custom(id.clone()));
-        self.ensure_custom_watch(id, Some(self.namespace.clone()), cx)
+        let ensured = self.state.open_custom_list(id, &self.catalog)?;
+        self.carry_out(ensured.commands, cx);
+        Some(ensured.key)
     }
 
     /// Enter a built-in kind's list: starts its watch for the current
     /// namespace on first visit (lazy, then resident for the session).
     pub fn open_builtin_list(&mut self, kind: BuiltinKind, cx: &mut Context<Self>) -> WatchKey {
-        self.viewing = Some(Viewing::Builtin(kind));
-        self.watch_builtin(kind, &self.namespace.clone(), cx)
+        let ensured = self.state.open_builtin_list(kind);
+        self.carry_out(ensured.commands, cx);
+        ensured.key
     }
 
     /// Ensure the watch holding `kind`'s objects in `namespace`, whatever
@@ -241,19 +241,15 @@ impl Session {
         namespace: &str,
         cx: &mut Context<Self>,
     ) -> WatchKey {
-        let key = self.builtin_watch_key(kind, namespace);
-        self.ensure_watch(key.clone(), &(kind.registration().resource)(), cx);
-        key
+        let ensured = self.state.watch_builtin(kind, namespace);
+        self.carry_out(ensured.commands, cx);
+        ensured.key
     }
 
     /// The watch holding `kind`'s objects in `namespace` (every registered
     /// built-in kind is namespaced).
     pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: &str) -> WatchKey {
-        WatchKey {
-            cluster: self.watch_key.cluster.clone(),
-            kind: ResourceKind::Builtin(kind),
-            namespace: Some(namespace.to_string()),
-        }
+        self.state.builtin_watch_key(kind, namespace)
     }
 
     /// The watch holding `kind`'s objects in `namespace`, once started.
@@ -262,7 +258,7 @@ impl Session {
         kind: BuiltinKind,
         namespace: &str,
     ) -> Option<&Watched<DynamicObject>> {
-        self.object_watch(&self.builtin_watch_key(kind, namespace))
+        self.state.builtin_watch(kind, namespace)
     }
 
     /// The object `name` in `namespace` of `kind`, from its watch.
@@ -272,8 +268,7 @@ impl Session {
         namespace: &str,
         name: &str,
     ) -> Option<&DynamicObject> {
-        self.builtin_watch(kind, namespace)?
-            .get(Some(namespace), name)
+        self.state.builtin_object(kind, namespace, name)
     }
 
     /// Ensure the watch an object of kind `id` in `namespace` (`None` when
@@ -287,82 +282,33 @@ impl Session {
         namespace: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
-        self.ensure_custom_watch(id, namespace, cx)
+        let ensured = self
+            .state
+            .watch_custom_object(id, namespace.as_deref(), &self.catalog)?;
+        self.carry_out(ensured.commands, cx);
+        Some(ensured.key)
     }
 
     /// Leave the watched lists (Namespaces or Definitions is shown).
     pub fn close_list(&mut self) {
-        self.viewing = None;
-    }
-
-    fn ensure_custom_watch(
-        &mut self,
-        id: &CustomKindId,
-        namespace: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Option<WatchKey> {
-        let kind = self.custom_kind(id)?;
-        let KindResource::Served(resource) = &kind.resource else {
-            return None;
-        };
-        let resource = resource.clone();
-        let key = self.custom_object_watch_key(kind, namespace.as_deref());
-        self.ensure_watch(key.clone(), &resource, cx);
-        Some(key)
-    }
-
-    /// Start the object watch `key` on `resource` unless it runs already.
-    fn ensure_watch(&mut self, key: WatchKey, resource: &ApiResource, cx: &mut Context<Self>) {
-        if self.objects.contains_key(&key) {
-            return;
-        }
-        self.objects.insert(
-            key.clone(),
-            Watched::new(key.cluster.clone(), resource.kind.clone()),
-        );
-        spawn_drain(
-            self.io.watch_objects(&key, resource),
-            cx,
-            move |session| session.objects.get_mut(&key),
-            |_, _, _| {},
-        );
-        cx.notify();
+        self.state.close_list();
     }
 
     /// The watch a kind's list reads for the current namespace selection:
     /// namespaced kinds follow it, cluster-scoped kinds ignore it.
     pub fn custom_watch_key(&self, kind: &CustomKind) -> WatchKey {
-        self.custom_object_watch_key(kind, Some(&self.namespace))
+        self.state.custom_watch_key(kind)
     }
 
     /// The watch holding `kind`'s objects in `namespace`, at its preferred
     /// version; cluster-scoped kinds ignore `namespace`.
     pub fn custom_object_watch_key(&self, kind: &CustomKind, namespace: Option<&str>) -> WatchKey {
-        WatchKey {
-            cluster: self.watch_key.cluster.clone(),
-            kind: ResourceKind::Custom {
-                group: kind.group.clone(),
-                version: kind.version.clone(),
-                kind: kind.kind.clone(),
-            },
-            namespace: namespace.filter(|_| kind.namespaced).map(str::to_string),
-        }
+        self.state.custom_object_watch_key(kind, namespace)
     }
 
     pub fn set_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
-        if self.namespace == namespace {
-            return;
-        }
-        self.namespace = namespace;
-        match self.viewing.clone() {
-            Some(Viewing::Custom(id)) => {
-                self.ensure_custom_watch(&id, Some(self.namespace.clone()), cx);
-            }
-            Some(Viewing::Builtin(kind)) => {
-                self.watch_builtin(kind, &self.namespace.clone(), cx);
-            }
-            None => {}
-        }
+        let commands = self.state.set_namespace(namespace, &self.catalog);
+        self.carry_out(commands, cx);
         cx.notify();
     }
 
@@ -475,25 +421,25 @@ impl Session {
     }
 
     pub fn watch_key(&self) -> &WatchKey {
-        &self.watch_key
+        self.state.watch_key()
     }
 
     pub fn namespaces(&self) -> Vec<&Namespace> {
-        self.namespaces.objects()
+        self.state.namespaces()
     }
 
     pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
-        self.namespaces.get(None, name)
+        self.state.namespace_object(name)
     }
 
     pub fn crds(&self) -> &Watched<CustomResourceDefinition> {
-        &self.crds
+        self.state.crds()
     }
 
     /// RBAC denies listing CRDs: Custom Resources shows an empty-state hint
     /// (no heuristic reconstruction of kinds, #11).
     pub fn crd_access_denied(&self) -> bool {
-        self.crds.forbidden()
+        self.state.crd_access_denied()
     }
 
     pub fn catalog(&self) -> &[CustomGroup] {
@@ -501,20 +447,15 @@ impl Session {
     }
 
     pub fn custom_kind(&self, id: &CustomKindId) -> Option<&CustomKind> {
-        self.catalog
-            .iter()
-            .find(|group| group.group == id.group)?
-            .kinds
-            .iter()
-            .find(|kind| kind.kind == id.kind)
+        session_state::custom_kind(&self.catalog, id)
     }
 
     pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
-        self.objects.get(key)
+        self.state.object_watch(key)
     }
 
     pub fn namespace(&self) -> &str {
-        &self.namespace
+        self.state.namespace()
     }
 
     pub fn discovery_failure(&self) -> Option<&ClusterError> {
@@ -522,46 +463,40 @@ impl Session {
     }
 
     pub fn health(&self) -> ConnectionHealth {
-        self.namespaces.health()
+        self.state.health()
     }
 
     /// The disconnect banner: the namespace watch lost its connection, or
     /// the latest discovery refresh failed (old results stay in use).
     pub fn show_stale_warning(&self) -> bool {
-        self.namespaces.show_stale_warning() || self.discovery.failure().is_some()
+        self.state.namespaces_stale() || self.discovery.failure().is_some()
     }
 }
 
-/// Resident drain loop (#8 bridge): applies every queued message to the
-/// `Watched` that `watched` selects, then notifies once; the channel
-/// closing marks the watch stale. No receiver (a scripted cluster with no
-/// script for the watch) starts nothing.
-fn spawn_drain<K: ResourceExt + 'static>(
+/// Resident drain loop (#8 bridge): feeds every queued message to the state
+/// through `apply`, then notifies once; the channel closing calls `ended`.
+/// No receiver (a scripted cluster with no script for the watch) starts
+/// nothing.
+fn spawn_drain<K: 'static>(
     receiver: Option<mpsc::Receiver<WatchMessage<K>>>,
     cx: &mut Context<Session>,
-    watched: impl Fn(&mut Session) -> Option<&mut Watched<K>> + 'static,
+    apply: impl Fn(&mut Session, WatchMessage<K>) -> SnapshotChange + 'static,
+    ended: impl Fn(&mut Session) + 'static,
     changed: impl Fn(&mut Session, SnapshotChange, &mut Context<Session>) + 'static,
 ) {
     let Some(mut receiver) = receiver else {
         return;
     };
-    let watched = Rc::new(watched);
-    let apply_to = watched.clone();
     let apply = move |session: &mut Session, message, cx: &mut Context<Session>| {
-        if let Some(watch) = apply_to(session) {
-            perf::count(perf::Event::WatchEvent);
-            let change = watch.apply(message);
-            changed(session, change, cx);
-        }
+        perf::count(perf::Event::WatchEvent);
+        let change = apply(session, message);
+        changed(session, change, cx);
     };
-    let closed = move |session: &mut Session| {
-        if let Some(watch) = watched(session) {
-            watch.mark_stale();
-        }
-    };
+    let ended = Rc::new(ended);
+    let closed = ended.clone();
     cx.spawn(async move |this, cx| {
         while let Some(message) = receiver.next().await {
-            let mut ended = false;
+            let mut finished = false;
             if this
                 .update(cx, |session, cx| {
                     apply(session, message, cx);
@@ -569,14 +504,14 @@ fn spawn_drain<K: ResourceExt + 'static>(
                         match receiver.try_recv() {
                             Ok(message) => apply(session, message, cx),
                             Err(error) if error.is_closed() => {
-                                ended = true;
+                                finished = true;
                                 break;
                             }
                             Err(_) => break,
                         }
                     }
-                    if ended {
-                        closed(session);
+                    if finished {
+                        ended(session);
                     }
                     perf::count(perf::Event::Notify);
                     cx.notify();
@@ -585,7 +520,7 @@ fn spawn_drain<K: ResourceExt + 'static>(
             {
                 return;
             }
-            if ended {
+            if finished {
                 return;
             }
         }
