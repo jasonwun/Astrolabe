@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -33,9 +34,20 @@ struct ForwardTask {
 /// one starts in its context's.
 pub const DEFAULT_NAMESPACE: &str = "default";
 
+/// Which resident watch a drain task feeds.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Drain {
+    Namespaces,
+    Crds,
+    Objects(WatchKey),
+}
+
 pub struct Session {
     state: SessionState,
     forward_tasks: Vec<ForwardTask>,
+    /// The drain of each resident watch; starting a watch again replaces
+    /// its drain, which stops the old one.
+    drains: HashMap<Drain, Task<()>>,
     io: ClusterIo,
 }
 
@@ -81,36 +93,54 @@ impl Session {
         let mut session = Self {
             state: SessionState::new(cluster, namespace),
             forward_tasks: Vec::new(),
+            drains: HashMap::new(),
             io,
         };
-        spawn_drain(
-            session.io.watch_namespaces(),
-            cx,
-            |session, message| {
-                session.state.namespaces_message(message);
-                Vec::new()
-            },
-            |session| session.state.namespaces_ended(),
-        );
-        spawn_drain(
-            session.io.watch_crds(),
-            cx,
-            |session, message| session.state.crds_message(message),
-            |session| session.state.crds_ended(),
-        );
         let commands = session.state.connected();
         session.carry_out(commands, cx);
         session
+    }
+
+    /// Reconnect after a failed connect: the Cluster connects again, every
+    /// resident watch starts again and Discovery runs again. The entry
+    /// point for a retry button; it changes nothing while the connect
+    /// works, beyond restarting the watches.
+    pub fn reconnect(&mut self, cx: &mut Context<Self>) {
+        self.io.reconnect();
+        let commands = self.state.reconnect();
+        self.carry_out(commands, cx);
+        cx.notify();
     }
 
     /// Carry out what `SessionState` asked for.
     fn carry_out(&mut self, commands: Vec<Command>, cx: &mut Context<Self>) {
         for command in commands {
             match command {
+                Command::StartNamespacesWatch => {
+                    let drain = spawn_drain(
+                        self.io.watch_namespaces(),
+                        cx,
+                        |session, message| {
+                            session.state.namespaces_message(message);
+                            Vec::new()
+                        },
+                        |session| session.state.namespaces_ended(),
+                    );
+                    self.set_drain(Drain::Namespaces, drain);
+                }
+                Command::StartCrdsWatch => {
+                    let drain = spawn_drain(
+                        self.io.watch_crds(),
+                        cx,
+                        |session, message| session.state.crds_message(message),
+                        |session| session.state.crds_ended(),
+                    );
+                    self.set_drain(Drain::Crds, drain);
+                }
                 Command::StartWatch { key, resource } => {
                     let message_key = key.clone();
                     let ended_key = key.clone();
-                    spawn_drain(
+                    let drain = spawn_drain(
                         self.io.watch_objects(&key, &resource),
                         cx,
                         move |session, message| {
@@ -119,6 +149,7 @@ impl Session {
                         },
                         move |session| session.state.object_ended(&ended_key),
                     );
+                    self.set_drain(Drain::Objects(key), drain);
                     cx.notify();
                 }
                 Command::ScheduleDiscovery { generation } => {
@@ -140,6 +171,14 @@ impl Session {
                 }
             }
         }
+    }
+
+    /// Keep `drain` as the one of `which`; the previous one stops.
+    fn set_drain(&mut self, which: Drain, drain: Option<Task<()>>) {
+        match drain {
+            Some(drain) => self.drains.insert(which, drain),
+            None => self.drains.remove(&which),
+        };
     }
 
     fn run_discovery(&mut self, run: u64, cx: &mut Context<Self>) {
@@ -308,16 +347,14 @@ impl Session {
 /// through `apply`, carries out the commands it answers with, then notifies
 /// once; the channel closing calls `ended`.
 /// No receiver (a scripted cluster with no script for the watch) starts
-/// nothing.
+/// nothing. Dropping the returned task stops the drain.
 fn spawn_drain<K: 'static>(
     receiver: Option<mpsc::Receiver<WatchMessage<K>>>,
     cx: &mut Context<Session>,
     apply: impl Fn(&mut Session, WatchMessage<K>) -> Vec<Command> + 'static,
     ended: impl Fn(&mut Session) + 'static,
-) {
-    let Some(mut receiver) = receiver else {
-        return;
-    };
+) -> Option<Task<()>> {
+    let mut receiver = receiver?;
     let feed = move |session: &mut Session, message, cx: &mut Context<Session>| {
         perf::count(perf::Event::WatchEvent);
         let commands = apply(session, message);
@@ -325,7 +362,7 @@ fn spawn_drain<K: 'static>(
     };
     let ended = Rc::new(ended);
     let closed = ended.clone();
-    cx.spawn(async move |this, cx| {
+    Some(cx.spawn(async move |this, cx| {
         while let Some(message) = receiver.next().await {
             let mut finished = false;
             if this
@@ -360,6 +397,5 @@ fn spawn_drain<K: 'static>(
             cx.notify();
         })
         .ok();
-    })
-    .detach();
+    }))
 }

@@ -25,6 +25,12 @@ use crate::session::{
 /// What Session must do after an input.
 #[derive(Clone, Debug)]
 pub enum Command {
+    /// Start the Namespaces watch, and feed its messages back to the
+    /// state.
+    StartNamespacesWatch,
+    /// Start the Definitions watch, and feed its messages back to the
+    /// state.
+    StartCrdsWatch,
     /// Start the watch `key` on `resource`, and feed its messages back to
     /// the state under `key`.
     StartWatch {
@@ -86,6 +92,9 @@ pub struct SessionState {
     namespaces: Watched<Namespace>,
     crds: Watched<CustomResourceDefinition>,
     objects: BTreeMap<WatchKey, Watched<DynamicObject>>,
+    /// What each object watch in `objects` was started on, so a reconnect
+    /// can start it again.
+    resources: BTreeMap<WatchKey, ApiResource>,
     namespace: String,
     viewing: Option<Viewing>,
     discovery: DiscoveryCache,
@@ -112,6 +121,7 @@ impl SessionState {
                 namespace: None,
             },
             objects: BTreeMap::new(),
+            resources: BTreeMap::new(),
             namespace: namespace.into(),
             viewing: None,
             discovery: DiscoveryCache::default(),
@@ -184,9 +194,36 @@ impl SessionState {
         }
     }
 
-    /// Connected: run the first Discovery.
+    /// Connected: start the Namespaces and Definitions watches and run the
+    /// first Discovery.
     pub fn connected(&mut self) -> Vec<Command> {
-        vec![self.start_run()]
+        vec![
+            Command::StartNamespacesWatch,
+            Command::StartCrdsWatch,
+            self.start_run(),
+        ]
+    }
+
+    /// Reconnect: start every resident watch again (Namespaces,
+    /// Definitions and each object watch ever started, on the resource it
+    /// started with), and run Discovery again. A watch that still runs is
+    /// replaced by the new one; the snapshots stay until the new LISTs
+    /// arrive. Nothing here decides whether a reconnect is needed: the
+    /// caller asks after a connect failed.
+    pub fn reconnect(&mut self) -> Vec<Command> {
+        let mut commands = self.connected();
+        let objects = self
+            .resources
+            .iter()
+            .map(|(key, resource)| Command::StartWatch {
+                key: key.clone(),
+                resource: resource.clone(),
+            });
+        // Discovery runs last, as it does on the first connect.
+        let discovery = commands.pop();
+        commands.extend(objects);
+        commands.extend(discovery);
+        commands
     }
 
     /// The debounce timer of `generation` elapsed: Discovery runs unless a
@@ -490,6 +527,7 @@ impl SessionState {
                 key.clone(),
                 Watched::new(key.cluster.clone(), resource.kind.clone()),
             );
+            self.resources.insert(key.clone(), resource.clone());
             commands.push(Command::StartWatch {
                 key: key.clone(),
                 resource: resource.clone(),

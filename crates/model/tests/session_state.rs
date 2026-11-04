@@ -37,7 +37,9 @@ fn started(commands: &[Command]) -> Vec<WatchKey> {
         .iter()
         .filter_map(|command| match command {
             Command::StartWatch { key, .. } => Some(key.clone()),
-            Command::ScheduleDiscovery { .. }
+            Command::StartNamespacesWatch
+            | Command::StartCrdsWatch
+            | Command::ScheduleDiscovery { .. }
             | Command::RunDiscovery { .. }
             | Command::StartForward { .. }
             | Command::StopForward { .. } => None,
@@ -505,12 +507,19 @@ fn the_cluster_is_the_one_the_state_was_built_for() {
 // Discovery
 
 #[test]
-fn connecting_runs_the_first_discovery() {
+fn connecting_starts_the_cluster_watches_and_runs_the_first_discovery() {
     let mut state = state();
 
     let commands = state.connected();
 
-    assert!(matches!(commands[..], [Command::RunDiscovery { .. }]));
+    assert!(matches!(
+        commands[..],
+        [
+            Command::StartNamespacesWatch,
+            Command::StartCrdsWatch,
+            Command::RunDiscovery { .. }
+        ]
+    ));
 }
 
 #[test]
@@ -910,4 +919,73 @@ fn the_served_resources_are_what_discovery_last_found() {
             .resolve("stable.example.com", "v1", "CronTab")
             .is_none()
     );
+}
+
+#[test]
+fn reconnecting_starts_every_resident_watch_and_discovery_again() {
+    let mut state = crontab_state("Namespaced", true);
+    state.open_builtin_list(BuiltinKind::Pods);
+    state.open_custom_list(&crontab_id()).unwrap();
+
+    let commands = state.reconnect();
+
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::StartNamespacesWatch))
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| matches!(command, Command::StartCrdsWatch))
+    );
+    let keys = started(&commands);
+    assert_eq!(keys.len(), 2);
+    assert!(keys.contains(&pod_key("default")));
+    assert!(
+        keys.iter()
+            .any(|key| matches!(key.kind, ResourceKind::Custom { .. }))
+    );
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| matches!(command, Command::RunDiscovery { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_reconnect_discovery_supersedes_the_one_in_flight() {
+    let mut state = state();
+    let first = run_of(&state.connected());
+
+    let second = run_of(&state.reconnect());
+
+    assert_ne!(first, second);
+    assert!(
+        state
+            .discovery_finished(first, Ok(ServedResources::default()))
+            .is_empty()
+    );
+    assert!(state.discovery_failure().is_none());
+}
+
+#[test]
+fn a_reconnect_restarts_a_watch_with_the_resource_it_started_with() {
+    let mut state = state();
+    let started_with = state
+        .watch_builtin(BuiltinKind::Pods, Some("default"))
+        .commands;
+    let Command::StartWatch { resource, .. } = &started_with[0] else {
+        panic!("expected a StartWatch");
+    };
+
+    let commands = state.reconnect();
+
+    let restarted = commands.iter().find_map(|command| match command {
+        Command::StartWatch { resource, .. } => Some(resource),
+        _ => None,
+    });
+    assert_eq!(restarted, Some(resource));
 }
