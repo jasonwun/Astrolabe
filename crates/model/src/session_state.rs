@@ -221,7 +221,7 @@ impl SessionState {
     pub fn open_builtin_list(&mut self, kind: BuiltinKind) -> Ensured {
         self.viewing = Some(Viewing::Builtin(kind));
         let namespace = self.namespace.clone();
-        self.watch_builtin(kind, &namespace)
+        self.watch_builtin(kind, Some(&namespace))
     }
 
     /// Enter a custom kind's instance list, as the Catalog resolves it. `None`
@@ -237,9 +237,10 @@ impl SessionState {
         self.viewing = None;
     }
 
-    /// The watch holding `kind`'s objects in `namespace`, whatever the
-    /// namespace selection (a detail tab or related section reads it).
-    pub fn watch_builtin(&mut self, kind: BuiltinKind, namespace: &str) -> Ensured {
+    /// The watch holding `kind`'s objects in `namespace` (`None` when
+    /// cluster-scoped), whatever the namespace selection (a detail tab or
+    /// related section reads it).
+    pub fn watch_builtin(&mut self, kind: BuiltinKind, namespace: Option<&str>) -> Ensured {
         let key = self.builtin_watch_key(kind, namespace);
         let resource = (kind.registration().resource)();
         self.ensure(key, &resource)
@@ -407,34 +408,35 @@ impl SessionState {
         self.objects.get(key)
     }
 
-    /// The watch holding `kind`'s objects in `namespace` (every registered
-    /// built-in kind is namespaced).
-    pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: &str) -> WatchKey {
+    /// The watch holding `kind`'s objects in `namespace` (`None` when the
+    /// kind is cluster-scoped).
+    pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.key.cluster.clone(),
             kind: ResourceKind::Builtin(kind),
-            namespace: Some(namespace.to_string()),
+            namespace: namespace.map(str::to_string),
         }
     }
 
-    /// The watch holding `kind`'s objects in `namespace`, once started.
+    /// The watch holding `kind`'s objects in `namespace` (`None` when
+    /// cluster-scoped), once started.
     pub fn builtin_watch(
         &self,
         kind: BuiltinKind,
-        namespace: &str,
+        namespace: Option<&str>,
     ) -> Option<&Watched<DynamicObject>> {
         self.object_watch(&self.builtin_watch_key(kind, namespace))
     }
 
-    /// The object `name` in `namespace` of `kind`, from its watch.
+    /// The object `name` in `namespace` (`None` when cluster-scoped) of
+    /// `kind`, from its watch.
     pub fn builtin_object(
         &self,
         kind: BuiltinKind,
-        namespace: &str,
+        namespace: Option<&str>,
         name: &str,
     ) -> Option<&DynamicObject> {
-        self.builtin_watch(kind, namespace)?
-            .get(Some(namespace), name)
+        self.builtin_watch(kind, namespace)?.get(namespace, name)
     }
 
     /// The watch a kind's list reads for the current namespace selection:
@@ -499,7 +501,7 @@ impl SessionState {
     fn follow_viewed_list(&mut self) -> Vec<Command> {
         let namespace = self.namespace.clone();
         let ensured = match self.viewing.clone() {
-            Some(Viewing::Builtin(kind)) => Some(self.watch_builtin(kind, &namespace)),
+            Some(Viewing::Builtin(kind)) => Some(self.watch_builtin(kind, Some(&namespace))),
             Some(Viewing::Custom(id)) => self.watch_custom_object(&id, Some(&namespace)),
             None => None,
         };

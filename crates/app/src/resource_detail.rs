@@ -86,7 +86,7 @@ impl ResourceDetailPanel {
         let needed = watches(&target);
         session.update(cx, |session, cx| {
             for watch in &needed {
-                session.watch_builtin(watch.kind, &watch.namespace, cx);
+                session.watch_builtin(watch.kind, watch.namespace.as_deref(), cx);
             }
         });
         cx.observe(&session, |panel, session, cx| {

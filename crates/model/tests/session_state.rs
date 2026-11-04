@@ -162,7 +162,7 @@ fn reopening_a_list_starts_no_second_watch() {
 fn a_detail_watch_ignores_the_namespace_selection() {
     let mut state = state();
 
-    let ensured = state.watch_builtin(BuiltinKind::Pods, "team-a");
+    let ensured = state.watch_builtin(BuiltinKind::Pods, Some("team-a"));
 
     assert_eq!(started(&ensured.commands), [pod_key("team-a")]);
     assert_eq!(state.namespace(), "default");
@@ -357,12 +357,12 @@ fn object_messages_fill_the_watch_they_are_keyed_to() {
     assert_eq!(change, SnapshotChange::Changed);
     assert!(
         state
-            .builtin_object(BuiltinKind::Pods, "default", "web")
+            .builtin_object(BuiltinKind::Pods, Some("default"), "web")
             .is_some()
     );
     assert!(
         state
-            .builtin_object(BuiltinKind::Pods, "default", "db")
+            .builtin_object(BuiltinKind::Pods, Some("default"), "db")
             .is_none()
     );
 }
@@ -374,7 +374,11 @@ fn a_message_for_a_watch_nobody_started_changes_nothing() {
     let change = state.object_message(&pod_key("default"), Ok(pod_event("web")));
 
     assert_eq!(change, SnapshotChange::Unchanged);
-    assert!(state.builtin_watch(BuiltinKind::Pods, "default").is_none());
+    assert!(
+        state
+            .builtin_watch(BuiltinKind::Pods, Some("default"))
+            .is_none()
+    );
 }
 
 #[test]
@@ -433,7 +437,9 @@ fn a_namespaces_error_marks_the_snapshot_stale_and_the_next_one_clears_it() {
 fn an_object_watch_ending_marks_only_that_watch_stale() {
     let mut state = state();
     let pods = state.open_builtin_list(BuiltinKind::Pods).key;
-    let deployments = state.watch_builtin(BuiltinKind::Deployments, "default").key;
+    let deployments = state
+        .watch_builtin(BuiltinKind::Deployments, Some("default"))
+        .key;
     state.object_message(&pods, Ok(pod_event("web")));
     state.object_message(&deployments, Ok(pod_event("web")));
 

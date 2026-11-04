@@ -37,14 +37,14 @@ fn target(kind: BuiltinKind, name: &str) -> DetailTarget {
 fn state(target: &DetailTarget) -> SessionState {
     let mut state = SessionState::new(ClusterId::named("kind-a"), "default");
     for watch in watches(target) {
-        state.watch_builtin(watch.kind, &watch.namespace);
+        state.watch_builtin(watch.kind, watch.namespace.as_deref());
     }
     state
 }
 
 /// Feeds `objects` to the watch of `kind` in `default` as its snapshot.
 fn snapshot(state: &mut SessionState, kind: BuiltinKind, objects: Vec<DynamicObject>) {
-    let key = state.builtin_watch_key(kind, "default");
+    let key = state.builtin_watch_key(kind, Some("default"));
     state.object_message(&key, Ok(Event::Init));
     for object in objects {
         state.object_message(&key, Ok(Event::InitApply(object)));
@@ -53,7 +53,7 @@ fn snapshot(state: &mut SessionState, kind: BuiltinKind, objects: Vec<DynamicObj
 }
 
 fn forbid(state: &mut SessionState, kind: BuiltinKind, message: &str) {
-    let key = state.builtin_watch_key(kind, "default");
+    let key = state.builtin_watch_key(kind, Some("default"));
     state.object_message(&key, Err(ClusterError::forbidden(message)));
 }
 
@@ -111,11 +111,11 @@ fn a_service_detail_needs_its_own_and_its_endpoint_slices_watch() {
         [
             NeededWatch {
                 kind: BuiltinKind::Services,
-                namespace: "team-a".to_string(),
+                namespace: Some("team-a".to_string()),
             },
             NeededWatch {
                 kind: BuiltinKind::EndpointSlices,
-                namespace: "team-a".to_string(),
+                namespace: Some("team-a".to_string()),
             },
         ]
     );
@@ -298,4 +298,40 @@ fn reference_errors_display_the_involved_object() {
         .to_string(),
         "Cannot open involved object Widget/w: kind is not registered"
     );
+}
+
+#[test]
+fn a_cluster_scoped_builtin_is_watched_and_found_without_a_namespace() {
+    // No cluster-scoped built-in kind is registered yet: Pods stands in as a
+    // kind without a Related watch, fed an object that has no namespace.
+    let target = DetailTarget::Builtin {
+        kind: BuiltinKind::Pods,
+        key: ObjectKey::cluster_scoped("node-a"),
+    };
+    let needed = watches(&target);
+    assert_eq!(needed[0].kind, BuiltinKind::Pods);
+    assert_eq!(needed[0].namespace, None);
+    let mut state = SessionState::new(ClusterId::named("kind-a"), "default");
+    for watch in &needed {
+        state.watch_builtin(watch.kind, watch.namespace.as_deref());
+    }
+    let key = state.builtin_watch_key(BuiltinKind::Pods, None);
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(
+        &key,
+        Ok(Event::InitApply(object(serde_json::json!({
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": "node-a", "uid": "uid-node-a"},
+            "spec": {"containers": [{"name": "app", "image": "nginx"}]}
+        })))),
+    );
+    state.object_message(&key, Ok(Event::InitDone));
+    assert!(state.builtin_watch(BuiltinKind::Pods, None).is_some());
+    assert!(
+        state
+            .builtin_object(BuiltinKind::Pods, None, "node-a")
+            .is_some()
+    );
+    assert_eq!(target.object(&state).unwrap().key.name, "node-a");
+    assert_eq!(resolved(&target, &state).object.key.namespace, None);
 }
