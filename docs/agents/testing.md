@@ -270,6 +270,19 @@ Default::default()`. A new accessor in `astrolabe-model` needs a test that
 reads it back from a state that has the value and one that has not (#249
 retro).
 
+A `tracing` line guarded by a condition (`if old != new { info!(..) }`)
+is a mutant `astrolabe-model`'s tests cannot see unless one counts log
+events: the crate has no `tracing-subscriber` dev-dependency and
+`dev/layer-check.sh` limits its dependencies. Implement `tracing::Subscriber`
+in the test with an `AtomicUsize` and run the call under
+`tracing::subscriber::with_default`; assert zero events when the
+condition is false and one when it is true (`events_logged_by` in
+`crates/model/tests/watched.rs`).
+
+Origin: #232 pushed without the command above. CI's `mutants` job missed
+`!=` to `==` in `Watched::set_status`'s log guard, which only the app's
+`LogCapture` test saw, and the PR needed a second CI round (#232 retro).
+
 CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff,
 and fails on every missed mutant there: a justification in the PR does not
 pass it. When no input can tell a mutant from the original (an equivalent

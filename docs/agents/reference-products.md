@@ -80,3 +80,12 @@ a fixture that fails if the field passes only through the typed model.
   post them (an issue comment or a draft PR) and wait for the answer
   before writing code; listing them only in the final PR is too late
   (#161 retro).
+
+## State a spec calls "exactly when X changes"
+
+When an acceptance criterion says a value changes "exactly when" something
+does, read how Freelens decides that something changed before choosing a
+definition. #232's revision first counted every `Apply`; Freelens's
+`updateFromEventsBuffer` (`kube-object.store.ts`) skips an `Apply` with the
+known `resourceVersion` and a `Delete` of an unknown uid, and the Spec
+reviewer's finding sent the implementer there (#232 retro).
