@@ -134,9 +134,10 @@ pub struct YamlEditorView {
     /// Force Apply is offered only in the 409 context (#10: panel button,
     /// never automatic, never default-on).
     force_apply_available: bool,
-    /// Global error bar (degradation level 4): full message, no line jump.
+    /// Global error bar (degradation level 4): full messages, no line jump,
+    /// one per failure (a multi-document apply can fail several documents).
     /// Part of the apply result group: replaced when the next apply starts.
-    global_notice: Option<String>,
+    global_notice: Vec<String>,
     /// Solid line tints for apply errors (persist across edits).
     apply_decorations: Option<RangeDecorationCollection>,
     /// Outline line tints for precheck results (cleared on edit / on apply).
@@ -193,7 +194,7 @@ impl YamlEditorView {
             panel: Vec::new(),
             conflict_managers: Vec::new(),
             force_apply_available: false,
-            global_notice: None,
+            global_notice: Vec::new(),
             apply_decorations: None,
             precheck_decorations: None,
             precheck_note: None,
@@ -226,7 +227,7 @@ impl YamlEditorView {
         self.panel.clear();
         self.conflict_managers.clear();
         self.force_apply_available = false;
-        self.global_notice = None;
+        self.global_notice.clear();
         self.clear_apply_decorations(cx);
         // So does the last Precheck's; the next edit checks against this one.
         self.clear_precheck(cx);
@@ -251,7 +252,7 @@ impl YamlEditorView {
         }
         let snapshot = self.state.read(cx).value().to_string();
         let Some(applied) = self.send(|session| session.apply(&snapshot, mode), cx) else {
-            self.global_notice = Some(no_cluster_notice("apply"));
+            self.global_notice = vec![no_cluster_notice("apply")];
             cx.notify();
             return;
         };
@@ -262,7 +263,7 @@ impl YamlEditorView {
         self.panel.clear();
         self.conflict_managers.clear();
         self.force_apply_available = false;
-        self.global_notice = None;
+        self.global_notice.clear();
         self.clear_apply_decorations(cx);
         self.status_line = match mode {
             ApplyMode::Normal => "applying…".to_string(),
@@ -293,7 +294,7 @@ impl YamlEditorView {
             Ok(report) => report,
             Err(e) => {
                 self.pending_snapshot = None;
-                self.global_notice = Some(failure_notice("apply", &e));
+                self.global_notice = vec![failure_notice("apply", &e)];
                 self.status_line = "apply failed".to_string();
                 cx.notify();
                 return;
@@ -327,7 +328,8 @@ impl YamlEditorView {
             };
             match &error.error {
                 ApplyError::Global { message } => {
-                    self.global_notice = Some(format!("{}: {message}", outcome.doc));
+                    self.global_notice
+                        .push(format!("{}: {message}", outcome.doc));
                 }
                 ApplyError::Validation(_) => {
                     errors += error.causes.len();
@@ -346,7 +348,7 @@ impl YamlEditorView {
                     }
                     if conflicts.is_empty() {
                         // Message failed to parse: degrade to the global bar.
-                        self.global_notice = Some(
+                        self.global_notice.push(
                             "apply conflicted (unparsable details); force apply available"
                                 .to_string(),
                         );
@@ -392,7 +394,7 @@ impl YamlEditorView {
             // The debounced Precheck stays silent: the status already says
             // "no cluster".
             if manual {
-                self.global_notice = Some(no_cluster_notice("precheck"));
+                self.global_notice = vec![no_cluster_notice("precheck")];
                 cx.notify();
             }
             return;
@@ -431,7 +433,7 @@ impl YamlEditorView {
             Ok(report) => report,
             Err(e) => {
                 if manual {
-                    self.global_notice = Some(failure_notice("precheck", &e));
+                    self.global_notice = vec![failure_notice("precheck", &e)];
                 } else {
                     self.precheck_status = PrecheckStatus::Unavailable;
                 }
@@ -494,7 +496,7 @@ impl YamlEditorView {
             old.dispose(cx);
         }
         if unavailable && manual {
-            self.global_notice = Some("precheck unavailable for some documents".to_string());
+            self.global_notice = vec!["precheck unavailable for some documents".to_string()];
         } else if unavailable {
             self.precheck_status = PrecheckStatus::Unavailable;
         }
@@ -815,7 +817,8 @@ impl Render for YamlEditorView {
             .on_action(cx.listener(Self::on_force_apply))
             .on_action(cx.listener(Self::on_precheck))
             .on_action(cx.listener(Self::on_toggle_palette));
-        if let Some(notice) = self.global_notice.clone() {
+        if !self.global_notice.is_empty() {
+            let notice = self.global_notice.join("\n");
             root = root.child(
                 div()
                     .id("global-notice")
@@ -829,9 +832,13 @@ impl Render for YamlEditorView {
                     .text_color(theme.red)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(notice)
+                    .children(
+                        self.global_notice
+                            .iter()
+                            .map(|line| div().child(line.clone())),
+                    )
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.global_notice = None;
+                        this.global_notice.clear();
                         cx.notify();
                     })),
             );

@@ -27,6 +27,8 @@ enum Answer {
     /// A 409 from `kubectl`, which offers Force Apply; a Precheck notes
     /// the unknown field `spec.bogus`.
     Conflict,
+    /// A Global error (`forbidden`) on each of the documents.
+    Forbidden(&'static [&'static str]),
 }
 
 /// Cluster `name`, whose Apply records into `applied` and answers with
@@ -52,13 +54,14 @@ fn cluster(
                 .push((name, snapshot.to_string(), mode));
             Ok(match (answer, mode) {
                 (Answer::Conflict, ApplyMode::Normal) => support::conflict_report(snapshot),
+                (Answer::Forbidden(docs), _) => support::global_report(docs),
                 _ => clean(),
             })
         })
         .precheck(move |snapshot: &str| {
             Ok(match answer {
                 Answer::Conflict => support::unknown_field_report(snapshot),
-                Answer::Applied => clean(),
+                Answer::Applied | Answer::Forbidden(_) => clean(),
             })
         });
     ((ClusterId::named(name), scripted), namespaces)
@@ -202,4 +205,41 @@ fn with_no_cluster_the_workspace_editor_says_so_and_cannot_apply(cx: &mut TestAp
 
     assert_eq!(label(cx, "global-notice"), "cannot apply: no cluster");
     assert_eq!(label(cx, "yaml-status"), "no cluster");
+}
+
+/// An Apply that fails Global on one document shows that message.
+#[gpui_kit::test]
+fn an_apply_failing_one_document_globally_shows_its_message(cx: &mut TestAppContext) {
+    let applied = Applied::default();
+    let (a, _namespaces) = cluster("kind-a", &applied, Answer::Forbidden(&["v1 Namespace/a"]));
+    let cx = open_workspace(cx, vec![a]);
+
+    edit(cx, "kind: ConfigMap");
+    apply(cx);
+
+    assert_eq!(
+        label(cx, "global-notice"),
+        "v1 Namespace/a: forbidden: v1 Namespace/a"
+    );
+}
+
+/// With two documents failing Global, the notice keeps both messages, not
+/// only the last.
+#[gpui_kit::test]
+fn an_apply_failing_two_documents_globally_shows_both_messages(cx: &mut TestAppContext) {
+    let applied = Applied::default();
+    let (a, _namespaces) = cluster(
+        "kind-a",
+        &applied,
+        Answer::Forbidden(&["v1 Namespace/a", "v1 Namespace/b"]),
+    );
+    let cx = open_workspace(cx, vec![a]);
+
+    edit(cx, "kind: ConfigMap");
+    apply(cx);
+
+    assert_eq!(
+        label(cx, "global-notice"),
+        "v1 Namespace/a: forbidden: v1 Namespace/a\nv1 Namespace/b: forbidden: v1 Namespace/b"
+    );
 }
