@@ -179,7 +179,7 @@ impl Session {
             return;
         }
         if let Err(error) = &result {
-            tracing::warn!(cluster = %self.state.watch_key().cluster, error = %error, "discovery failed");
+            tracing::warn!(cluster = %self.state.cluster(), error = %error, "discovery failed");
         }
         self.discovery.record(result);
         self.rebuild_catalog(cx);
@@ -487,7 +487,7 @@ fn spawn_drain<K: 'static>(
     let Some(mut receiver) = receiver else {
         return;
     };
-    let apply = move |session: &mut Session, message, cx: &mut Context<Session>| {
+    let feed = move |session: &mut Session, message, cx: &mut Context<Session>| {
         perf::count(perf::Event::WatchEvent);
         let change = apply(session, message);
         changed(session, change, cx);
@@ -499,10 +499,10 @@ fn spawn_drain<K: 'static>(
             let mut finished = false;
             if this
                 .update(cx, |session, cx| {
-                    apply(session, message, cx);
+                    feed(session, message, cx);
                     loop {
                         match receiver.try_recv() {
-                            Ok(message) => apply(session, message, cx),
+                            Ok(message) => feed(session, message, cx),
                             Err(error) if error.is_closed() => {
                                 finished = true;
                                 break;

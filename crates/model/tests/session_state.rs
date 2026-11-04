@@ -443,3 +443,8 @@ fn the_watch_key_names_the_cluster() {
     assert_eq!(state.watch_key().kind, ResourceKind::Namespaces);
     assert_eq!(state.watch_key().namespace, None);
 }
+
+#[test]
+fn the_cluster_is_the_one_the_state_was_built_for() {
+    assert_eq!(state().cluster(), &ClusterId::named("kind-test"));
+}

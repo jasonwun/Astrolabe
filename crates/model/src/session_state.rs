@@ -201,6 +201,11 @@ impl SessionState {
         &self.key
     }
 
+    /// The Cluster this state belongs to.
+    pub fn cluster(&self) -> &ClusterId {
+        &self.key.cluster
+    }
+
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
