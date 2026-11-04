@@ -885,3 +885,22 @@ fn the_list_holds_only_the_forwards_of_its_target() {
     assert_eq!(requests_to(&state, &pod_target("web")).len(), 1);
     assert_eq!(requests_to(&state, &pod_target("db")), []);
 }
+
+#[test]
+fn the_served_resources_are_what_discovery_last_found() {
+    let discovered = crontab_state("Namespaced", true);
+    let undiscovered = crontab_state("Namespaced", false);
+
+    let found = discovered.served_resources();
+    assert!(
+        found
+            .resolve("stable.example.com", "v1", "CronTab")
+            .is_some()
+    );
+    assert!(
+        undiscovered
+            .served_resources()
+            .resolve("stable.example.com", "v1", "CronTab")
+            .is_none()
+    );
+}
