@@ -61,7 +61,8 @@ pub fn object(value: serde_json::Value) -> DynamicObject {
 pub const LONG_ERROR_PORT: u16 = 7001;
 /// Forwarding this port ends in a `Failed` state with `LONG_ERROR`.
 pub const FAILED_PORT: u16 = 7002;
-/// Synthetic (modelled on a kubelet/CNI message, not captured): an error far wider than any window, with no break but spaces.
+/// Synthetic (modelled on a kubelet/CNI message, not captured): an error
+/// far wider than any window, with no break but spaces.
 pub const LONG_ERROR: &str = "error forwarding port 7001: an error occurred forwarding 18080 -> 8080: error forwarding port 8080 to pod 0123456789abcdef, uid : failed to execute portforward in network namespace \"/var/run/netns/cni-0123456789\": failed to connect to localhost:8080 inside namespace: dial tcp4 127.0.0.1:8080: connect: connection refused";
 
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
