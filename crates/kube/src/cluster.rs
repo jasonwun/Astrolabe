@@ -362,9 +362,12 @@ impl Cluster {
     }
 
     /// Apply every document of `snapshot` with server-side apply, started
-    /// at once on the cluster runtime. Each document is sent on its own:
-    /// one the server rejects does not stop the others, and its outcome in
-    /// the report carries the rejection, its causes located on `snapshot`.
+    /// at once on the cluster runtime. Each document's kind is resolved
+    /// from `served` first; the apiserver is asked only for a kind `served`
+    /// lacks, such as a CRD Discovery has not seen yet. Each document is
+    /// sent on its own: one the server rejects does not stop the others, and
+    /// its outcome in the report carries the rejection, its causes located
+    /// on `snapshot`.
     ///
     /// # Errors
     ///
@@ -377,12 +380,13 @@ impl Cluster {
         &self,
         snapshot: &str,
         mode: ApplyMode,
+        served: ServedResources,
     ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
         self.send_snapshot(
             snapshot,
             "apply task panicked",
             move |client, snapshot| async move {
-                apply::apply_documents(&client, &snapshot, mode).await
+                apply::apply_documents(&client, &snapshot, mode, &served).await
             },
         )
     }
@@ -398,11 +402,14 @@ impl Cluster {
     pub fn precheck(
         &self,
         snapshot: &str,
+        served: ServedResources,
     ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
         self.send_snapshot(
             snapshot,
             "precheck task panicked",
-            |client, snapshot| async move { apply::precheck_documents(&client, &snapshot).await },
+            move |client, snapshot| async move {
+                apply::precheck_documents(&client, &snapshot, &served).await
+            },
         )
     }
 

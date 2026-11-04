@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use kube::Client;
 use kube::core::{GroupVersion, GroupVersionKind};
-use kube::discovery::{ApiGroup, ApiResource, Discovery, Scope, pinned_group};
+use kube::discovery::{ApiGroup, ApiResource, Discovery, Scope, pinned_group, pinned_kind};
 use kube::error::DiscoveryError;
 
 /// One served kind at one version.
@@ -130,4 +130,26 @@ async fn discover_per_group(client: &Client) -> kube::Result<ServedResources> {
         group_versions.push(pinned_group(client, &group_version).await?);
     }
     Ok(ServedResources::from_groups(&group_versions))
+}
+
+/// Resolve `gvk` from `served` first, asking the apiserver (`pinned_kind`)
+/// only for a kind `served` lacks, such as a CRD Discovery has not seen yet.
+///
+/// # Errors
+///
+/// A [`kube::Error`] when the kind is not in `served` and the apiserver
+/// cannot resolve it either.
+pub(crate) async fn resolve_kind(
+    client: &Client,
+    served: &ServedResources,
+    gvk: &GroupVersionKind,
+) -> kube::Result<ServedResource> {
+    if let Some(found) = served.resolve(&gvk.group, &gvk.version, &gvk.kind) {
+        return Ok(found.clone());
+    }
+    let (resource, capabilities) = pinned_kind(client, gvk).await?;
+    Ok(ServedResource {
+        resource,
+        namespaced: capabilities.scope == Scope::Namespaced,
+    })
 }
