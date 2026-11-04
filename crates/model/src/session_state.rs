@@ -378,6 +378,12 @@ impl SessionState {
 
     /// The failure of the latest Discovery refresh, if it failed; the old
     /// result stays in use.
+    /// What Discovery last found served; empty before its first success.
+    #[must_use]
+    pub fn served_resources(&self) -> ServedResources {
+        self.discovery.served().cloned().unwrap_or_default()
+    }
+
     pub fn discovery_failure(&self) -> Option<&ClusterError> {
         self.discovery.failure()
     }

@@ -246,7 +246,8 @@ impl Session {
         snapshot: &str,
         mode: ApplyMode,
     ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
-        self.io.apply(snapshot, mode)
+        self.io
+            .apply(snapshot, mode, &self.state.served_resources())
     }
 
     /// Precheck `snapshot`: a dry run that changes nothing on the Cluster.
@@ -254,7 +255,7 @@ impl Session {
         &mut self,
         snapshot: &str,
     ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
-        self.io.precheck(snapshot)
+        self.io.precheck(snapshot, &self.state.served_resources())
     }
 
     /// Follow one container's log, from a bounded tail.

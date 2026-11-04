@@ -9,7 +9,9 @@
 
 use kube::api::{Patch, PatchParams};
 use kube::core::{DynamicObject, GroupVersionKind};
-use kube::{Api, Client, ResourceExt as _, discovery};
+use kube::{Api, Client, ResourceExt as _};
+
+use crate::discovery::{self, ServedResources};
 
 use super::error::{ApplyError, FieldCause, parse_status};
 use super::locate::{Located, locate_field};
@@ -64,7 +66,8 @@ pub enum ApplyMode {
     Force,
 }
 
-/// Apply every document of `snapshot` with SSA (allSettled); callers go
+/// Apply every document of `snapshot` with SSA (allSettled), resolving each
+/// kind from `served` before asking the apiserver; callers go
 /// through [`Cluster::apply`](crate::cluster::Cluster::apply).
 ///
 /// # Errors
@@ -76,6 +79,7 @@ pub(crate) async fn apply_documents(
     client: &Client,
     snapshot: &str,
     mode: ApplyMode,
+    served: &ServedResources,
 ) -> Result<ApplyReport, payload::PayloadError> {
     let docs = payload::parse_documents(snapshot)?;
     let params = match mode {
@@ -87,6 +91,7 @@ pub(crate) async fn apply_documents(
         snapshot,
         &ClusterApply {
             client,
+            served,
             params: &params,
         },
     )
@@ -108,6 +113,7 @@ pub(crate) async fn apply_documents(
 pub(crate) async fn precheck_documents(
     client: &Client,
     snapshot: &str,
+    served: &ServedResources,
 ) -> Result<ApplyReport, payload::PayloadError> {
     let docs = payload::parse_documents(snapshot)?;
     let params = PatchParams::apply(FIELD_MANAGER)
@@ -118,6 +124,7 @@ pub(crate) async fn precheck_documents(
         snapshot,
         &ClusterApply {
             client,
+            served,
             params: &params,
         },
     )
@@ -136,12 +143,13 @@ trait DocApply {
 /// Applies each document to the cluster with the given patch params.
 struct ClusterApply<'a> {
     client: &'a Client,
+    served: &'a ServedResources,
     params: &'a PatchParams,
 }
 
 impl DocApply for ClusterApply<'_> {
     async fn apply(&self, doc: &DocPayload) -> Result<(), ApplyError> {
-        apply_one(self.client, doc, self.params).await
+        apply_one(self.client, self.served, doc, self.params).await
     }
 }
 
@@ -165,6 +173,7 @@ async fn send_all(docs: Vec<DocPayload>, snapshot: &str, apply: &impl DocApply) 
 
 async fn apply_one(
     client: &Client,
+    served: &ServedResources,
     doc: &DocPayload,
     params: &PatchParams,
 ) -> Result<(), ApplyError> {
@@ -182,14 +191,13 @@ async fn apply_one(
         });
     }
     let gvk = GroupVersionKind::gvk(group, version, &doc.kind);
-    let (resource, caps) =
-        discovery::pinned_kind(client, &gvk)
-            .await
-            .map_err(|e| ApplyError::Global {
-                message: format!("failed to discover {}: {e}", gvk.kind),
-            })?;
+    let (resource, namespaced) = discovery::resolve_kind(client, served, &gvk)
+        .await
+        .map_err(|e| ApplyError::Global {
+            message: format!("failed to discover {}: {e}", gvk.kind),
+        })?;
 
-    let api = if caps.scope == discovery::Scope::Namespaced {
+    let api = if namespaced {
         Api::<DynamicObject>::namespaced_with(
             client.clone(),
             doc.namespace
@@ -427,9 +435,14 @@ data:
     async fn apply_one_rejects_api_version_with_empty_version() {
         let (client, _) = mock_client(|_| unexpected_request());
         let doc = only_doc("apiVersion: apps/\nkind: Deployment\nmetadata:\n  name: nginx\n");
-        let err = apply_one(&client, &doc, &PatchParams::apply("test"))
-            .await
-            .unwrap_err();
+        let err = apply_one(
+            &client,
+            &ServedResources::default(),
+            &doc,
+            &PatchParams::apply("test"),
+        )
+        .await
+        .unwrap_err();
         match err {
             ApplyError::Global { message } => {
                 assert!(message.contains("apiVersion"), "unexpected: {message}");
@@ -448,9 +461,14 @@ data:
             _ => unexpected_request(),
         });
         let doc = only_doc("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n");
-        apply_one(&client, &doc, &PatchParams::apply("test"))
-            .await
-            .unwrap();
+        apply_one(
+            &client,
+            &ServedResources::default(),
+            &doc,
+            &PatchParams::apply("test"),
+        )
+        .await
+        .unwrap();
         let requests = seen.lock().unwrap();
         assert!(
             requests
@@ -472,9 +490,14 @@ data:
             }
         });
         let doc = only_doc("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n");
-        apply_one(&client, &doc, &PatchParams::apply("test"))
-            .await
-            .unwrap();
+        apply_one(
+            &client,
+            &ServedResources::default(),
+            &doc,
+            &PatchParams::apply("test"),
+        )
+        .await
+        .unwrap();
         let requests = seen.lock().unwrap();
         assert!(
             requests
@@ -492,9 +515,14 @@ data:
             _ => unexpected_request(),
         });
         let doc = only_doc("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: cluster-wide\n");
-        apply_one(&client, &doc, &PatchParams::apply("test"))
-            .await
-            .unwrap();
+        apply_one(
+            &client,
+            &ServedResources::default(),
+            &doc,
+            &PatchParams::apply("test"),
+        )
+        .await
+        .unwrap();
         let requests = seen.lock().unwrap();
         assert!(
             requests
@@ -534,9 +562,14 @@ data:
             _ => unexpected_request(),
         });
         let doc = only_doc("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n");
-        let err = apply_one(&client, &doc, &PatchParams::apply("test"))
-            .await
-            .unwrap_err();
+        let err = apply_one(
+            &client,
+            &ServedResources::default(),
+            &doc,
+            &PatchParams::apply("test"),
+        )
+        .await
+        .unwrap_err();
         match err {
             ApplyError::Validation(causes) => {
                 assert_eq!(causes.len(), 1);
@@ -594,9 +627,14 @@ data:
             ),
             _ => unexpected_request(),
         });
-        let report = apply_documents(&client, TWO_DOCS, ApplyMode::Normal)
-            .await
-            .unwrap();
+        let report = apply_documents(
+            &client,
+            TWO_DOCS,
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
+        .await
+        .unwrap();
         assert!(!report.ok);
         assert_eq!(report.outcomes.len(), 2);
         assert_eq!(report.outcomes[0].doc, "v1 ConfigMap/first");

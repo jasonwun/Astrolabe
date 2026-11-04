@@ -16,6 +16,7 @@ use std::time::Duration;
 use astrolabe_kube::apply::{ApplyError, ApplyMode, ApplyReport, Location};
 use astrolabe_kube::cluster::{Cluster, ClusterId};
 use astrolabe_kube::default_client;
+use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::k8s_openapi::api::batch::v1::{CronJob, Job};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, Pod};
@@ -104,7 +105,7 @@ fn handle(client: &kube::Client) -> Cluster {
 
 async fn apply(client: &kube::Client, snapshot: &str) -> ApplyReport {
     handle(client)
-        .apply(snapshot, ApplyMode::Normal)
+        .apply(snapshot, ApplyMode::Normal, &ServedResources::default())
         .await
         .unwrap()
 }
@@ -358,7 +359,7 @@ async fn apply_409_then_force_apply() {
 
     // Force Apply takes ownership and succeeds.
     let report = handle(&client)
-        .apply(&snapshot, ApplyMode::Force)
+        .apply(&snapshot, ApplyMode::Force, &ServedResources::default())
         .await
         .unwrap();
     assert!(
@@ -393,7 +394,10 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
     for (label, report) in [
         (
             "precheck",
-            handle(&client).precheck(&snapshot).await.unwrap(),
+            handle(&client)
+                .precheck(&snapshot, &ServedResources::default())
+                .await
+                .unwrap(),
         ),
         ("apply", apply(&client, &snapshot).await),
     ] {

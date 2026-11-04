@@ -4,8 +4,10 @@
 
 use astrolabe_kube::apply::{ApplyError, ApplyMode};
 use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterErrorKind, ClusterId};
+use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
+use astrolabe_kube::kube::discovery::ApiResource;
 
 const AGGREGATED_CORE: &str = r#"{"kind":"APIGroupDiscoveryList","apiVersion":"apidiscovery.k8s.io/v2","items":[
     {"metadata":{"name":""},"versions":[{"version":"v1","resources":[
@@ -155,6 +157,10 @@ const UNKNOWN_FIELD: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Fail
     {"reason":"FieldValueInvalid","message":"unknown field \"data.key\"","field":"data.key"}]}}"#;
 const PATCH_PATH: &str = "/api/v1/namespaces/default/configmaps/cm";
 
+/// The requests the mock saw, as `METHOD path`, for the discovery-free
+/// assertions.
+type Requests = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
 /// The `PATCH` requests' query strings, in the order the mock saw them.
 type Patches = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
 
@@ -202,7 +208,11 @@ async fn apply_sends_the_snapshot_as_a_server_side_apply() {
     let (cluster, patches) = configmap_cluster(applied);
 
     let report = cluster
-        .apply(CONFIGMAP_YAML, ApplyMode::Normal)
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
         .await
         .unwrap();
 
@@ -216,12 +226,101 @@ async fn apply_sends_the_snapshot_as_a_server_side_apply() {
     assert!(!queries[0].contains("dryRun"), "{queries:?}");
 }
 
+fn served_configmap() -> ServedResources {
+    ServedResources::new([ServedResource {
+        resource: ApiResource {
+            group: String::new(),
+            version: "v1".to_owned(),
+            api_version: "v1".to_owned(),
+            kind: "ConfigMap".to_owned(),
+            plural: "configmaps".to_owned(),
+        },
+        namespaced: true,
+    }])
+}
+
+/// A cluster that serves only the `PATCH`; every other request (that is,
+/// any discovery request) is recorded and refused.
+fn patch_only_cluster() -> (Cluster, Requests) {
+    let recorded = Requests::default();
+    let seen = recorded.clone();
+    let service = tower::service_fn(move |req: http::Request<Body>| {
+        let response = if req.method() == "PATCH" && req.uri().path() == PATCH_PATH {
+            applied()
+        } else {
+            seen.lock()
+                .unwrap()
+                .push(format!("{} {}", req.method(), req.uri().path()));
+            status(404, "NotFound")
+        };
+        std::future::ready(Ok::<_, std::convert::Infallible>(response))
+    });
+    (
+        Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock")),
+        recorded,
+    )
+}
+
+#[tokio::test]
+async fn a_served_kind_is_applied_without_a_discovery_request() {
+    let (cluster, discovery) = patch_only_cluster();
+
+    let applied = cluster
+        .apply(CONFIGMAP_YAML, ApplyMode::Normal, &served_configmap())
+        .await
+        .unwrap();
+    let prechecked = cluster
+        .precheck(CONFIGMAP_YAML, &served_configmap())
+        .await
+        .unwrap();
+
+    assert!(applied.ok && prechecked.ok);
+    assert_eq!(*discovery.lock().unwrap(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn an_unserved_kind_falls_back_to_asking_the_apiserver() {
+    let (cluster, _) = configmap_cluster(applied);
+
+    let report = cluster
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(report.ok);
+}
+
+#[tokio::test]
+async fn an_unserved_kind_the_apiserver_does_not_know_is_reported() {
+    let (cluster, patches) = patch_only_cluster();
+
+    let report = cluster
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
+        .await
+        .unwrap();
+
+    assert!(!report.ok);
+    let _ = patches;
+}
+
 #[tokio::test]
 async fn a_conflicting_apply_reports_the_conflict() {
     let (cluster, _) = configmap_cluster(conflicted);
 
     let report = cluster
-        .apply(CONFIGMAP_YAML, ApplyMode::Normal)
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
         .await
         .unwrap();
 
@@ -241,7 +340,11 @@ async fn force_apply_takes_over_the_conflicting_fields() {
     let (cluster, patches) = configmap_cluster(applied);
 
     let report = cluster
-        .apply(CONFIGMAP_YAML, ApplyMode::Force)
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Force,
+            &ServedResources::default(),
+        )
         .await
         .unwrap();
 
@@ -255,7 +358,10 @@ async fn force_apply_takes_over_the_conflicting_fields() {
 async fn precheck_is_a_strict_dry_run() {
     let (cluster, patches) = configmap_cluster(applied);
 
-    let report = cluster.precheck(CONFIGMAP_YAML).await.unwrap();
+    let report = cluster
+        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .await
+        .unwrap();
 
     assert!(report.ok);
     let queries = queries(&patches);
@@ -269,7 +375,10 @@ async fn precheck_is_a_strict_dry_run() {
 async fn a_precheck_reports_what_the_apply_would_hit() {
     let (cluster, _) = configmap_cluster(conflicted);
 
-    let report = cluster.precheck(CONFIGMAP_YAML).await.unwrap();
+    let report = cluster
+        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .await
+        .unwrap();
 
     assert!(!report.ok);
     assert!(report.outcomes[0].result.is_err());
@@ -279,7 +388,10 @@ async fn a_precheck_reports_what_the_apply_would_hit() {
 async fn a_precheck_flags_an_unknown_field_as_strict_decoding() {
     let (cluster, _) = configmap_cluster(unknown_field);
 
-    let report = cluster.precheck(CONFIGMAP_YAML).await.unwrap();
+    let report = cluster
+        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .await
+        .unwrap();
 
     let error = report.outcomes[0].result.as_ref().unwrap_err();
     match &error.error {
@@ -297,10 +409,17 @@ async fn an_unparsable_snapshot_fails_before_anything_is_sent() {
     let (cluster, patches) = configmap_cluster(applied);
 
     let apply = cluster
-        .apply("kind: [unclosed", ApplyMode::Normal)
+        .apply(
+            "kind: [unclosed",
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
         .await
         .unwrap_err();
-    let precheck = cluster.precheck("kind: [unclosed").await.unwrap_err();
+    let precheck = cluster
+        .precheck("kind: [unclosed", &ServedResources::default())
+        .await
+        .unwrap_err();
 
     assert_eq!(apply.kind(), ClusterErrorKind::Other);
     assert_eq!(precheck.kind(), ClusterErrorKind::Other);
@@ -312,10 +431,17 @@ async fn apply_and_precheck_fail_with_the_connect_failure() {
     let cluster = Cluster::connect(&no_such_cluster());
 
     let apply = cluster
-        .apply(CONFIGMAP_YAML, ApplyMode::Normal)
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            &ServedResources::default(),
+        )
         .await
         .unwrap_err();
-    let precheck = cluster.precheck(CONFIGMAP_YAML).await.unwrap_err();
+    let precheck = cluster
+        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .await
+        .unwrap_err();
 
     assert_eq!(apply.kind(), ClusterErrorKind::Connect);
     assert_eq!(precheck.kind(), ClusterErrorKind::Connect);
