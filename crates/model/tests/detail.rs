@@ -44,7 +44,7 @@ fn state(target: &DetailTarget) -> SessionState {
 
 /// Feeds `objects` to the watch of `kind` in `default` as its snapshot.
 fn snapshot(state: &mut SessionState, kind: BuiltinKind, objects: Vec<DynamicObject>) {
-    let key = state.builtin_watch_key(kind, Some("default"));
+    let key = state.watch_builtin(kind, Some("default")).key;
     state.object_message(&key, Ok(Event::Init));
     for object in objects {
         state.object_message(&key, Ok(Event::InitApply(object)));
@@ -53,7 +53,7 @@ fn snapshot(state: &mut SessionState, kind: BuiltinKind, objects: Vec<DynamicObj
 }
 
 fn forbid(state: &mut SessionState, kind: BuiltinKind, message: &str) {
-    let key = state.builtin_watch_key(kind, Some("default"));
+    let key = state.watch_builtin(kind, Some("default")).key;
     state.object_message(&key, Err(ClusterError::forbidden(message)));
 }
 
@@ -315,7 +315,7 @@ fn a_cluster_scoped_builtin_is_watched_and_found_without_a_namespace() {
     for watch in &needed {
         state.watch_builtin(watch.kind, watch.namespace.as_deref());
     }
-    let key = state.builtin_watch_key(BuiltinKind::Pods, None);
+    let key = state.watch_builtin(BuiltinKind::Pods, None).key;
     state.object_message(&key, Ok(Event::Init));
     state.object_message(
         &key,

@@ -989,3 +989,42 @@ fn a_reconnect_restarts_a_watch_with_the_resource_it_started_with() {
     });
     assert_eq!(restarted, Some(resource));
 }
+
+fn crontab(namespace: &str, name: &str) -> Event<DynamicObject> {
+    Event::Apply(object(serde_json::json!({
+        "apiVersion": "stable.example.com/v1",
+        "kind": "CronTab",
+        "metadata": {"name": name, "namespace": namespace},
+    })))
+}
+
+#[test]
+fn the_viewed_custom_list_reads_the_watch_of_the_selected_namespace() {
+    let mut state = crontab_state("Namespaced", true);
+    let key = state.open_custom_list(&crontab_id()).unwrap().key;
+    state.object_message(&key, Ok(crontab("default", "nightly")));
+    let kind = state.custom_kind(&crontab_id()).unwrap().clone();
+
+    let watch = state.custom_watch(&kind).unwrap();
+    assert!(watch.get(Some("default"), "nightly").is_some());
+
+    state.set_namespace("team-a".to_string());
+    let watch = state.custom_watch(&kind).unwrap();
+    assert!(watch.get(Some("default"), "nightly").is_none());
+}
+
+#[test]
+fn a_custom_detail_resolves_from_its_namespaces_watch() {
+    use astrolabe_model::detail::{DetailTarget, resolve};
+    let mut state = crontab_state("Namespaced", true);
+    let key = state.open_custom_list(&crontab_id()).unwrap().key;
+    state.object_message(&key, Ok(crontab("default", "nightly")));
+    let target = |namespace: &str| DetailTarget::Custom {
+        id: crontab_id(),
+        key: ObjectKey::new(Some(namespace.to_string()), "nightly"),
+    };
+    let now = "2026-10-22T12:00:00Z".parse().unwrap();
+
+    assert!(resolve(&target("default"), &state, now).is_some());
+    assert!(resolve(&target("team-b"), &state, now).is_none());
+}
