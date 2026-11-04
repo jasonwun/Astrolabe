@@ -61,7 +61,7 @@ pub enum ApplyError {
 }
 
 /// Classify and parse a failed apply's status body.
-pub fn parse_status(status: &Status) -> ApplyError {
+pub(crate) fn parse_status(status: &Status) -> ApplyError {
     if let Some(cause) = parse_typed_patch_failure(&status.message) {
         return ApplyError::Validation(vec![cause]);
     }

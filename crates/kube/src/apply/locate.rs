@@ -60,7 +60,7 @@ pub struct Located {
 /// `doc_index` counts all documents in the buffer including empty ones, so
 /// it lines up with [`crate::apply::DocPayload::index`] (which keeps the
 /// original enumeration while skipping empty documents).
-pub fn locate_field(snapshot: &str, doc_index: usize, path: &[Segment]) -> Located {
+pub(crate) fn locate_field(snapshot: &str, doc_index: usize, path: &[Segment]) -> Located {
     let Ok(docs) = MarkedYaml::load_from_str(snapshot) else {
         return Located {
             location: Location::Global,

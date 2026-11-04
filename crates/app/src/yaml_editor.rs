@@ -306,14 +306,7 @@ impl YamlEditorView {
             && self.state.read(cx).value().as_ref() != snapshot.as_str()
         {
             let current = self.state.read(cx).value().to_string();
-            for outcome in &mut report.outcomes {
-                if let Err(error) = &mut outcome.result {
-                    for located in &mut error.causes {
-                        located.located =
-                            apply::locate_field(&current, outcome.doc_index, &located.cause.path);
-                    }
-                }
-            }
+            report.remap(&current);
         }
         if report.ok {
             self.status_line = "applied".to_string();
