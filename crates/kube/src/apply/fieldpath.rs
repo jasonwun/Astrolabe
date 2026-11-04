@@ -60,7 +60,7 @@ pub enum FieldPathError {
 /// after the first segment, and [`FieldPathError::MalformedBracket`] for a
 /// bracket that is unclosed, holds neither an index nor a `key="value"`
 /// selector, or is followed by text other than another bracket.
-pub fn parse_field_path(raw: &str) -> Result<Vec<Segment>, FieldPathError> {
+pub(crate) fn parse_field_path(raw: &str) -> Result<Vec<Segment>, FieldPathError> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err(FieldPathError::Empty);

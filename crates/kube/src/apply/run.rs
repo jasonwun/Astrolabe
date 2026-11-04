@@ -5,9 +5,10 @@
 //!
 //! The buffer snapshot IS the payload the server saw; error mapping always
 //! runs against it. Callers that kept editing may re-map against the current
-//! buffer themselves (best-effort, same [`locate_field`] entry point).
+//! buffer themselves (best-effort, via [`ApplyReport::remap`]).
 
 use kube::api::{Patch, PatchParams};
+use kube::core::response::Status;
 use kube::core::{DynamicObject, GroupVersionKind};
 use kube::{Api, Client, ResourceExt as _};
 
@@ -53,6 +54,42 @@ pub struct ApplyReport {
     pub outcomes: Vec<DocOutcome>,
     /// True when every document applied cleanly.
     pub ok: bool,
+}
+
+impl ApplyReport {
+    /// Re-map every cause onto `buffer`, a newer version of the snapshot
+    /// that was applied (best-effort: the buffer may have moved on while
+    /// the Apply was in flight).
+    pub fn remap(&mut self, buffer: &str) {
+        for outcome in &mut self.outcomes {
+            if let Err(error) = &mut outcome.result {
+                for located in &mut error.causes {
+                    located.located = locate_field(buffer, outcome.doc_index, &located.cause.path);
+                }
+            }
+        }
+    }
+
+    /// A report whose one document `doc` (at `doc_index` in `snapshot`)
+    /// failed with `status`, parsed and located exactly as Apply does.
+    /// For tests and the scripted Cluster.
+    pub fn failed(
+        doc_index: usize,
+        doc: impl Into<String>,
+        snapshot: &str,
+        status: &Status,
+    ) -> Self {
+        let error = parse_status(status);
+        let causes = located_causes(&error, snapshot, doc_index);
+        Self {
+            outcomes: vec![DocOutcome {
+                doc_index,
+                doc: doc.into(),
+                result: Err(DocError { error, causes }),
+            }],
+            ok: false,
+        }
+    }
 }
 
 /// How an Apply treats fields another field manager owns.
@@ -284,6 +321,42 @@ data:
         assert_eq!(
             causes[0].located.location,
             super::super::locate::Location::Exact { line: 6 }
+        );
+    }
+
+    #[test]
+    fn failed_report_locates_causes_and_remap_follows_a_newer_buffer() {
+        let status = Status {
+            code: 422,
+            details: Some(StatusDetails {
+                causes: vec![StatusCause {
+                    field: "data.bad".to_string(),
+                    message: "Invalid value".to_string(),
+                    reason: "FieldValueInvalid".to_string(),
+                }],
+                name: String::new(),
+                group: String::new(),
+                kind: String::new(),
+                uid: String::new(),
+                retry_after_seconds: 0,
+            }),
+            ..Default::default()
+        };
+        let mut report = ApplyReport::failed(0, "v1 ConfigMap/cm", DOC, &status);
+        assert!(!report.ok);
+        let line = |report: &ApplyReport| match &report.outcomes[0].result {
+            Err(error) => error.causes[0].located.location.clone(),
+            Ok(()) => panic!("expected a failure"),
+        };
+        assert_eq!(
+            line(&report),
+            super::super::locate::Location::Exact { line: 6 }
+        );
+
+        report.remap(&format!("# added\n{DOC}"));
+        assert_eq!(
+            line(&report),
+            super::super::locate::Location::Exact { line: 7 }
         );
     }
 

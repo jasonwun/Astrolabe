@@ -11,9 +11,7 @@ use std::time::Duration;
 use astrolabe::clock::Clock;
 use astrolabe::session::ScriptedCluster;
 use astrolabe::workspace::{Preselection, WorkspaceView};
-use astrolabe_kube::apply::{
-    ApplyMode, ApplyReport, DocError, DocOutcome, LocatedCause, locate_field, parse_status,
-};
+use astrolabe_kube::apply::{ApplyMode, ApplyReport, DocError, DocOutcome};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -222,26 +220,12 @@ fn outcome(result: Result<(), DocError>) -> DocOutcome {
 /// A report whose one document failed with `status`, its causes located
 /// on `snapshot`.
 fn failed_report(snapshot: &str, status: serde_json::Value) -> ApplyReport {
-    let error = parse_status(&serde_json::from_value(status).unwrap());
-    let causes = match &error {
-        astrolabe_kube::apply::ApplyError::Validation(causes) => causes.clone(),
-        astrolabe_kube::apply::ApplyError::Conflict(conflicts) => conflicts
-            .iter()
-            .flat_map(|conflict| conflict.causes.clone())
-            .collect(),
-        astrolabe_kube::apply::ApplyError::Global { .. } => Vec::new(),
-    };
-    let causes = causes
-        .into_iter()
-        .map(|cause| LocatedCause {
-            located: locate_field(snapshot, 0, &cause.path),
-            cause,
-        })
-        .collect();
-    ApplyReport {
-        outcomes: vec![outcome(Err(DocError { error, causes }))],
-        ok: false,
-    }
+    ApplyReport::failed(
+        0,
+        "v1 Namespace/old",
+        snapshot,
+        &serde_json::from_value(status).unwrap(),
+    )
 }
 
 /// A report whose documents `docs` each failed with a Global error naming
