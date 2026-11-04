@@ -249,3 +249,21 @@ apiVersion: demo.astrolabe.dev/v1
 kind: Widget
 metadata: {name: gizmo, namespace: astrolabe-demo}
 spec: {size: large}
+---
+# Events whose involved object cannot be opened: an unregistered kind, and
+# a reference without a name (error notices in the Events list).
+apiVersion: v1
+kind: Event
+metadata: {name: unregistered-kind, namespace: astrolabe-demo}
+type: Warning
+reason: Synthetic
+message: Involved object of a kind nothing registers.
+involvedObject: {apiVersion: example.com/v1, kind: Gadget, name: g1, namespace: astrolabe-demo}
+---
+apiVersion: v1
+kind: Event
+metadata: {name: nameless-reference, namespace: astrolabe-demo}
+type: Warning
+reason: Synthetic
+message: Involved object without a name.
+involvedObject: {apiVersion: v1, kind: Pod, namespace: astrolabe-demo}
