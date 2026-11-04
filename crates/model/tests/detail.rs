@@ -302,8 +302,8 @@ fn reference_errors_display_the_involved_object() {
 
 #[test]
 fn a_cluster_scoped_builtin_is_watched_and_found_without_a_namespace() {
-    // No cluster-scoped built-in kind is registered yet: Pods stands in, fed
-    // an object that has no namespace.
+    // No cluster-scoped built-in kind is registered yet: Pods stands in as a
+    // kind without a Related watch, fed an object that has no namespace.
     let target = DetailTarget::Builtin {
         kind: BuiltinKind::Pods,
         key: ObjectKey::cluster_scoped("node-a"),
@@ -316,7 +316,6 @@ fn a_cluster_scoped_builtin_is_watched_and_found_without_a_namespace() {
         state.watch_builtin(watch.kind, watch.namespace.as_deref());
     }
     let key = state.builtin_watch_key(BuiltinKind::Pods, None);
-    assert_eq!(key.namespace, None);
     state.object_message(&key, Ok(Event::Init));
     state.object_message(
         &key,
@@ -334,4 +333,5 @@ fn a_cluster_scoped_builtin_is_watched_and_found_without_a_namespace() {
             .is_some()
     );
     assert_eq!(target.object(&state).unwrap().key.name, "node-a");
+    assert_eq!(resolved(&target, &state).object.key.namespace, None);
 }

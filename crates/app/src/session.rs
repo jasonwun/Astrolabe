@@ -191,8 +191,8 @@ impl Session {
     }
 
     /// Ensure the watch holding `kind`'s objects in `namespace` (`None` when
-    /// cluster-scoped), whatever
-    /// the namespace selection (a detail tab or related section reads it).
+    /// cluster-scoped), whatever the namespace selection (a detail tab or
+    /// related section reads it).
     pub fn watch_builtin(
         &mut self,
         kind: BuiltinKind,
