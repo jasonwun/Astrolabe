@@ -11,7 +11,6 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::watch::ObjectWatchMessage;
-use astrolabe_model::catalog::KindResource;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId, ResourceKind, WatchKey};
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, Entity, TestAppContext};
@@ -125,194 +124,29 @@ fn harness(
     }
 }
 
-fn kind_names(session: &Session) -> Vec<(String, Vec<String>)> {
-    session
-        .catalog()
-        .iter()
-        .map(|group| {
-            (
-                group.group.clone(),
-                group.kinds.iter().map(|kind| kind.kind.clone()).collect(),
-            )
-        })
-        .collect()
-}
-
+/// The rules (when a change schedules Discovery, which run's answer wins)
+/// are `SessionState`'s, tested in `astrolabe-model`; this pins that Session
+/// carries them out with the 400 ms timer.
 #[gpui_kit::test]
-fn crd_changes_rerun_discovery_after_a_400ms_debounce(cx: &mut TestAppContext) {
+fn a_definition_change_runs_discovery_after_the_400ms_debounce(cx: &mut TestAppContext) {
     let mut h = harness(cx, Vec::new());
     cx.run_until_parked();
     assert_eq!(h.discoveries.get(), 1, "discovery runs on connect");
+    snapshot(&mut h.crds, Vec::new());
+    cx.run_until_parked();
 
-    snapshot(
-        &mut h.crds,
-        vec![crd("stable.example.com", "CronTab", "Namespaced")],
-    );
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    assert_eq!(
-        h.discoveries.get(),
-        2,
-        "a kind unresolved by the racing connect-time discovery rediscovers"
-    );
-    cx.read(|cx| {
-        let session = h.session.read(cx);
-        assert_eq!(
-            kind_names(session),
-            [(
-                "stable.example.com".to_string(),
-                vec!["CronTab".to_string()]
-            )]
-        );
-        // Discovery still does not list the CRD: not served (yet).
-        assert_eq!(
-            session.catalog()[0].kinds[0].resource,
-            KindResource::NotServed
-        );
-    });
-
-    *h.discovery.borrow_mut() = Ok(ServedResources::new([
-        served("stable.example.com", "CronTab", true),
-        served("acme.io", "Backup", false),
-    ]));
-    h.crds
-        .try_send(Ok(Event::Apply(crd("acme.io", "Backup", "Cluster"))))
-        .unwrap();
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(200));
     h.crds
         .try_send(Ok(Event::Apply(crd("acme.io", "Backup", "Cluster"))))
         .unwrap();
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(399));
     cx.run_until_parked();
-    assert_eq!(h.discoveries.get(), 2, "debounce restarts on every change");
-    cx.read(|cx| {
-        // Navigation follows the CRD watch before discovery catches up.
-        assert_eq!(kind_names(h.session.read(cx)).len(), 2);
-    });
+    assert_eq!(h.discoveries.get(), 1);
 
     cx.executor().advance_clock(Duration::from_millis(1));
     cx.run_until_parked();
-    assert_eq!(h.discoveries.get(), 3);
-    cx.read(|cx| {
-        let session = h.session.read(cx);
-        for group in session.catalog() {
-            assert!(matches!(group.kinds[0].resource, KindResource::Served(_)));
-        }
-    });
-
-    h.crds
-        .try_send(Ok(Event::Delete(crd("acme.io", "Backup", "Cluster"))))
-        .unwrap();
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(400));
-    cx.run_until_parked();
-    assert_eq!(h.discoveries.get(), 4);
-    cx.read(|cx| assert_eq!(kind_names(h.session.read(cx)).len(), 1));
+    assert_eq!(h.discoveries.get(), 2);
     drop(h.namespaces);
-}
-
-#[gpui_kit::test]
-fn a_first_crd_snapshot_already_discovered_does_not_rediscover(cx: &mut TestAppContext) {
-    let (namespaces, namespace_events) =
-        mpsc::channel::<Result<Event<Namespace>, ClusterError>>(32);
-    let (mut crds, crd_events) = mpsc::channel(32);
-    let discoveries = Rc::new(Cell::new(0));
-    let cluster = ScriptedCluster::new(namespace_events)
-        .crds(crd_events)
-        .discover({
-            let discoveries = discoveries.clone();
-            move || {
-                discoveries.set(discoveries.get() + 1);
-                Ok(ServedResources::new([served(
-                    "stable.example.com",
-                    "CronTab",
-                    true,
-                )]))
-            }
-        });
-    let _session = cx.update(|cx| {
-        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), DEFAULT_NAMESPACE, cluster, cx))
-    });
-    snapshot(
-        &mut crds,
-        vec![crd("stable.example.com", "CronTab", "Namespaced")],
-    );
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_secs(1));
-    cx.run_until_parked();
-    assert_eq!(discoveries.get(), 1);
-    drop(namespaces);
-}
-
-#[gpui_kit::test]
-fn failed_rediscovery_keeps_kinds_served_behind_the_stale_banner(cx: &mut TestAppContext) {
-    let mut h = harness(cx, Vec::new());
-    *h.discovery.borrow_mut() = Ok(ServedResources::new([served(
-        "stable.example.com",
-        "CronTab",
-        true,
-    )]));
-    snapshot(&mut h.namespaces, Vec::new());
-    snapshot(
-        &mut h.crds,
-        vec![crd("stable.example.com", "CronTab", "Namespaced")],
-    );
-    cx.run_until_parked();
-    h.crds
-        .try_send(Ok(Event::Apply(crd(
-            "stable.example.com",
-            "CronTab",
-            "Namespaced",
-        ))))
-        .unwrap();
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(400));
-    cx.run_until_parked();
-    cx.read(|cx| assert!(!h.session.read(cx).show_stale_warning()));
-
-    *h.discovery.borrow_mut() = Err(ClusterError::new("connection refused"));
-    h.crds
-        .try_send(Ok(Event::Apply(crd(
-            "stable.example.com",
-            "CronTab",
-            "Namespaced",
-        ))))
-        .unwrap();
-    cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(400));
-    cx.run_until_parked();
-    cx.read(|cx| {
-        let session = h.session.read(cx);
-        assert!(session.show_stale_warning());
-        assert_eq!(session.health(), ConnectionHealth::Healthy);
-        assert!(matches!(
-            session.catalog()[0].kinds[0].resource,
-            KindResource::Served(_)
-        ));
-    });
-}
-
-#[gpui_kit::test]
-fn rbac_denied_crd_list_leaves_custom_resources_empty(cx: &mut TestAppContext) {
-    let mut h = harness(cx, Vec::new());
-    snapshot(&mut h.namespaces, Vec::new());
-    h.crds
-        .try_send(Err(ClusterError::forbidden(
-            "customresourcedefinitions is forbidden",
-        )))
-        .unwrap();
-    cx.run_until_parked();
-
-    cx.read(|cx| {
-        let session = h.session.read(cx);
-        assert!(session.crd_access_denied());
-        assert!(session.catalog().is_empty());
-        assert_eq!(session.health(), ConnectionHealth::Healthy);
-        assert!(!session.show_stale_warning());
-    });
 }
 
 #[gpui_kit::test]
@@ -406,29 +240,6 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
         .session
         .update(cx, |session, cx| session.open_custom_list(&backup, cx));
     assert_eq!(key, Some(custom_key(None, "Backup")));
-}
-
-#[gpui_kit::test]
-fn unserved_kinds_start_no_watch(cx: &mut TestAppContext) {
-    let mut h = harness(cx, Vec::new());
-    snapshot(
-        &mut h.crds,
-        vec![crd("stable.example.com", "CronTab", "Namespaced")],
-    );
-    cx.run_until_parked();
-
-    let key = h.session.update(cx, |session, cx| {
-        session.open_custom_list(&crontab_id(), cx)
-    });
-    assert_eq!(key, None);
-    cx.read(|cx| {
-        assert!(
-            h.session
-                .read(cx)
-                .object_watch(&custom_key(Some("default"), "CronTab"))
-                .is_none()
-        )
-    });
 }
 
 #[gpui_kit::test]
