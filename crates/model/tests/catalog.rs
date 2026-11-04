@@ -130,3 +130,27 @@ fn an_unserved_version_is_not_served_even_while_discovery_lags() {
 
     assert_eq!(groups[0].kinds[0].resource, KindResource::NotServed);
 }
+
+#[test]
+fn a_served_kind_takes_its_scope_from_discovery_and_a_pending_one_from_the_crd() {
+    // The served resource disagrees with the CRD on purpose, to show which counts.
+    let served_kind = crd("acme.io", "Backup", "Cluster", ONE_VERSION);
+    let pending = crd("acme.io", "Archive", "Namespaced", ONE_VERSION);
+    let discovered = ServedResources::new([served("acme.io", "v1", "Backup", true)]);
+
+    let groups = catalog(&[&served_kind, &pending], Some(&discovered));
+
+    let archive = &groups[0].kinds[0];
+    assert_eq!(archive.resource, KindResource::NotServed);
+    assert!(archive.namespaced, "not served yet: the CRD's scope");
+    let backup = &groups[0].kinds[1];
+    assert!(matches!(backup.resource, KindResource::Served(_)));
+    assert!(
+        backup.namespaced,
+        "served: discovery's scope, not the CRD's"
+    );
+
+    // Before any discovery result the CRD's scope is all there is.
+    let undiscovered = catalog(&[&served_kind], None);
+    assert!(!undiscovered[0].kinds[0].namespaced);
+}
