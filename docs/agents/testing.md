@@ -30,11 +30,10 @@ missing from the log fails the script; check the spelling.
 
 ## Lint job, before each push
 
-Before pushing, run every step of `.github/workflows/ci.yml`'s `lint`
-job locally, not only fmt and clippy. That means `dev/comment-width.sh`,
-`dev/registration-path.sh`, `dev/log-capture.sh`, `dev/layer-check.sh`
-and the gpui tree check. Run them again after review fixes: a reworded
-doc comment can push a line past 80 columns.
+Before pushing, run `dev/pre-push.sh`: every step of
+`.github/workflows/ci.yml`'s `lint` job, not only fmt and clippy, then
+the diff-scoped mutants. Run it again after review fixes: a reworded doc
+comment can push a line past 80 columns.
 
 Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
@@ -264,13 +263,16 @@ timeout before chasing a hang:
 dev/mutants.sh -p astrolabe-model --iterate --timeout 180 -j 3
 ```
 
-Before each push, review fixes included, run CI's own command; scoped
-to the diff, it takes about a minute:
+Before each push, review fixes included, after rebasing onto `origin/main`,
+run:
 
 ```sh
-git diff origin/main...HEAD > "$SCRATCH/pr.diff"
-cargo mutants -p astrolabe-kube -p astrolabe-model --in-diff "$SCRATCH/pr.diff" -j 2
+dev/pre-push.sh
 ```
+
+It runs the steps of CI's `lint` job and CI's own `mutants` command (the
+diff against the base, `-j 2`, about a minute), and fails like CI does.
+Keep it in step with those two jobs in `.github/workflows/ci.yml`.
 
 Origin: #156 ran an unscoped `dev/mutants.sh` after its review fixes,
 which also mutated the app crate. It ran past ten minutes, so the PR was
@@ -283,6 +285,16 @@ reaches only through the scripted cluster, survived `replace ... with
 Default::default()`. A new accessor in `astrolabe-model` needs a test that
 reads it back from a state that has the value and one that has not (#249
 retro).
+
+On 2026-11-04 seven CI runs failed, and `mutants` failed in every one. In
+the three of four runs whose logs were read (`gh run view <id> --log-failed`)
+it reported a real missed mutant, not a flake; the fourth was a test that
+did not compile. The diff-scoped run below finds those mutants locally,
+and this section already told each PR to run it (the Origins above). #242
+added `custom_watch` and `custom_object_watch`, covered only by an app test
+that CI's scope leaves out, and was pushed without the run: it found two
+missed mutants afterwards. A prose rule had not closed the gap, so
+`dev/pre-push.sh` runs it (#242 retro).
 
 A `tracing` line guarded by a condition (`if old != new { info!(..) }`)
 is a mutant `astrolabe-model`'s tests cannot see unless one counts log
