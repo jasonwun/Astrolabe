@@ -45,7 +45,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// The session's data and the rules over it.
+    /// The session's data, for the model layer's rules.
     pub fn state(&self) -> &SessionState {
         &self.state
     }
@@ -355,10 +355,6 @@ impl Session {
 
     pub fn namespaces(&self) -> Vec<&Namespace> {
         self.state.namespaces()
-    }
-
-    pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
-        self.state.namespace_object(name)
     }
 
     pub fn crds(&self) -> &Watched<CustomResourceDefinition> {
