@@ -3,6 +3,7 @@
 
 pub mod builtin;
 pub mod catalog;
+pub mod detail;
 pub mod discovery_cache;
 pub mod jsonpath;
 pub mod operation_text;

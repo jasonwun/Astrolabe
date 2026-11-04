@@ -45,6 +45,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// The session's data, for the model layer's rules.
+    pub fn state(&self) -> &SessionState {
+        &self.state
+    }
+
     /// Connect to `cluster`, with `namespace` selected from the start: the
     /// first namespaced watch already uses it.
     pub fn new(cluster: ClusterId, namespace: impl Into<String>, cx: &mut Context<Self>) -> Self {
@@ -350,10 +355,6 @@ impl Session {
 
     pub fn namespaces(&self) -> Vec<&Namespace> {
         self.state.namespaces()
-    }
-
-    pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
-        self.state.namespace_object(name)
     }
 
     pub fn crds(&self) -> &Watched<CustomResourceDefinition> {

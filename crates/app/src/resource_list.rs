@@ -22,10 +22,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::clock;
-use crate::detail::{DetailTarget, forbidden_message};
 use crate::perf;
 use crate::session::Session;
 use crate::workspace::STALE_MESSAGE;
+use astrolabe_model::detail::{DetailTarget, forbidden_message};
 use astrolabe_model::session::CustomKindId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,7 +158,11 @@ impl ResourceListPanel {
             .builtin_object(kind, namespace, &key.name)
             .and_then(|object| Some((object, row_target?(object)?)))
             .ok_or_else(|| format!("Cannot open {} {key}: object is unavailable", kind.kind()))?;
-        DetailTarget::by_reference(reference, object.metadata.namespace.clone(), session)
+        DetailTarget::by_reference(
+            reference,
+            object.metadata.namespace.clone(),
+            session.state(),
+        )
     }
 
     fn toggle_group(&mut self, group: String, cx: &mut Context<Self>) {

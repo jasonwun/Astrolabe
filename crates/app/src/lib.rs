@@ -5,7 +5,6 @@
 
 pub mod clock;
 mod cluster_io;
-pub mod detail;
 pub mod exec;
 pub mod keymap;
 pub mod logs;
