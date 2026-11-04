@@ -14,7 +14,7 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::detail::{
-    DetailTarget, NeededWatch, RelatedOutcome, Resolved, resolve, watches,
+    DetailTarget, NeededWatch, ReferenceError, RelatedOutcome, Resolved, resolve, watches,
 };
 use astrolabe_model::session_state::SessionState;
 use support::object;
@@ -225,6 +225,45 @@ fn an_involved_definition_opens_as_a_definition() {
 }
 
 #[test]
+fn an_involved_object_without_a_name_is_a_missing_name_error() {
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    let reference = ObjectReference {
+        kind: Some("Pod".to_string()),
+        ..ObjectReference::default()
+    };
+    assert_eq!(
+        DetailTarget::by_reference(reference, None, &state),
+        Err(ReferenceError::MissingName {
+            kind: "Pod".to_string()
+        })
+    );
+}
+
+#[test]
+fn an_involved_object_of_an_unregistered_kind_is_an_unregistered_kind_error() {
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    let reference = ObjectReference {
+        api_version: Some("example.com/v1".to_string()),
+        kind: Some("Widget".to_string()),
+        name: Some("w".to_string()),
+        ..ObjectReference::default()
+    };
+    assert_eq!(
+        DetailTarget::by_reference(reference, None, &state),
+        Err(ReferenceError::UnregisteredKind {
+            kind: "Widget".to_string(),
+            name: "w".to_string()
+        })
+    );
+}
+
+#[test]
+fn reference_errors_are_send_sync_errors() {
+    fn assert_error<E: std::error::Error + Send + Sync + 'static>() {}
+    assert_error::<ReferenceError>();
+}
+
+#[test]
 fn an_operation_addresses_the_shown_object_until_it_leaves_its_watch() {
     let target = target(BuiltinKind::Deployments, "web");
     let mut state = state(&target);
@@ -240,4 +279,23 @@ fn an_operation_addresses_the_shown_object_until_it_leaves_its_watch() {
     // Gone from the watch: Delete, Scale and the rest send nothing.
     snapshot(&mut state, BuiltinKind::Deployments, vec![]);
     assert_eq!(target.object(&state), None);
+}
+
+#[test]
+fn reference_errors_display_the_involved_object() {
+    assert_eq!(
+        ReferenceError::MissingName {
+            kind: "Pod".to_string()
+        }
+        .to_string(),
+        "Cannot open involved object Pod/: name is missing"
+    );
+    assert_eq!(
+        ReferenceError::UnregisteredKind {
+            kind: "Widget".to_string(),
+            name: "w".to_string()
+        }
+        .to_string(),
+        "Cannot open involved object Widget/w: kind is not registered"
+    );
 }

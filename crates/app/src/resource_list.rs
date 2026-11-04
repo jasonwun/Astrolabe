@@ -25,8 +25,45 @@ use crate::clock;
 use crate::perf;
 use crate::session::Session;
 use crate::workspace::STALE_MESSAGE;
-use astrolabe_model::detail::{DetailTarget, forbidden_message};
+use astrolabe_model::detail::{DetailTarget, ReferenceError, forbidden_message};
 use astrolabe_model::session::CustomKindId;
+
+/// Why a row cannot be opened; shown as the list's notice.
+#[derive(Debug, PartialEq, Eq)]
+enum OpenRowError {
+    /// The row's object left its watch, or its kind has no reference to follow.
+    ObjectUnavailable {
+        kind: String,
+        key: ObjectKey,
+    },
+    Reference(ReferenceError),
+}
+
+impl std::fmt::Display for OpenRowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ObjectUnavailable { kind, key } => {
+                write!(f, "Cannot open {kind} {key}: object is unavailable")
+            }
+            Self::Reference(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for OpenRowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ObjectUnavailable { .. } => None,
+            Self::Reference(error) => Some(error),
+        }
+    }
+}
+
+impl From<ReferenceError> for OpenRowError {
+    fn from(error: ReferenceError) -> Self {
+        Self::Reference(error)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListView {
@@ -137,7 +174,7 @@ impl ResourceListPanel {
                 cx.emit(OpenDetail(target));
             }
             Err(notice) => {
-                self.notice = Some(notice);
+                self.notice = Some(notice.to_string());
                 cx.notify();
             }
         }
@@ -150,19 +187,23 @@ impl ResourceListPanel {
         kind: BuiltinKind,
         key: &ObjectKey,
         cx: &App,
-    ) -> Result<DetailTarget, String> {
+    ) -> Result<DetailTarget, OpenRowError> {
         let row_target = kind.registration().row_target;
         let session = self.session.read(cx);
         let namespace = key.namespace.as_deref().unwrap_or_default();
         let (object, reference) = session
             .builtin_object(kind, namespace, &key.name)
             .and_then(|object| Some((object, row_target?(object)?)))
-            .ok_or_else(|| format!("Cannot open {} {key}: object is unavailable", kind.kind()))?;
+            .ok_or_else(|| OpenRowError::ObjectUnavailable {
+                kind: kind.kind(),
+                key: key.clone(),
+            })?;
         DetailTarget::by_reference(
             reference,
             object.metadata.namespace.clone(),
             session.state(),
         )
+        .map_err(OpenRowError::from)
     }
 
     fn toggle_group(&mut self, group: String, cx: &mut Context<Self>) {
@@ -627,4 +668,31 @@ fn text_cell(id: String, text: String) -> Stateful<Div> {
         .w_full()
         .text_ellipsis()
         .child(text)
+}
+
+#[cfg(test)]
+mod open_row_error_tests {
+    use super::{ObjectKey, OpenRowError, ReferenceError};
+
+    #[test]
+    fn an_unavailable_object_names_its_kind_and_key() {
+        let error = OpenRowError::ObjectUnavailable {
+            kind: "Event".to_string(),
+            key: ObjectKey::new(Some("default".to_string()), "e1"),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Cannot open Event default/e1: object is unavailable"
+        );
+    }
+
+    #[test]
+    fn a_reference_error_shows_its_own_text() {
+        let reference = ReferenceError::MissingName {
+            kind: "Pod".to_string(),
+        };
+        let error = OpenRowError::from(reference.clone());
+        assert_eq!(error, OpenRowError::Reference(reference.clone()));
+        assert_eq!(error.to_string(), reference.to_string());
+    }
 }

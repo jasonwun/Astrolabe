@@ -31,6 +31,31 @@ pub enum DetailTarget {
     Custom { id: CustomKindId, key: ObjectKey },
 }
 
+/// Why an involved object cannot be opened as a detail target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReferenceError {
+    /// The reference has no name.
+    MissingName { kind: String },
+    /// The reference's kind is neither built in nor a registered custom kind.
+    UnregisteredKind { kind: String, name: String },
+}
+
+impl std::fmt::Display for ReferenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingName { kind } => {
+                write!(f, "Cannot open involved object {kind}/: name is missing")
+            }
+            Self::UnregisteredKind { kind, name } => write!(
+                f,
+                "Cannot open involved object {kind}/{name}: kind is not registered"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReferenceError {}
+
 impl DetailTarget {
     /// The object `reference` names (an Event's involved object): a
     /// built-in kind, a Namespace, a CRD or a custom kind. A namespaced
@@ -44,14 +69,11 @@ impl DetailTarget {
         reference: ObjectReference,
         namespace: Option<String>,
         state: &SessionState,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ReferenceError> {
         let kind = reference.kind.unwrap_or_default();
         let name = reference.name.unwrap_or_default();
-        let target = format!("{kind}/{name}");
         if name.is_empty() {
-            return Err(format!(
-                "Cannot open involved object {target}: name is missing"
-            ));
+            return Err(ReferenceError::MissingName { kind });
         }
         let namespaced_key =
             || ObjectKey::new(reference.namespace.clone().or(namespace), name.clone());
@@ -84,9 +106,10 @@ impl DetailTarget {
                     };
                     Ok(Self::Custom { id, key })
                 } else {
-                    Err(format!(
-                        "Cannot open involved object {target}: kind is not registered"
-                    ))
+                    Err(ReferenceError::UnregisteredKind {
+                        kind: id.kind,
+                        name,
+                    })
                 }
             }
         }
