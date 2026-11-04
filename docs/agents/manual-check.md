@@ -183,7 +183,10 @@ of context.
    git worktree add --detach "$SCRATCH/base" origin/main
    (cd "$SCRATCH/base" && CARGO_TARGET_DIR="$SCRATCH/base-target" cargo build -p astrolabe)
    ```
-2. Launch it from this worktree's directory
+2. Kill every running astrolabe first, the exploration instance included:
+   a probe app left with a dropdown open made #164's first baseline run
+   click into it, and every pair read `DIFF`. Then launch it from this
+   worktree's directory
    (`"$SCRATCH/base-target/debug/astrolabe"`, run_in_background), so
    `dev/shot.sh` finds it. Run one app at a time: with two, `dev/shot.sh`
    refuses.
@@ -231,6 +234,12 @@ each to `--attach`; gh uploads them and rewrites the paths:
 ```sh
 gh pr create --body-file body.md --attach ./shot.png   # also gh pr edit / gh pr comment
 ```
+
+Run it from the directory that holds the shots, so the path passed to
+`--attach` is the one the body names. #164 passed absolute scratch paths
+while the body said `./shot.png`; the body kept the broken relative link
+and gained a second image line (cause unverified). Read the body back with
+`gh pr view --json body` and fix it before enabling auto-merge.
 
 ## 5. Clean up
 

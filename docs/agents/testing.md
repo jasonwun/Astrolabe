@@ -40,6 +40,11 @@ Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
 `comment-width.sh` caught it and cost a CI round (#149 retro).
 
+`astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
+test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
+an unbackticked type name in a doc comment trips `doc_markdown`. Return
+the bare value and wrap at the call sites (#164).
+
 ## Move-only refactors
 
 ```sh
