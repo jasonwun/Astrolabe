@@ -280,6 +280,7 @@ fn located_causes(error: &ApplyError, snapshot: &str, doc_index: usize) -> Vec<L
 
 #[cfg(test)]
 mod tests {
+    use super::super::locate::Location;
     use super::*;
     use kube::core::response::{Status, StatusCause, StatusDetails};
 
@@ -318,10 +319,7 @@ data:
         let error = validation_error("data.bad", "Invalid value");
         let causes = located_causes(&error, DOC, 0);
         assert_eq!(causes.len(), 1);
-        assert_eq!(
-            causes[0].located.location,
-            super::super::locate::Location::Exact { line: 6 }
-        );
+        assert_eq!(causes[0].located.location, Location::Exact { line: 6 });
     }
 
     #[test]
@@ -348,16 +346,10 @@ data:
             Err(error) => error.causes[0].located.location.clone(),
             Ok(()) => panic!("expected a failure"),
         };
-        assert_eq!(
-            line(&report),
-            super::super::locate::Location::Exact { line: 6 }
-        );
+        assert_eq!(line(&report), Location::Exact { line: 6 });
 
         report.remap(&format!("# added\n{DOC}"));
-        assert_eq!(
-            line(&report),
-            super::super::locate::Location::Exact { line: 7 }
-        );
+        assert_eq!(line(&report), Location::Exact { line: 7 });
     }
 
     #[test]
@@ -408,10 +400,7 @@ data:
         let err = outcomes[1].result.as_ref().unwrap_err();
         assert!(matches!(err.error, ApplyError::Validation(_)));
         assert_eq!(err.causes.len(), 1);
-        assert_eq!(
-            err.causes[0].located.location,
-            super::super::locate::Location::Exact { line: 11 }
-        );
+        assert_eq!(err.causes[0].located.location, Location::Exact { line: 11 });
     }
 
     // ---- apply_one against a mock apiserver ---------------------------
@@ -717,9 +706,6 @@ data:
         assert!(report.outcomes[0].result.is_ok());
         let err = report.outcomes[1].result.as_ref().unwrap_err();
         assert!(matches!(err.error, ApplyError::Validation(_)));
-        assert_eq!(
-            err.causes[0].located.location,
-            super::super::locate::Location::Exact { line: 11 }
-        );
+        assert_eq!(err.causes[0].located.location, Location::Exact { line: 11 });
     }
 }
