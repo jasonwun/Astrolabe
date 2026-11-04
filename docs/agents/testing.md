@@ -383,3 +383,9 @@ gpui-fast-macos pinning `cocoa =0.26.0` while the lockfile holds 0.26.1),
 delete the stale `[[package]]` blocks from Cargo.lock and let cargo
 re-resolve. Verify with `git diff Cargo.lock` that only the expected
 packages moved.
+
+A kube-layer test of a value read from the kubeconfig goes through
+`Cluster::connect`, not only the helper that parses it: #236's Spec
+reviewer found that the helper's tests left the handle's wiring unproven.
+Put the extra context in `tests/client.rs`'s existing `KUBECONFIG` test,
+since tests in that binary share the environment (#236 retro).
