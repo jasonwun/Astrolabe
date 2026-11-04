@@ -438,16 +438,15 @@ impl SessionView {
 
 impl Render for SessionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let session = self.session.read(cx);
-        let stale = session.state().show_stale_warning();
+        let data = self.session.read(cx).state();
+        let stale = data.show_stale_warning();
         // Same banner, but say what failed: the watch may be healthy.
-        let message = if session.state().discovery_failure().is_some()
-            && session.state().health() != ConnectionHealth::Stale
-        {
-            DISCOVERY_STALE_MESSAGE
-        } else {
-            STALE_MESSAGE
-        };
+        let message =
+            if data.discovery_failure().is_some() && data.health() != ConnectionHealth::Stale {
+                DISCOVERY_STALE_MESSAGE
+            } else {
+                STALE_MESSAGE
+            };
         let border = cx.theme().border;
         v_flex()
             .size_full()
