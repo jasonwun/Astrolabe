@@ -40,6 +40,12 @@ Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
 `comment-width.sh` caught it and cost a CI round (#149 retro).
 
+Chain the fix, the re-run and the push with `&&`, never `;`. #243's
+`sed -i` (BSD `sed` on macOS needs `sed -i ''`) failed on a line that
+`comment-width.sh` had flagged, and the `;` let the commit and push
+carry on with the 83-column line. Use Edit for a one-line change, then
+re-run the failing script before committing (#243 retro).
+
 A new rule in `dev/layer-check.sh` gets a probe file for every way to
 write the path, not only the full path: a one-line `use a::{b::X}`, the
 `astrolabe_kube::kube::` route and a long form such as `kube::api::Api`.

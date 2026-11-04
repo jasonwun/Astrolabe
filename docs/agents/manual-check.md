@@ -32,6 +32,12 @@ through the changed path. #172 (field-path parsing in `astrolabe-kube`)
 applied a Deployment with `image: ""` from the YAML editor and read the
 422's line mark.
 
+A change to which source wins when two agree on kind (#243: discovery
+vs the CRD's `spec.scope`) shows the same screen on kind, because the
+sources never disagree there. The screenshots then prove only that
+served kinds still list and scope their columns as before; say so in the
+PR and leave the disagreeing case to the model-layer test (#243 retro).
+
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
 Copy the kubeconfig into the scratchpad, set the namespace on the copy and
