@@ -29,6 +29,11 @@ pub struct CustomKind {
     pub kind: String,
     pub plural: String,
     pub version: String,
+    /// Whether the kind is namespaced. One rule: a kind that is
+    /// [`KindResource::Served`] takes discovery's answer (what the apiserver
+    /// actually serves); any other kind takes the CRD's `spec.scope`, which
+    /// cannot change after creation. Every consumer reads this field, not the
+    /// CRD's scope string.
     pub namespaced: bool,
     /// The preferred version's `additionalPrinterColumns`.
     pub columns: Vec<CustomResourceColumnDefinition>,
@@ -64,22 +69,23 @@ pub fn catalog(
             continue;
         };
         let spec = &crd.spec;
-        let resource = match served {
-            None => KindResource::Undiscovered,
-            Some(_) if !version.served => KindResource::NotServed,
-            Some(served) => served
-                .resolve(&spec.group, &version.name, &spec.names.kind)
-                .map_or(KindResource::NotServed, |served| {
-                    KindResource::Served(served.resource.clone())
-                }),
+        let resolved = served
+            .filter(|_| version.served)
+            .and_then(|served| served.resolve(&spec.group, &version.name, &spec.names.kind));
+        let resource = match (served, resolved) {
+            (None, _) => KindResource::Undiscovered,
+            (Some(_), None) => KindResource::NotServed,
+            (Some(_), Some(resolved)) => KindResource::Served(resolved.resource.clone()),
         };
+        let namespaced =
+            resolved.map_or(spec.scope == "Namespaced", |resolved| resolved.namespaced);
         groups.entry(&spec.group).or_default().push(CustomKind {
             crd_name: crd.name_any(),
             group: spec.group.clone(),
             kind: spec.names.kind.clone(),
             plural: spec.names.plural.clone(),
             version: version.name.clone(),
-            namespaced: spec.scope == "Namespaced",
+            namespaced,
             columns: version
                 .additional_printer_columns
                 .clone()
