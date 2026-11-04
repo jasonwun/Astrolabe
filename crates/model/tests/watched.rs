@@ -243,3 +243,41 @@ fn events_that_leave_the_snapshot_alone_keep_the_revision() {
     assert_eq!(watched.revision(), before);
     assert_eq!(names(&watched), ["default"]);
 }
+
+#[test]
+fn a_denial_keeps_reading_stale_through_the_retrys_list_start() {
+    let mut watched = namespace_watch();
+    watched.apply(Err(ClusterError::forbidden("403")));
+
+    watched.apply(Ok(Event::Init));
+
+    assert_eq!(
+        watched.status(),
+        WatchStatus::Forbidden {
+            has_snapshot: false
+        }
+    );
+    assert_eq!(watched.status().health(), ConnectionHealth::Stale);
+}
+
+#[test]
+fn a_failure_during_a_relist_leaves_the_old_snapshot_stale() {
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
+    watched.apply(Ok(Event::Init));
+
+    watched.mark_stale();
+
+    assert_eq!(watched.status(), WatchStatus::Stale);
+}
+
+#[test]
+fn an_object_event_that_changes_nothing_still_counts_as_a_change() {
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
+    let before = watched.revision();
+
+    watched.apply(Ok(Event::Apply(namespace("default"))));
+
+    assert!(watched.revision() > before);
+}

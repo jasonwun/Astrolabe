@@ -130,12 +130,21 @@ impl WatchStatus {
         }
     }
 
+    /// The watch failed without a denial: keep the snapshot, flag it stale.
+    fn failed(self) -> Self {
+        if self.has_snapshot() {
+            Self::Stale
+        } else {
+            Self::Unreachable
+        }
+    }
+
     /// The connection ended without an error; a denial is kept.
     fn ended(self) -> Self {
-        match self {
-            Self::Forbidden { .. } => self,
-            _ if self.has_snapshot() => Self::Stale,
-            _ => Self::Unreachable,
+        if self.is_forbidden() {
+            self
+        } else {
+            self.failed()
         }
     }
 }
@@ -235,10 +244,8 @@ impl<K: ResourceExt> Watched<K> {
                 let has_snapshot = self.status.has_snapshot();
                 self.set_status(if error.is_forbidden() {
                     WatchStatus::Forbidden { has_snapshot }
-                } else if has_snapshot {
-                    WatchStatus::Stale
                 } else {
-                    WatchStatus::Unreachable
+                    self.status.failed()
                 });
                 SnapshotChange::Unchanged
             }
@@ -258,8 +265,9 @@ impl<K: ResourceExt> Watched<K> {
         self.status
     }
 
-    /// Goes up exactly when the committed snapshot changes, so a reader can
-    /// tell whether it changed since it last looked.
+    /// Goes up whenever the committed snapshot changes (`apply` returns
+    /// anything but `Unchanged`), so a reader can tell whether it changed
+    /// since it last looked. A re-delivered identical object still counts.
     pub fn revision(&self) -> u64 {
         self.revision
     }
