@@ -190,10 +190,9 @@ impl ResourceListPanel {
     ) -> Result<DetailTarget, OpenRowError> {
         let row_target = kind.registration().row_target;
         let session = self.session.read(cx);
-        let namespace = key.namespace.as_deref().unwrap_or_default();
         let (object, reference) = session
             .state()
-            .builtin_object(kind, namespace, &key.name)
+            .builtin_object(kind, key.namespace.as_deref(), &key.name)
             .and_then(|object| Some((object, row_target?(object)?)))
             .ok_or_else(|| OpenRowError::ObjectUnavailable {
                 kind: kind.kind(),
@@ -226,7 +225,7 @@ impl ResourceListPanel {
             ),
             ListView::Builtin(kind) => {
                 let registration = kind.registration();
-                let watch = data.builtin_watch(*kind, data.namespace());
+                let watch = data.builtin_watch(*kind, Some(data.namespace()));
                 let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                 let state = match watch {
                     Some(watch) if watch.status().is_forbidden() => {

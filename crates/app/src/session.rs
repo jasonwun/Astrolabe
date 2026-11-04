@@ -190,12 +190,13 @@ impl Session {
         ensured.key
     }
 
-    /// Ensure the watch holding `kind`'s objects in `namespace`, whatever
+    /// Ensure the watch holding `kind`'s objects in `namespace` (`None` when
+    /// cluster-scoped), whatever
     /// the namespace selection (a detail tab or related section reads it).
     pub fn watch_builtin(
         &mut self,
         kind: BuiltinKind,
-        namespace: &str,
+        namespace: Option<&str>,
         cx: &mut Context<Self>,
     ) -> WatchKey {
         let ensured = self.state.watch_builtin(kind, namespace);

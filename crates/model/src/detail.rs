@@ -138,7 +138,7 @@ impl DetailTarget {
                 Shown::Definition(state.crds().get(None, name)?),
             ),
             Self::Builtin { kind, key } => {
-                let object = state.builtin_object(*kind, key.namespace.as_deref()?, &key.name)?;
+                let object = state.builtin_object(*kind, key.namespace.as_deref(), &key.name)?;
                 (
                     (kind.registration().resource)(),
                     key.clone(),
@@ -202,11 +202,12 @@ pub fn forbidden_message(label: &str) -> String {
     format!("No permission to list {} here", label.to_lowercase())
 }
 
-/// A built-in watch a detail reads: `kind`'s objects in `namespace`.
+/// A built-in watch a detail reads: `kind`'s objects in `namespace` (`None`
+/// when cluster-scoped).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NeededWatch {
     pub kind: BuiltinKind,
-    pub namespace: String,
+    pub namespace: Option<String>,
 }
 
 /// The built-in watches `target` reads: the shown kind's, then its Related
@@ -215,9 +216,6 @@ pub struct NeededWatch {
 /// preferred version.
 pub fn watches(target: &DetailTarget) -> Vec<NeededWatch> {
     let DetailTarget::Builtin { kind, key } = target else {
-        return Vec::new();
-    };
-    let Some(namespace) = &key.namespace else {
         return Vec::new();
     };
     std::iter::once(*kind)
@@ -229,7 +227,7 @@ pub fn watches(target: &DetailTarget) -> Vec<NeededWatch> {
         )
         .map(|kind| NeededWatch {
             kind,
-            namespace: namespace.clone(),
+            namespace: key.namespace.clone(),
         })
         .collect()
 }
@@ -257,8 +255,7 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> O
         }),
         Shown::Builtin(kind, shown) => {
             let registration = kind.registration();
-            let namespace = object.key.namespace.clone()?;
-            let namespace = namespace.as_str();
+            let namespace = object.key.namespace.as_deref();
             let related = registration.related.as_ref().and_then(|related| {
                 let watch = state.builtin_watch(related.kind, namespace);
                 let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
