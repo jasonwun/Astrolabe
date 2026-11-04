@@ -24,10 +24,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::clock;
-use crate::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 use crate::perf;
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
+use astrolabe_model::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
 
 mod editor_panel;
 mod pod_actions;
@@ -129,7 +129,7 @@ impl ResourceDetailPanel {
     }
 
     fn resolve(&self, cx: &App) -> Option<Resolved> {
-        detail::resolve(&self.target, self.session.read(cx), clock::now(cx))
+        detail::resolve(&self.target, self.session.read(cx).state(), clock::now(cx))
     }
 
     fn display_name(&self) -> String {
@@ -223,7 +223,7 @@ impl ResourceDetailPanel {
         operation: impl FnOnce(ObjectRef) -> Operation,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(object) = self.target.object(self.session.read(cx)) else {
+        let Some(object) = self.target.object(self.session.read(cx).state()) else {
             return false;
         };
         let operation = operation(object);
@@ -670,7 +670,7 @@ impl Render for ResourceDetailPanel {
         let now = clock::now(cx);
         let (resolved, next_tick) = track_ages(now, || {
             let _cost = perf::time(perf::Work::DetailResolve);
-            detail::resolve(&self.target, self.session.read(cx), now)
+            detail::resolve(&self.target, self.session.read(cx).state(), now)
         });
         self.tick = cx.spawn(async move |panel, cx| {
             cx.background_executor().timer(next_tick).await;

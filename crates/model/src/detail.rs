@@ -5,20 +5,20 @@
 //! the panel renders the answer. The watches a target reads are named here
 //! too, so the panel starts exactly those.
 
+use crate::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
+use crate::catalog::{CustomKind, KindResource};
+use crate::projection::{
+    DetailModel, ResourceTable, custom_resource_detail, definition_detail, namespace_detail,
+};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, ObjectReference};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
-use astrolabe_model::builtin::{Action, BuiltinKind, DEFAULT_ACTIONS};
-use astrolabe_model::catalog::{CustomKind, KindResource};
-use astrolabe_model::projection::{
-    DetailModel, ResourceTable, custom_resource_detail, definition_detail, namespace_detail,
-};
 
-use crate::session::Session;
-use astrolabe_model::session::CustomKindId;
+use crate::session::{CustomKindId, Watched};
+use crate::session_state::SessionState;
 
 /// What a detail tab shows: one object, addressed in its list's store.
 /// Custom resources are version-free (#41): each resolve reads the watch at
@@ -35,10 +35,15 @@ impl DetailTarget {
     /// The object `reference` names (an Event's involved object): a
     /// built-in kind, a Namespace, a CRD or a custom kind. A namespaced
     /// object without a namespace of its own is in `namespace`.
+    ///
+    /// # Errors
+    ///
+    /// The reference has no name, or its kind is neither built in nor
+    /// registered.
     pub fn by_reference(
         reference: ObjectReference,
         namespace: Option<String>,
-        session: &Session,
+        session: &SessionState,
     ) -> Result<Self, String> {
         let kind = reference.kind.unwrap_or_default();
         let name = reference.name.unwrap_or_default();
@@ -92,12 +97,12 @@ impl DetailTarget {
     /// The object an operation on this target addresses, while it is still
     /// in its watch; `None` once it is gone. Looks the object up without
     /// projecting it.
-    pub fn object(&self, session: &Session) -> Option<ObjectRef> {
+    pub fn object(&self, session: &SessionState) -> Option<ObjectRef> {
         self.find(session).map(|(object, _)| object)
     }
 
     /// The object in its watch and what addresses it.
-    fn find<'a>(&self, session: &'a Session) -> Option<(ObjectRef, Shown<'a>)> {
+    fn find<'a>(&self, session: &'a SessionState) -> Option<(ObjectRef, Shown<'a>)> {
         let (resource, key, shown) = match self {
             Self::Namespace { name } => (
                 ApiResource::erase::<Namespace>(&()),
@@ -206,7 +211,7 @@ pub fn watches(target: &DetailTarget) -> Vec<NeededWatch> {
 }
 
 /// `target` as of `now`, or `None` once it no longer exists.
-pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Option<Resolved> {
+pub fn resolve(target: &DetailTarget, session: &SessionState, now: Timestamp) -> Option<Resolved> {
     let (object, shown) = target.find(session)?;
     match shown {
         Shown::Namespace(namespace) => Some(Resolved {
@@ -234,7 +239,7 @@ pub fn resolve(target: &DetailTarget, session: &Session, now: Timestamp) -> Opti
                 let watch = session.builtin_watch(related.kind, namespace);
                 let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
                 let selected = (related.select)(shown, &candidates);
-                let outcome = if watch.is_some_and(|watch| watch.forbidden()) {
+                let outcome = if watch.is_some_and(Watched::forbidden) {
                     RelatedOutcome::Forbidden(forbidden_message(related.title))
                 } else if related.hide_when_empty && selected.is_empty() {
                     return None;

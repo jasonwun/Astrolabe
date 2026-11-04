@@ -45,6 +45,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// The session's data and the rules over it.
+    pub fn state(&self) -> &SessionState {
+        &self.state
+    }
+
     /// Connect to `cluster`, with `namespace` selected from the start: the
     /// first namespaced watch already uses it.
     pub fn new(cluster: ClusterId, namespace: impl Into<String>, cx: &mut Context<Self>) -> Self {
