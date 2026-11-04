@@ -332,6 +332,21 @@ resolution and the Forward list's states were written inside Session,
 so each was testable only through `gpui_kit::test`, and the relist test
 ran a hand-written TCP apiserver (ADR-0002).
 
+## What stays on `Session`
+
+`Session` holds what needs a `Context` or touches the Cluster, plus every
+`SessionState` mutation. A query that only calls the `SessionState`
+method of the same name is a finding: views and tests read through
+`session.state()`. A mutator is not, even with no `Command` to carry out
+(`close_list`): `state()` returns `&SessionState`, and a `state_mut()`
+would let a view call a mutator and drop the `Vec<Command>` that only
+`carry_out` runs, with no compile error. Reading `state()` more than
+once in one function is a finding too: bind it once.
+
+Origin: #223's first criterion banned every pass-through, `close_list`
+included. The Spec reviewer flagged it, and settling it took a round with
+the user and an edit to the issue (#223 retro).
+
 ## `# Errors` sections and kind names in docs
 
 A `# Errors` section names each way the function fails. To check it,

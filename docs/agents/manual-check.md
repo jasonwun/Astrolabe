@@ -241,6 +241,14 @@ of context.
    Start the script with a click on a sidebar entry. The pointer stays
    where the previous run left it, and a row it hovers is highlighted:
    #148's first comparison read `DIFF` on Namespaces for that alone.
+   Seed once and run both builds without `dev/demo.sh delete` between
+   them: a re-applied namespace gets new Pod names, and a Pods crop
+   reads `DIFF` for that alone. On the dev window, `dev/shot.sh` clicks at
+   Namespaces (278,138), Pods (252,204), Definitions (270,825) and the
+   first custom kind (280,913); crops that skip the Age columns are
+   `440,85,900,320` (Pods) and `440,85,900,360` (Definitions). #223's
+   refactor of Session's queries read `same` on five views this way
+   (#223).
 4. Read one pair per view, for the PR's Evidence.
 
 Clean up with `git worktree remove "$SCRATCH/base"`.
