@@ -43,10 +43,7 @@ fn cluster(
 ) {
     let (namespaces, events) = mpsc::channel(8);
     let applied = applied.clone();
-    let clean = || ApplyReport {
-        outcomes: Vec::new(),
-        ok: true,
-    };
+    let clean = || ApplyReport::new(Vec::new());
     let scripted = ScriptedCluster::new(events)
         .apply(move |snapshot: &str, mode| {
             applied

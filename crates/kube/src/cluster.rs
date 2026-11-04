@@ -25,7 +25,7 @@ use tokio::task::AbortHandle;
 
 use crate::apply::{self, ApplyMode, ApplyReport};
 use crate::discovery::{self, ServedResources};
-use crate::object::Operation;
+use crate::object::{ObjectKey, Operation};
 use crate::pod::{
     self, ExecOutput, ExecRequest, ExecSession, ForwardEvent, ForwardRequest, ForwardTarget,
     LogRequest, LogStream, PortForward,
@@ -513,7 +513,7 @@ impl Cluster {
         let work = self.runtime.spawn(async move {
             let stream = async {
                 let pod = &request.pod;
-                let namespace = pod.namespace.as_deref().unwrap_or_default();
+                let namespace = namespace_of(pod)?;
                 let client = client.await?;
                 Ok::<_, ClusterError>(
                     pod::logs(&client, namespace, &pod.name, &request.container).await?,
@@ -563,7 +563,7 @@ impl Cluster {
         let work = self.runtime.spawn(async move {
             let exit = async {
                 let pod = &request.pod;
-                let namespace = pod.namespace.as_deref().unwrap_or_default();
+                let namespace = namespace_of(pod)?;
                 let client = client.await?;
                 let output = |bytes| {
                     let _ = sender.unbounded_send(ExecOutput::Bytes(bytes));
@@ -639,26 +639,33 @@ impl Cluster {
             let on_error = move |error| {
                 let _ = connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
             };
-            let result = match &request.target {
-                ForwardTarget::Pod(pod) => {
-                    let namespace = pod.namespace.as_deref().unwrap_or_default();
-                    pod::port_forward(&client, namespace, &pod.name, port, listener, on_error).await
-                }
-                ForwardTarget::Service(service) => {
-                    let namespace = service.namespace.as_deref().unwrap_or_default();
-                    service::port_forward(
-                        &client,
-                        namespace,
-                        &service.name,
-                        port,
-                        listener,
-                        on_error,
-                    )
-                    .await
+            let listener_failed =
+                |error: std::io::Error| ClusterError::new(format!("listener: {error}"));
+            let forward = async {
+                match &request.target {
+                    ForwardTarget::Pod(pod) => {
+                        let namespace = namespace_of(pod)?;
+                        pod::port_forward(&client, namespace, &pod.name, port, listener, on_error)
+                            .await
+                            .map_err(listener_failed)
+                    }
+                    ForwardTarget::Service(service) => {
+                        let namespace = namespace_of(service)?;
+                        service::port_forward(
+                            &client,
+                            namespace,
+                            &service.name,
+                            port,
+                            listener,
+                            on_error,
+                        )
+                        .await
+                        .map_err(listener_failed)
+                    }
                 }
             };
-            if let Err(error) = result {
-                failed(ClusterError::new(format!("listener: {error}")));
+            if let Err(error) = forward.await {
+                failed(error);
             }
         });
         PortForward::with_work(events, work.abort_handle())
@@ -683,8 +690,10 @@ impl Cluster {
     ///
     /// The receiver gets each LIST as `Init`, `InitApply`… `InitDone`, then
     /// live changes. A failure, or the watch ending, arrives as an `Err`
-    /// and is followed 1 s later by a fresh LIST; 30 s later after a
-    /// [`Forbidden`](ClusterErrorKind::Forbidden) one. A connect failure
+    /// and is followed by a fresh LIST: 1 s later, then twice as long on each
+    /// consecutive failure up to 30 s, starting over after a LIST completes;
+    /// 30 s later after a [`Forbidden`](ClusterErrorKind::Forbidden) one. A
+    /// connect failure
     /// arrives as the only message.
     pub fn watch_objects(
         &self,
@@ -726,12 +735,30 @@ impl Drop for Cluster {
     }
 }
 
+/// The namespace of a Pod or Service request's target: the one place the
+/// log, exec and forward paths read it. Pods and Services are namespaced, so
+/// a key without one is a caller's bug, never the empty namespace.
+fn namespace_of(target: &ObjectKey) -> Result<&str, ClusterError> {
+    target
+        .namespace
+        .as_deref()
+        .ok_or_else(|| ClusterError::new(format!("{target} has no namespace")))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    #[test]
+    fn a_target_without_a_namespace_is_an_error_not_the_empty_namespace() {
+        let namespaced = ObjectKey::new(Some("shop".into()), "web");
+        assert_eq!(namespace_of(&namespaced).unwrap(), "shop");
+        let error = namespace_of(&ObjectKey::cluster_scoped("web")).unwrap_err();
+        assert_eq!(error.to_string(), "web has no namespace");
+    }
 
     /// A client whose every request is a 404.
     fn mock_client() -> Client {

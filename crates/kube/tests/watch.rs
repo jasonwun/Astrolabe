@@ -107,3 +107,63 @@ fn a_forbidden_error_is_forbidden_and_shows_its_message() {
     assert!(error.is_forbidden());
     assert_eq!(error.to_string(), "pods is forbidden");
 }
+
+/// Read messages until the next error, and when it arrived.
+async fn next_error(
+    watch: &mut futures::channel::mpsc::Receiver<astrolabe_kube::watch::NamespaceWatchMessage>,
+) -> Instant {
+    loop {
+        if next(watch).await.is_err() {
+            return Instant::now();
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_relist_wait_doubles_up_to_30_seconds() {
+    let apiserver = Apiserver::new(
+        (0..8)
+            .map(|_| Answer::Status(500, "InternalError"))
+            .collect(),
+        Vec::new(),
+    );
+    let cluster = mock_cluster(&apiserver);
+    let mut watch = cluster.watch_namespaces();
+
+    let mut failures = Vec::new();
+    for _ in 0..8 {
+        failures.push(next_error(&mut watch).await);
+    }
+
+    let waits: Vec<u64> = failures
+        .windows(2)
+        .map(|pair| (pair[1] - pair[0]).as_secs())
+        .collect();
+    assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_completed_list_resets_the_relist_wait() {
+    let apiserver = Apiserver::new(
+        vec![
+            Answer::Status(500, "InternalError"),
+            Answer::Status(500, "InternalError"),
+            namespace_list(&["default"], "1"),
+            namespace_list(&["kube-system"], "2"),
+        ],
+        vec![support::failing_watch(), Answer::Hang],
+    );
+    let cluster = mock_cluster(&apiserver);
+    let mut watch = cluster.watch_namespaces();
+
+    // Two failed LISTs: the waits so far are 1 s and 2 s, the next would
+    // be 4 s.
+    next_error(&mut watch).await;
+    next_error(&mut watch).await;
+    // The third LIST completes, then its watch fails.
+    assert_list(&mut watch, &["default"]).await;
+    let failed_at = next_error(&mut watch).await;
+
+    assert_list(&mut watch, &["kube-system"]).await;
+    assert_eq!(failed_at.elapsed(), Duration::from_secs(1));
+}

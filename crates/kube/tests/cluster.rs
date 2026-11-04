@@ -215,7 +215,7 @@ async fn apply_sends_the_snapshot_as_a_server_side_apply() {
         .await
         .unwrap();
 
-    assert!(report.ok);
+    assert!(report.ok());
     assert_eq!(report.outcomes.len(), 1);
     assert_eq!(report.outcomes[0].doc, "v1 ConfigMap/cm");
     let queries = queries(&patches);
@@ -285,7 +285,7 @@ async fn a_served_kind_is_applied_without_a_discovery_request() {
         .await
         .unwrap();
 
-    assert!(applied.ok && prechecked.ok);
+    assert!(applied.ok() && prechecked.ok());
     assert_eq!(*discovery.lock().unwrap(), Vec::<String>::new());
 }
 
@@ -306,7 +306,7 @@ async fn an_unserved_kind_falls_back_to_asking_the_apiserver() {
         .await
         .unwrap();
 
-    assert!(applied.ok && prechecked.ok);
+    assert!(applied.ok() && prechecked.ok());
     assert_eq!(*discovery.lock().unwrap(), ["GET /api/v1", "GET /api/v1"]);
 }
 
@@ -323,7 +323,7 @@ async fn an_unserved_kind_the_apiserver_does_not_know_is_reported() {
         .await
         .unwrap();
 
-    assert!(!report.ok);
+    assert!(!report.ok());
     let error = report.outcomes[0].result.as_ref().unwrap_err();
     assert!(
         matches!(&error.error, ApplyError::Global { message } if message.contains("failed to discover")),
@@ -345,7 +345,7 @@ async fn a_conflicting_apply_reports_the_conflict() {
         .await
         .unwrap();
 
-    assert!(!report.ok);
+    assert!(!report.ok());
     let error = report.outcomes[0].result.as_ref().unwrap_err();
     match &error.error {
         ApplyError::Conflict(conflicts) => {
@@ -365,7 +365,7 @@ async fn force_apply_takes_over_the_conflicting_fields() {
         .await
         .unwrap();
 
-    assert!(report.ok);
+    assert!(report.ok());
     let queries = queries(&patches);
     assert!(queries[0].contains("force=true"), "{queries:?}");
     assert!(queries[0].contains("fieldManager=astrolabe"), "{queries:?}");
@@ -380,7 +380,7 @@ async fn precheck_is_a_strict_dry_run() {
         .await
         .unwrap();
 
-    assert!(report.ok);
+    assert!(report.ok());
     let queries = queries(&patches);
     assert_eq!(queries.len(), 1, "{queries:?}");
     assert!(queries[0].contains("dryRun=All"), "{queries:?}");
@@ -397,7 +397,7 @@ async fn a_precheck_reports_what_the_apply_would_hit() {
         .await
         .unwrap();
 
-    assert!(!report.ok);
+    assert!(!report.ok());
     assert!(report.outcomes[0].result.is_err());
 }
 
