@@ -257,8 +257,8 @@ detail with `support::open_detail`, and builds a `DynamicObject` with
 `support::object`, and clicks a dock tab or its close button with
 `support::mouse_click`; one over several Clusters opens the Workspace
 with `support::open_workspace` and reads a label with `support::label`;
-a scripted Apply or Precheck answers with `support::conflict_report` or
-`support::unknown_field_report`; a test asserting on `tracing` output
+a scripted Apply or Precheck answers with `support::conflict_report`,
+`support::unknown_field_report` or `support::global_report`; a test asserting on `tracing` output
 captures it with `support::LogCapture`, or `LogCapture::with_filter`
 when it needs a filter other than the default `astrolabe=debug` one
 (`dev/log-capture.sh` checks the last; it and `dev/comment-width.sh`
