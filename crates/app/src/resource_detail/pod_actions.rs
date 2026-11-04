@@ -245,17 +245,23 @@ impl ResourceDetailPanel {
                         .id(SharedString::from(format!("forward-error-{port}")))
                         .aria_label(text.clone())
                         .test_support()
+                        .min_w_0()
                         .text_xs()
                         .text_color(theme.danger)
                         .child(text)
                 });
+                // The texts wrap in the width Stop leaves them (`min_w_0`
+                // lets a flex child shrink below its text); Stop keeps its
+                // size and stays in the window (#213).
                 h_flex()
                     .gap_2()
+                    .items_start()
                     .child(
                         div()
                             .id(SharedString::from(format!("forward-{port}")))
                             .aria_label(text.clone())
                             .test_support()
+                            .min_w_0()
                             .text_sm()
                             .text_color(color)
                             .child(text),
@@ -267,6 +273,7 @@ impl ResourceDetailPanel {
                             "Stop",
                             theme.border,
                         )
+                        .flex_none()
                         .on_click(cx.listener(move |panel, _, _, cx| {
                             panel
                                 .session

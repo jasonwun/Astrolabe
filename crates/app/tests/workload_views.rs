@@ -11,7 +11,9 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Ui, key, object, open, open_detail, open_list, snapshot};
+use support::{
+    FAILED_PORT, LONG_ERROR_PORT, Ui, key, object, open, open_detail, open_list, snapshot,
+};
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
@@ -716,6 +718,55 @@ fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
         let forwards = window.within("detail-forwards");
         assert!(forwards.try_find("forward-stop-8080").is_none());
         assert!(forwards.try_find("forward-stop-9901").is_some());
+    });
+}
+
+/// Synthetic Pod (plausible shape, not captured from a server).
+fn long_error_pod() -> DynamicObject {
+    object(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {"containers": [
+            {"name": "app", "image": "nginx", "ports": [
+                {"containerPort": LONG_ERROR_PORT}, {"containerPort": FAILED_PORT}
+            ]}
+        ]},
+        "status": {"phase": "Running"}
+    }))
+}
+
+#[gpui_kit::test]
+fn a_long_forward_error_keeps_stop_inside_the_window(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let width = 900.;
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(width), gpui_kit::px(1600.)));
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![long_error_pod()],
+        "web-1",
+    );
+    forward(&mut ui, LONG_ERROR_PORT);
+    forward(&mut ui, FAILED_PORT);
+
+    ui.frame(|window, _| {
+        for port in [LONG_ERROR_PORT, FAILED_PORT] {
+            let stop = window.try_find(format!("forward-stop-{port}")).unwrap();
+            let right = stop.bounds().origin.x + stop.bounds().size.width;
+            assert!(
+                right <= gpui_kit::px(width),
+                "Stop for {port} ends at {right:?}, past the {width}pt window"
+            );
+        }
+        let forwards = window.within("detail-forwards");
+        assert!(
+            forwards
+                .try_find_by_label(&format!("Last connection failed: {}", support::LONG_ERROR))
+                .is_some()
+        );
     });
 }
 
