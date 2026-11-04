@@ -69,15 +69,16 @@ pub fn catalog(
             continue;
         };
         let spec = &crd.spec;
-        let found = served
+        let resolved = served
             .filter(|_| version.served)
             .and_then(|served| served.resolve(&spec.group, &version.name, &spec.names.kind));
-        let resource = match (served, found) {
+        let resource = match (served, resolved) {
             (None, _) => KindResource::Undiscovered,
             (Some(_), None) => KindResource::NotServed,
-            (Some(_), Some(found)) => KindResource::Served(found.resource.clone()),
+            (Some(_), Some(resolved)) => KindResource::Served(resolved.resource.clone()),
         };
-        let namespaced = found.map_or(spec.scope == "Namespaced", |found| found.namespaced);
+        let namespaced =
+            resolved.map_or(spec.scope == "Namespaced", |resolved| resolved.namespaced);
         groups.entry(&spec.group).or_default().push(CustomKind {
             crd_name: crd.name_any(),
             group: spec.group.clone(),

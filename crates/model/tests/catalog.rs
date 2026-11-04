@@ -124,33 +124,46 @@ fn an_unserved_version_is_not_served_even_while_discovery_lags() {
         "Namespaced",
         r#"[{"name":"v1","served":false,"storage":true}]"#,
     );
-    let stale = ServedResources::new([served("stable.example.com", "v1", "CronTab", true)]);
+    let stale = ServedResources::new([served("stable.example.com", "v1", "CronTab", false)]);
 
     let groups = catalog(&[&crontab], Some(&stale));
 
     assert_eq!(groups[0].kinds[0].resource, KindResource::NotServed);
+    // Not served, so the CRD's scope counts, not the stale discovery entry's.
+    assert!(groups[0].kinds[0].namespaced);
 }
 
 #[test]
-fn a_served_kind_takes_its_scope_from_discovery_and_a_pending_one_from_the_crd() {
+fn a_served_kind_takes_its_scope_from_discovery_not_the_crd() {
     // The served resource disagrees with the CRD on purpose, to show which counts.
-    let served_kind = crd("acme.io", "Backup", "Cluster", ONE_VERSION);
-    let pending = crd("acme.io", "Archive", "Namespaced", ONE_VERSION);
+    let backup = crd("acme.io", "Backup", "Cluster", ONE_VERSION);
     let discovered = ServedResources::new([served("acme.io", "v1", "Backup", true)]);
 
-    let groups = catalog(&[&served_kind, &pending], Some(&discovered));
+    let groups = catalog(&[&backup], Some(&discovered));
 
-    let archive = &groups[0].kinds[0];
-    assert_eq!(archive.resource, KindResource::NotServed);
-    assert!(archive.namespaced, "not served yet: the CRD's scope");
-    let backup = &groups[0].kinds[1];
-    assert!(matches!(backup.resource, KindResource::Served(_)));
-    assert!(
-        backup.namespaced,
-        "served: discovery's scope, not the CRD's"
-    );
+    let kind = &groups[0].kinds[0];
+    assert!(matches!(kind.resource, KindResource::Served(_)));
+    assert!(kind.namespaced);
+}
 
-    // Before any discovery result the CRD's scope is all there is.
-    let undiscovered = catalog(&[&served_kind], None);
-    assert!(!undiscovered[0].kinds[0].namespaced);
+#[test]
+fn a_kind_that_is_not_served_yet_takes_its_scope_from_the_crd() {
+    let archive = crd("acme.io", "Archive", "Namespaced", ONE_VERSION);
+    let discovered = ServedResources::new([]);
+
+    let groups = catalog(&[&archive], Some(&discovered));
+
+    let kind = &groups[0].kinds[0];
+    assert_eq!(kind.resource, KindResource::NotServed);
+    assert!(kind.namespaced);
+}
+
+#[test]
+fn an_undiscovered_kind_takes_its_scope_from_the_crd() {
+    let backup = crd("acme.io", "Backup", "Cluster", ONE_VERSION);
+
+    let groups = catalog(&[&backup], None);
+
+    assert_eq!(groups[0].kinds[0].resource, KindResource::Undiscovered);
+    assert!(!groups[0].kinds[0].namespaced);
 }
