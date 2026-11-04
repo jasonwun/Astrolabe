@@ -35,7 +35,7 @@ fn started(commands: &[Command]) -> Vec<WatchKey> {
         .iter()
         .filter_map(|command| match command {
             Command::StartWatch { key, .. } => Some(key.clone()),
-            _ => None,
+            Command::ScheduleDiscovery { .. } | Command::RunDiscovery { .. } => None,
         })
         .collect()
 }
@@ -671,4 +671,19 @@ fn a_forbidden_definition_list_leaves_the_catalog_empty() {
     assert!(state.crd_access_denied());
     assert_eq!(scheduled(&commands), None);
     assert!(!state.show_stale_warning());
+}
+
+#[test]
+fn the_state_resolves_a_kind_in_its_own_catalog() {
+    let state = crontab_state("Namespaced", true);
+
+    assert_eq!(state.custom_kind(&crontab_id()).unwrap().plural, "crontabs");
+    assert!(
+        state
+            .custom_kind(&CustomKindId {
+                group: "other.io".to_string(),
+                kind: "CronTab".to_string(),
+            })
+            .is_none()
+    );
 }

@@ -208,7 +208,7 @@ impl SessionState {
         self.watch_builtin(kind, &namespace)
     }
 
-    /// Enter a custom kind's instance list, as `catalog` resolves it. `None`
+    /// Enter a custom kind's instance list, as the Catalog resolves it. `None`
     /// while the kind is unknown or not served.
     pub fn open_custom_list(&mut self, id: &CustomKindId) -> Option<Ensured> {
         self.viewing = Some(Viewing::Custom(id.clone()));

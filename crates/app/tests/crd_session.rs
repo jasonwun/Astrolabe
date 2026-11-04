@@ -128,7 +128,7 @@ fn harness(
 /// are `SessionState`'s, tested in `astrolabe-model`; this pins that Session
 /// carries them out with the 400 ms timer.
 #[gpui_kit::test]
-fn a_crd_change_runs_discovery_after_the_400ms_debounce(cx: &mut TestAppContext) {
+fn a_definition_change_runs_discovery_after_the_400ms_debounce(cx: &mut TestAppContext) {
     let mut h = harness(cx, Vec::new());
     cx.run_until_parked();
     assert_eq!(h.discoveries.get(), 1, "discovery runs on connect");
