@@ -974,7 +974,9 @@ fn a_reconnect_discovery_supersedes_the_one_in_flight() {
 #[test]
 fn a_reconnect_restarts_a_watch_with_the_resource_it_started_with() {
     let mut state = state();
-    let started_with = state.watch_builtin(BuiltinKind::Pods, "default").commands;
+    let started_with = state
+        .watch_builtin(BuiltinKind::Pods, Some("default"))
+        .commands;
     let Command::StartWatch { resource, .. } = &started_with[0] else {
         panic!("expected a StartWatch");
     };

@@ -172,7 +172,7 @@ fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
         assert!(state.discovery_failure().is_some());
         assert!(
             state
-                .builtin_watch(BuiltinKind::Pods, "default")
+                .builtin_watch(BuiltinKind::Pods, Some("default"))
                 .is_some_and(|watch| watch.status().health() == ConnectionHealth::Stale)
         );
     });
@@ -194,7 +194,9 @@ fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
         assert_eq!(names(session.read(cx)), ["default"]);
         assert_eq!(state.health(), ConnectionHealth::Healthy);
         assert!(state.discovery_failure().is_none());
-        let watch = state.builtin_watch(BuiltinKind::Pods, "default").unwrap();
+        let watch = state
+            .builtin_watch(BuiltinKind::Pods, Some("default"))
+            .unwrap();
         assert_eq!(watch.status().health(), ConnectionHealth::Healthy);
         assert!(watch.get(Some("default"), "web").is_some());
     });
