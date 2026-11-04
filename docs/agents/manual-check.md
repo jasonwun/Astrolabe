@@ -259,9 +259,10 @@ From the shots' directory (outside the repo) `gh` finds no repository:
 push the branch first, then pass `-R jasonwun/Astrolabe --head <branch>
 --base main` (#166).
 
-A port-forward row: probing the local port with `nc -z localhost <port>`
-makes a `Last connection failed: ...` text appear, which is a quick way to
-check the row's layout. `lsof -nP -iTCP:<port> -sTCP:LISTEN` reads the
+A port-forward row: probing the local port with `nc -z localhost <port>`,
+when the container listens on nothing, makes a `Last connection failed: ...` text appear, a quick way to check
+the row's layout on a build with #213's fix (before it, the text pushed Stop
+out of the window). `lsof -nP -iTCP:<port> -sTCP:LISTEN` reads the
 listener's state without a connection (#166, #213).
 
 ## 5. Clean up

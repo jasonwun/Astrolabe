@@ -264,8 +264,15 @@ impl ResourceDetailPanel {
                             .id(SharedString::from(format!("forward-{port}")))
                             .aria_label(text.clone())
                             .min_w_0()
-                            .when(!failed, |status| status.flex_none())
-                            .when(failed, |status| status.flex_1())
+                            // A Failed status is the long text and wraps;
+                            // the others keep their width.
+                            .map(|status| {
+                                if failed {
+                                    status.flex_1()
+                                } else {
+                                    status.flex_none()
+                                }
+                            })
                             .test_support()
                             .text_sm()
                             .text_color(color)
