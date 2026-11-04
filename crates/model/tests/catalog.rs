@@ -135,7 +135,8 @@ fn an_unserved_version_is_not_served_even_while_discovery_lags() {
 
 #[test]
 fn a_served_kind_takes_its_scope_from_discovery_not_the_crd() {
-    // The served resource disagrees with the CRD on purpose, to show which counts.
+    // The served resource disagrees with the CRD on purpose, to show which
+    // counts.
     let backup = crd("acme.io", "Backup", "Cluster", ONE_VERSION);
     let discovered = ServedResources::new([served("acme.io", "v1", "Backup", true)]);
 
