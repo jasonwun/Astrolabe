@@ -280,3 +280,22 @@ fn an_operation_addresses_the_shown_object_until_it_leaves_its_watch() {
     snapshot(&mut state, BuiltinKind::Deployments, vec![]);
     assert_eq!(target.object(&state), None);
 }
+
+#[test]
+fn reference_errors_display_the_involved_object() {
+    assert_eq!(
+        ReferenceError::MissingName {
+            kind: "Pod".to_string()
+        }
+        .to_string(),
+        "Cannot open involved object Pod/: name is missing"
+    );
+    assert_eq!(
+        ReferenceError::UnregisteredKind {
+            kind: "Widget".to_string(),
+            name: "w".to_string()
+        }
+        .to_string(),
+        "Cannot open involved object Widget/w: kind is not registered"
+    );
+}
