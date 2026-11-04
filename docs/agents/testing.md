@@ -40,6 +40,14 @@ Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
 `comment-width.sh` caught it and cost a CI round (#149 retro).
 
+Run the lint job's steps and `dev/test-evidence.sh` on the rebased tree,
+right before the push that opens the PR and again after every later
+rebase, and fetch `origin/main` first. CI lints the merge with main:
+#258's tests called `watch_builtin(kind, "default")` after another PR
+made its namespace an `Option`, and `lint` failed on a base the local
+run had never seen. The PR's tally line is pasted from the last run:
+#258 merged saying 552 passed after a rebase made it 555 (#234 retro).
+
 Chain the fix, the re-run and the push with `&&`, never `;`. #243's
 `sed -i` (BSD `sed` on macOS needs `sed -i ''`) failed on a line that
 `comment-width.sh` had flagged, and the `;` let the commit and push
