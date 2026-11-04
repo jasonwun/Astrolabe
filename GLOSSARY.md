@@ -27,6 +27,9 @@ The complete set of objects a watch last listed, replaced whole, never patched m
 A fresh complete LIST after a watch fails, ending in a new snapshot.
 _Avoid_: resync, reconnect (a reconnect is not a relist)
 
+**Reconnect**:
+A Session trying its Cluster again after a connect failed: every resident watch starts again and Discovery runs again. Not a relist, which one running watch does by itself.
+
 **Stale**:
 Showing the previous snapshot while its watch is down or relisting.
 _Avoid_: outdated, offline

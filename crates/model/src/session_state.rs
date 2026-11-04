@@ -194,9 +194,14 @@ impl SessionState {
         }
     }
 
-    /// Connected: run the first Discovery.
+    /// Connected: start the Namespaces and Definitions watches and run the
+    /// first Discovery.
     pub fn connected(&mut self) -> Vec<Command> {
-        vec![self.start_run()]
+        vec![
+            Command::StartNamespacesWatch,
+            Command::StartCrdsWatch,
+            self.start_run(),
+        ]
     }
 
     /// Reconnect: start every resident watch again (Namespaces,
@@ -206,16 +211,18 @@ impl SessionState {
     /// arrive. Nothing here decides whether a reconnect is needed: the
     /// caller asks after a connect failed.
     pub fn reconnect(&mut self) -> Vec<Command> {
-        let mut commands = vec![Command::StartNamespacesWatch, Command::StartCrdsWatch];
-        commands.extend(
-            self.resources
-                .iter()
-                .map(|(key, resource)| Command::StartWatch {
-                    key: key.clone(),
-                    resource: resource.clone(),
-                }),
-        );
-        commands.push(self.start_run());
+        let mut commands = self.connected();
+        let objects = self
+            .resources
+            .iter()
+            .map(|(key, resource)| Command::StartWatch {
+                key: key.clone(),
+                resource: resource.clone(),
+            });
+        // Discovery runs last, as it does on the first connect.
+        let discovery = commands.pop();
+        commands.extend(objects);
+        commands.extend(discovery);
         commands
     }
 

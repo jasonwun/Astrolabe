@@ -96,8 +96,7 @@ impl Session {
             drains: HashMap::new(),
             io,
         };
-        let mut commands = vec![Command::StartNamespacesWatch, Command::StartCrdsWatch];
-        commands.extend(session.state.connected());
+        let commands = session.state.connected();
         session.carry_out(commands, cx);
         session
     }

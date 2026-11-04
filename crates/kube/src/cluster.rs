@@ -280,9 +280,10 @@ impl Cluster {
         runtime: Handle,
         connector: Connector,
     ) -> Self {
+        let client = Self::attempt(&runtime, &connector);
         Self {
             id,
-            client: Mutex::new(connector()),
+            client: Mutex::new(client),
             connector,
             default_namespace,
             runtime,
@@ -290,12 +291,21 @@ impl Cluster {
         }
     }
 
+    /// Start a connect attempt, and poll it on `runtime` so its failure is
+    /// seen even when no request awaits it: [`Shared::peek`] answers only
+    /// once the attempt has been polled to its end.
+    fn attempt(runtime: &Handle, connector: &Connector) -> SharedClient {
+        let attempt = connector();
+        runtime.spawn(attempt.clone().map(drop));
+        attempt
+    }
+
     /// The client of the latest connect attempt. An attempt that failed is
     /// not kept: a new one starts and every later request shares it.
     fn client(&self) -> SharedClient {
         let mut client = self.client.lock().unwrap_or_else(PoisonError::into_inner);
         if matches!(client.peek(), Some(Err(_))) {
-            *client = (self.connector)();
+            *client = Self::attempt(&self.runtime, &self.connector);
         }
         client.clone()
     }
@@ -774,6 +784,16 @@ mod tests {
             second.err().map(|error| error.kind()),
             Some(ClusterErrorKind::Connect)
         );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn reconnect_replaces_a_failure_no_request_awaited() {
+        let (cluster, attempts) = flaky(1);
+        tokio::task::yield_now().await;
+
+        cluster.reconnect();
+
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 

@@ -507,12 +507,19 @@ fn the_cluster_is_the_one_the_state_was_built_for() {
 // Discovery
 
 #[test]
-fn connecting_runs_the_first_discovery() {
+fn connecting_starts_the_cluster_watches_and_runs_the_first_discovery() {
     let mut state = state();
 
     let commands = state.connected();
 
-    assert!(matches!(commands[..], [Command::RunDiscovery { .. }]));
+    assert!(matches!(
+        commands[..],
+        [
+            Command::StartNamespacesWatch,
+            Command::StartCrdsWatch,
+            Command::RunDiscovery { .. }
+        ]
+    ));
 }
 
 #[test]
@@ -939,7 +946,13 @@ fn reconnecting_starts_every_resident_watch_and_discovery_again() {
         keys.iter()
             .any(|key| matches!(key.kind, ResourceKind::Custom { .. }))
     );
-    assert_eq!(commands.iter().filter(|c| is_run(c)).count(), 1);
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| matches!(command, Command::RunDiscovery { .. }))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -973,8 +986,4 @@ fn a_reconnect_restarts_a_watch_with_the_resource_it_started_with() {
         _ => None,
     });
     assert_eq!(restarted, Some(resource));
-}
-
-fn is_run(command: &Command) -> bool {
-    matches!(command, Command::RunDiscovery { .. })
 }
