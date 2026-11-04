@@ -6,6 +6,7 @@ use astrolabe_kube::pod::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest
 use astrolabe_model::projection::{DetailModel, Forward, ForwardTo};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{DetailTarget, OpenExec, OpenLogs, ResourceDetailPanel, button};
@@ -239,22 +240,39 @@ impl ResourceDetailPanel {
                         (format!("Forward to {port} failed: {error}"), theme.danger)
                     }
                 };
+                let failed = matches!(forward.state, ForwardState::Failed(_));
                 let last_error = forward.last_error.as_ref().map(|error| {
                     let text = format!("Last connection failed: {error}");
                     div()
                         .id(SharedString::from(format!("forward-error-{port}")))
                         .aria_label(text.clone())
                         .test_support()
+                        .flex_1()
+                        .min_w_0()
                         .text_xs()
                         .text_color(theme.danger)
                         .child(text)
                 });
+                // The texts wrap in the width Stop leaves them (`min_w_0`
+                // lets a flex child shrink below its text); Stop keeps its
+                // size and stays in the window (#213).
                 h_flex()
                     .gap_2()
+                    .items_start()
                     .child(
                         div()
                             .id(SharedString::from(format!("forward-{port}")))
                             .aria_label(text.clone())
+                            .min_w_0()
+                            // A Failed status is the long text and wraps;
+                            // the others keep their width.
+                            .map(|status| {
+                                if failed {
+                                    status.flex_1()
+                                } else {
+                                    status.flex_none()
+                                }
+                            })
                             .test_support()
                             .text_sm()
                             .text_color(color)
@@ -267,6 +285,7 @@ impl ResourceDetailPanel {
                             "Stop",
                             theme.border,
                         )
+                        .flex_none()
                         .on_click(cx.listener(move |panel, _, _, cx| {
                             panel
                                 .session

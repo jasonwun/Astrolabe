@@ -11,7 +11,10 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Ui, key, object, open, open_detail, open_list, snapshot};
+use support::{
+    FAILED_PORT, LONG_ERROR, LONG_ERROR_PORT, Ui, key, object, open, open_detail, open_list,
+    snapshot,
+};
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
@@ -716,6 +719,87 @@ fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
         let forwards = window.within("detail-forwards");
         assert!(forwards.try_find("forward-stop-8080").is_none());
         assert!(forwards.try_find("forward-stop-9901").is_some());
+    });
+}
+
+/// Synthetic Pod (plausible shape, not captured from a server).
+fn long_error_pod() -> DynamicObject {
+    object(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {"containers": [
+            {"name": "app", "image": "nginx", "ports": [
+                {"containerPort": LONG_ERROR_PORT}, {"containerPort": FAILED_PORT}
+            ]}
+        ]},
+        "status": {"phase": "Running"}
+    }))
+}
+
+/// Forwards `port` of `long_error_pod` in a narrow window, and returns the
+/// right edge of each element id in `ids` and of Stop, against the window.
+fn forward_in_narrow_window(cx: &mut TestAppContext, port: u16, ids: &[String]) {
+    let width = 900.;
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    ui.cx
+        .simulate_resize(gpui_kit::size(gpui_kit::px(width), gpui_kit::px(1600.)));
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![long_error_pod()],
+        "web-1",
+    );
+    forward(&mut ui, port);
+    ui.frame(|window, _| {
+        for id in ids.iter().cloned().chain([format!("forward-stop-{port}")]) {
+            let element = window.try_find(id.clone()).unwrap();
+            let right = element.bounds().origin.x + element.bounds().size.width;
+            assert!(
+                right <= gpui_kit::px(width),
+                "{id} ends at {right:?}, past the {width}pt window"
+            );
+        }
+    });
+}
+
+#[gpui_kit::test]
+fn a_long_last_connection_error_keeps_stop_inside_the_window(cx: &mut TestAppContext) {
+    forward_in_narrow_window(
+        cx,
+        LONG_ERROR_PORT,
+        &[
+            format!("forward-{LONG_ERROR_PORT}"),
+            format!("forward-error-{LONG_ERROR_PORT}"),
+        ],
+    );
+}
+
+#[gpui_kit::test]
+fn a_long_failed_error_keeps_stop_inside_the_window(cx: &mut TestAppContext) {
+    forward_in_narrow_window(cx, FAILED_PORT, &[format!("forward-{FAILED_PORT}")]);
+}
+
+#[gpui_kit::test]
+fn a_long_forward_error_stays_readable(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![long_error_pod()],
+        "web-1",
+    );
+    forward(&mut ui, LONG_ERROR_PORT);
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .within("detail-forwards")
+                .try_find_by_label(&format!("Last connection failed: {LONG_ERROR}"))
+                .is_some()
+        );
     });
 }
 

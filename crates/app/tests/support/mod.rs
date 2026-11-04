@@ -57,6 +57,14 @@ pub fn object(value: serde_json::Value) -> DynamicObject {
     serde_json::from_value(value).unwrap()
 }
 
+/// Forwarding this port reports `LONG_ERROR` as a failed connection.
+pub const LONG_ERROR_PORT: u16 = 7001;
+/// Forwarding this port ends in a `Failed` state with `LONG_ERROR`.
+pub const FAILED_PORT: u16 = 7002;
+/// Synthetic (modelled on a kubelet/CNI message, not captured): an error
+/// far wider than any window, with no break but spaces.
+pub const LONG_ERROR: &str = "error forwarding port 7001: an error occurred forwarding 18080 -> 8080: error forwarding port 8080 to pod 0123456789abcdef, uid : failed to execute portforward in network namespace \"/var/run/netns/cni-0123456789\": failed to connect to localhost:8080 inside namespace: dial tcp4 127.0.0.1:8080: connect: connection refused";
+
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
 
 /// What `Deleted` records of a Delete: `apiVersion/Kind`, namespace, name.
@@ -155,10 +163,17 @@ pub fn open(
             move |request: &ForwardRequest| {
                 forwarded.borrow_mut().push(request.clone());
                 let mut events = vec![ForwardEvent::Listening(request.port + 10_000)];
-                if request.port == 9901 {
-                    events.push(ForwardEvent::ConnectionFailed(ClusterError::new(
+                match request.port {
+                    9901 => events.push(ForwardEvent::ConnectionFailed(ClusterError::new(
                         "error forwarding port 9901: connection refused",
-                    )));
+                    ))),
+                    LONG_ERROR_PORT => events.push(ForwardEvent::ConnectionFailed(
+                        ClusterError::new(LONG_ERROR),
+                    )),
+                    FAILED_PORT => {
+                        events = vec![ForwardEvent::Failed(ClusterError::new(LONG_ERROR))];
+                    }
+                    _ => {}
                 }
                 events
             }
