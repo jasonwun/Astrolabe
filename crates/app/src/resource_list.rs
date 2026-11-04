@@ -229,7 +229,7 @@ impl ResourceListPanel {
                 let watch = data.builtin_watch(*kind, data.namespace());
                 let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                 let state = match watch {
-                    Some(watch) if watch.forbidden() => {
+                    Some(watch) if watch.status().is_forbidden() => {
                         ListState::Message(forbidden_message(registration.label))
                     }
                     _ => ListState::Table,
@@ -237,7 +237,7 @@ impl ResourceListPanel {
                 (
                     (registration.list)(&objects, now),
                     state,
-                    watch.is_some_and(|watch| watch.show_stale_warning()),
+                    watch.is_some_and(|watch| watch.status().is_stale()),
                 )
             }
             ListView::Definitions => {
@@ -250,7 +250,7 @@ impl ResourceListPanel {
                 (
                     project_definitions(&crds.objects(), &self.group_filter, now),
                     state,
-                    crds.show_stale_warning(),
+                    crds.status().is_stale(),
                 )
             }
             ListView::Custom(id) => match data.custom_kind(id) {
@@ -280,7 +280,7 @@ impl ResourceListPanel {
                         let watch = data.object_watch(&data.custom_watch_key(kind));
                         let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                         let state = match watch {
-                            Some(watch) if watch.forbidden() => {
+                            Some(watch) if watch.status().is_forbidden() => {
                                 ListState::Message(forbidden_message(&kind.plural))
                             }
                             _ => ListState::Table,
@@ -288,7 +288,7 @@ impl ResourceListPanel {
                         (
                             project_custom_resources(kind, &objects, now),
                             state,
-                            watch.is_some_and(|watch| watch.show_stale_warning()),
+                            watch.is_some_and(|watch| watch.status().is_stale()),
                         )
                     }
                 },

@@ -17,7 +17,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 
-use crate::session::{CustomKindId, Watched};
+use crate::session::CustomKindId;
 use crate::session_state::SessionState;
 
 /// What a detail tab shows: one object, addressed in its list's store.
@@ -263,7 +263,7 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> O
                 let watch = state.builtin_watch(related.kind, namespace);
                 let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
                 let selected = (related.select)(shown, &candidates);
-                let outcome = if watch.is_some_and(Watched::forbidden) {
+                let outcome = if watch.is_some_and(|watch| watch.status().is_forbidden()) {
                     RelatedOutcome::Forbidden(forbidden_message(related.title))
                 } else if related.hide_when_empty && selected.is_empty() {
                     return None;

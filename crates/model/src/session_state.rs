@@ -362,7 +362,7 @@ impl SessionState {
     /// RBAC denies listing CRDs: Custom Resources shows an empty-state hint
     /// (no heuristic reconstruction of kinds, #11).
     pub fn crd_access_denied(&self) -> bool {
-        self.crds.forbidden()
+        self.crds.status().is_forbidden()
     }
 
     /// The custom kinds by API group, as Custom Resources navigation shows
@@ -391,16 +391,16 @@ impl SessionState {
     /// The disconnect banner: the Namespaces watch lost its connection, or
     /// the latest Discovery refresh failed.
     pub fn show_stale_warning(&self) -> bool {
-        self.namespaces.show_stale_warning() || self.discovery.failure().is_some()
+        self.namespaces.status().is_stale() || self.discovery.failure().is_some()
     }
 
     pub fn health(&self) -> ConnectionHealth {
-        self.namespaces.health()
+        self.namespaces.status().health()
     }
 
     /// The Namespaces watch lost its connection and shows its old snapshot.
     pub fn namespaces_stale(&self) -> bool {
-        self.namespaces.show_stale_warning()
+        self.namespaces.status().is_stale()
     }
 
     pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {

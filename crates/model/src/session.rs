@@ -70,6 +70,76 @@ pub enum SnapshotChange {
     Changed,
 }
 
+/// Where one watch stands. Every state says whether the watch holds a
+/// snapshot, so "stale with no snapshot ever taken" cannot be written down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchStatus {
+    /// The first list is in progress; no snapshot yet.
+    Connecting,
+    /// The snapshot is current.
+    Live,
+    /// A relist is in progress; the old snapshot stays visible, stale.
+    Relisting,
+    /// The watch failed or ended; the old snapshot stays visible, stale.
+    Stale,
+    /// The watch failed or ended before any snapshot arrived.
+    Unreachable,
+    /// The latest failure was an RBAC denial. `has_snapshot` says whether an
+    /// older snapshot is still shown (stale).
+    Forbidden { has_snapshot: bool },
+}
+
+impl WatchStatus {
+    /// The coarse health the cluster indicator shows.
+    pub fn health(self) -> ConnectionHealth {
+        match self {
+            Self::Connecting | Self::Relisting => ConnectionHealth::Connecting,
+            Self::Live => ConnectionHealth::Healthy,
+            Self::Stale | Self::Unreachable | Self::Forbidden { .. } => ConnectionHealth::Stale,
+        }
+    }
+
+    /// The watch shows an old snapshot that may no longer be true.
+    pub fn is_stale(self) -> bool {
+        match self {
+            Self::Relisting | Self::Stale => true,
+            Self::Forbidden { has_snapshot } => has_snapshot,
+            Self::Connecting | Self::Live | Self::Unreachable => false,
+        }
+    }
+
+    /// The latest failure was an RBAC denial.
+    pub fn is_forbidden(self) -> bool {
+        matches!(self, Self::Forbidden { .. })
+    }
+
+    fn has_snapshot(self) -> bool {
+        match self {
+            Self::Live | Self::Relisting | Self::Stale => true,
+            Self::Forbidden { has_snapshot } => has_snapshot,
+            Self::Connecting | Self::Unreachable => false,
+        }
+    }
+
+    /// A list starts. An RBAC denial stays until a snapshot lifts it.
+    fn listing(self) -> Self {
+        match self {
+            Self::Connecting | Self::Unreachable => Self::Connecting,
+            Self::Live | Self::Relisting | Self::Stale => Self::Relisting,
+            Self::Forbidden { .. } => self,
+        }
+    }
+
+    /// The connection ended without an error; a denial is kept.
+    fn ended(self) -> Self {
+        match self {
+            Self::Forbidden { .. } => self,
+            _ if self.has_snapshot() => Self::Stale,
+            _ => Self::Unreachable,
+        }
+    }
+}
+
 /// One watcher's snapshot plus its connection state: old data stays visible
 /// (stale) through a relist until the complete replacement arrives.
 pub struct Watched<K> {
@@ -79,10 +149,9 @@ pub struct Watched<K> {
     committed: BTreeMap<ObjectKey, K>,
     /// A relist in progress, swapped in whole on `InitDone`.
     staging: BTreeMap<ObjectKey, K>,
-    health: ConnectionHealth,
-    has_snapshot: bool,
-    stale: bool,
-    forbidden: bool,
+    status: WatchStatus,
+    /// Goes up each time the committed snapshot changes.
+    revision: u64,
 }
 
 impl<K: ResourceExt> Watched<K> {
@@ -93,45 +162,42 @@ impl<K: ResourceExt> Watched<K> {
             label: label.into(),
             committed: BTreeMap::new(),
             staging: BTreeMap::new(),
-            health: ConnectionHealth::Connecting,
-            has_snapshot: false,
-            stale: false,
-            forbidden: false,
+            status: WatchStatus::Connecting,
+            revision: 0,
         }
     }
 
-    fn set_health(&mut self, health: ConnectionHealth) {
-        if self.health != health {
+    fn set_status(&mut self, status: WatchStatus) {
+        if self.status.health() != status.health() {
             tracing::info!(
                 cluster = %self.cluster,
-                from = ?self.health,
-                to = ?health,
+                from = ?self.status.health(),
+                to = ?status.health(),
                 "{} session health changed",
                 self.label
             );
-            self.health = health;
         }
-    }
-
-    fn mark_healthy(&mut self) {
-        self.has_snapshot = true;
-        self.forbidden = false;
-        self.set_health(ConnectionHealth::Healthy);
-        self.stale = false;
+        self.status = status;
     }
 
     /// The watch failed or ended: keep the snapshot, flag it stale.
     pub fn mark_stale(&mut self) {
-        self.set_health(ConnectionHealth::Stale);
-        self.stale = self.has_snapshot;
+        self.set_status(self.status.ended());
     }
 
     /// The single place a watch message is interpreted.
     pub fn apply(&mut self, message: WatchMessage<K>) -> SnapshotChange {
+        let change = self.interpret(message);
+        if change != SnapshotChange::Unchanged {
+            self.revision += 1;
+        }
+        change
+    }
+
+    fn interpret(&mut self, message: WatchMessage<K>) -> SnapshotChange {
         match message {
             Ok(Event::Init) => {
-                self.set_health(ConnectionHealth::Connecting);
-                self.stale = self.has_snapshot;
+                self.set_status(self.status.listing());
                 self.staging.clear();
                 SnapshotChange::Unchanged
             }
@@ -140,12 +206,12 @@ impl<K: ResourceExt> Watched<K> {
                 SnapshotChange::Unchanged
             }
             Ok(Event::InitDone) => {
-                let change = if self.has_snapshot {
+                let change = if self.status.has_snapshot() {
                     SnapshotChange::Changed
                 } else {
                     SnapshotChange::FirstSnapshot
                 };
-                self.mark_healthy();
+                self.set_status(WatchStatus::Live);
                 self.committed = std::mem::take(&mut self.staging);
                 tracing::info!(
                     cluster = %self.cluster,
@@ -156,18 +222,24 @@ impl<K: ResourceExt> Watched<K> {
                 change
             }
             Ok(Event::Apply(object)) => {
-                self.mark_healthy();
+                self.set_status(WatchStatus::Live);
                 self.committed.insert(ObjectKey::of(&object), object);
                 SnapshotChange::Changed
             }
             Ok(Event::Delete(object)) => {
-                self.mark_healthy();
+                self.set_status(WatchStatus::Live);
                 self.committed.remove(&ObjectKey::of(&object));
                 SnapshotChange::Changed
             }
             Err(error) => {
-                self.forbidden = error.is_forbidden();
-                self.mark_stale();
+                let has_snapshot = self.status.has_snapshot();
+                self.set_status(if error.is_forbidden() {
+                    WatchStatus::Forbidden { has_snapshot }
+                } else if has_snapshot {
+                    WatchStatus::Stale
+                } else {
+                    WatchStatus::Unreachable
+                });
                 SnapshotChange::Unchanged
             }
         }
@@ -182,21 +254,14 @@ impl<K: ResourceExt> Watched<K> {
             .get(&ObjectKey::new(namespace.map(str::to_string), name))
     }
 
-    pub fn health(&self) -> ConnectionHealth {
-        self.health
+    pub fn status(&self) -> WatchStatus {
+        self.status
     }
 
-    pub fn has_snapshot(&self) -> bool {
-        self.has_snapshot
-    }
-
-    pub fn show_stale_warning(&self) -> bool {
-        self.stale
-    }
-
-    /// The latest failure was an RBAC denial.
-    pub fn forbidden(&self) -> bool {
-        self.forbidden
+    /// Goes up exactly when the committed snapshot changes, so a reader can
+    /// tell whether it changed since it last looked.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 }
 
