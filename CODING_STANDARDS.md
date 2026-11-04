@@ -430,7 +430,10 @@ as moved) is a finding.
 Every request has moved (#161): the app reaches a Cluster only through
 `Session`, and only `crates/app/src/cluster_io.rs` names `Cluster`;
 `dev/layer-check.sh` fails on a `kube::Client` or a `Cluster` anywhere
-else in the app. A stopgap that runs a request off the handle (such as
+else in the app. It also fails on `kube::Api`, `kube::Discovery`,
+`kube::Config` and `kube::config` in the app and the model (#224).
+
+A stopgap that runs a request off the handle (such as
 the removed `run_on_cluster_runtime`, #159–#161) names the ticket that
 removes it, and that ticket has the removal as an acceptance criterion.
 
