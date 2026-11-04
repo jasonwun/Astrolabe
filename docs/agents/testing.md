@@ -246,6 +246,13 @@ A `SessionState` query that only forwards to a free function (`custom_kind`
 over the Catalog) is a mutant of its own: `-> None` survived until a test
 called the method, not the free function (#165).
 
+A `Display` impl on a model or kube error is a mutant too (`fmt` ->
+`Ok(())`). The test that kills it asserts `to_string()` in the same crate:
+the app test that shows the notice does not count, because CI scopes the
+run to `astrolabe-kube` and `astrolabe-model`. #216 pushed without the
+diff-scoped run and CI's `mutants` job failed on `ReferenceError`'s
+`Display`, costing a CI round and a rebase (#216 retro).
+
 For the diff-scoped run, write `pr.diff` under the session's scratchpad
 directory: `$TMPDIR` is empty on this machine, so `> $TMPDIR/pr.diff`
 failed and `--in-diff` reported "Failed to open diff file" (#165).
