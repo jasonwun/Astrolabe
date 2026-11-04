@@ -139,6 +139,18 @@ group was already listed under `/apis` while its group version still
 answered 404, so per-group discovery failed and the unwrap panicked on a
 docs-only PR (#186, fixed in #187).
 
+A test that waits for a listener to close polls `TcpListener::bind` on its
+port, not `connect`. Dropping a handle aborts its task asynchronously, so
+the listener can outlive the drop signal; a `connect` probe cannot tell a
+closed listener from a leaked one, because connects queue in the backlog
+until it fills and then fail too. Prove the test still fails by leaking
+the listener (`ManuallyDrop`) and reading the timeout panic.
+
+Origin: `dropping_a_port_forward_stops_its_listener_and_connections`
+failed twice on #225's CI by connecting right after the drop. The issue's
+brief said to poll `connect`; with a leaked listener that version passed
+after about 1.6 s, so #230 polls `bind` (#226 retro).
+
 A kube-rs `watcher` emits `Event::Init` before its LIST, so a test waiting
 for a LIST failure (e.g. a 403) skips `Init` until the `Err` arrives (#16).
 
