@@ -271,13 +271,60 @@ fn a_failure_during_a_relist_leaves_the_old_snapshot_stale() {
     assert_eq!(watched.status(), WatchStatus::Stale);
 }
 
+fn versioned(name: &str, version: &str) -> Namespace {
+    let mut namespace = namespace(name);
+    namespace.metadata.resource_version = Some(version.to_string());
+    namespace
+}
+
 #[test]
-fn an_object_event_that_changes_nothing_still_counts_as_a_change() {
+fn replaying_the_known_resource_version_changes_nothing() {
+    let mut watched = namespace_watch();
+    watched.apply(Ok(Event::Apply(versioned("default", "7"))));
+    let before = watched.revision();
+
+    let change = watched.apply(Ok(Event::Apply(versioned("default", "7"))));
+
+    assert_eq!(change, SnapshotChange::Unchanged);
+    assert_eq!(watched.revision(), before);
+
+    let change = watched.apply(Ok(Event::Apply(versioned("default", "8"))));
+
+    assert_eq!(change, SnapshotChange::Changed);
+    assert!(watched.revision() > before);
+}
+
+#[test]
+fn an_object_without_a_version_is_always_a_change() {
     let mut watched = namespace_watch();
     relist(&mut watched, &["default"]);
     let before = watched.revision();
 
-    watched.apply(Ok(Event::Apply(namespace("default"))));
+    let change = watched.apply(Ok(Event::Apply(namespace("default"))));
+
+    assert_eq!(change, SnapshotChange::Changed);
+    assert!(watched.revision() > before);
+}
+
+#[test]
+fn deleting_an_absent_object_changes_nothing() {
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
+    let before = watched.revision();
+
+    let change = watched.apply(Ok(Event::Delete(namespace("ghost"))));
+
+    assert_eq!(change, SnapshotChange::Unchanged);
+    assert_eq!(watched.revision(), before);
+}
+
+#[test]
+fn a_relist_of_identical_objects_is_still_a_change() {
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
+    let before = watched.revision();
+
+    relist(&mut watched, &["default"]);
 
     assert!(watched.revision() > before);
 }

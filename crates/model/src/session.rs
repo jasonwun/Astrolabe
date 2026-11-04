@@ -232,13 +232,27 @@ impl<K: ResourceExt> Watched<K> {
             }
             Ok(Event::Apply(object)) => {
                 self.set_status(WatchStatus::Live);
-                self.committed.insert(ObjectKey::of(&object), object);
+                let key = ObjectKey::of(&object);
+                // Versions are opaque, so equality alone identifies a replay
+                // (Freelens 5a8b68e, kube-object.store.ts).
+                let replay = object.resource_version().is_some_and(|version| {
+                    self.committed
+                        .get(&key)
+                        .and_then(ResourceExt::resource_version)
+                        .is_some_and(|known| known == version)
+                });
+                if replay {
+                    return SnapshotChange::Unchanged;
+                }
+                self.committed.insert(key, object);
                 SnapshotChange::Changed
             }
             Ok(Event::Delete(object)) => {
                 self.set_status(WatchStatus::Live);
-                self.committed.remove(&ObjectKey::of(&object));
-                SnapshotChange::Changed
+                match self.committed.remove(&ObjectKey::of(&object)) {
+                    Some(_) => SnapshotChange::Changed,
+                    None => SnapshotChange::Unchanged,
+                }
             }
             Err(error) => {
                 let has_snapshot = self.status.has_snapshot();
@@ -267,7 +281,8 @@ impl<K: ResourceExt> Watched<K> {
 
     /// Goes up whenever the committed snapshot changes (`apply` returns
     /// anything but `Unchanged`), so a reader can tell whether it changed
-    /// since it last looked. A re-delivered identical object still counts.
+    /// since it last looked. A relist always counts; an `Apply` carrying the
+    /// known `resourceVersion` and a `Delete` of an absent object do not.
     pub fn revision(&self) -> u64 {
         self.revision
     }
