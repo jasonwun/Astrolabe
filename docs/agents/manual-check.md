@@ -5,6 +5,18 @@ sees: invisible text (#52) and a tab with no close button (#51) both passed
 the suite. Before handing over a change that shows in the app, look at it
 on the dev cluster and attach the screenshots to the hand-over.
 
+Read the whole file before launching, sections 0-3 included: they are how
+the app is rebased, seeded, launched and driven. #233 read only the first
+60 lines and improvised with `cargo run`, full-screen `screencapture` and
+`osascript`. The first capture showed the terminal, not the app (the window
+was behind it). A System Events click on a sidebar row did nothing, because
+GPUI ignores accessibility presses. A raw CGEvent click did nothing either
+until a mouse move and a short delay came first. macOS also raised a
+screen-recording prompt for another app that blocked every click until
+someone pressed Allow: ask the user to press it, do not press it unasked.
+Use the documented tools (`dev/resize.sh`, `dev/shot.sh`,
+`orca computer`) instead (#233 retro).
+
 A change to the workspace build counts even when `crates/app` is
 untouched: root `Cargo.toml`, `Cargo.lock`, workspace lints, a new
 crate. It runs "A change that must leave the UI as it was" below on the
