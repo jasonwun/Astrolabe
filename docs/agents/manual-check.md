@@ -170,6 +170,12 @@ path of `<name>.png`, shrunk to one pixel per window point.
 - `press-key` sends no function keys: `F6` fails with `unsupported
   key 'F6'`. Reach the action another way: the YAML editor's Precheck
   also runs on its own about a second after an edit (#160).
+- An edit made *while* an Apply is in flight (the line marks re-mapped
+  onto the newer buffer) cannot be driven by hand: on `kind-astrolabe-dev`
+  the 422 comes back before `orca computer` can send a second key. Drive
+  the plain 422 line mark on kind, cover the re-map with a kube unit test
+  (`ApplyReport::remap`), and say in the PR that the in-flight path was not
+  driven by hand (#241 retro).
 - A YAML editor conflict (409) needs no extra setup. `dev/demo.sh` seeds
   with `kubectl apply`, so `kubectl-client-side-apply` owns every demo
   field. Change one in the editor and Apply to get the conflict and
