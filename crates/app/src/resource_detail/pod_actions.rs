@@ -225,6 +225,7 @@ impl ResourceDetailPanel {
         let theme = cx.theme();
         let session = self.session.read(cx);
         let rows: Vec<AnyElement> = session
+            .state()
             .forwards(&target)
             .map(|forward| {
                 let request = forward.request.clone();

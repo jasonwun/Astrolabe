@@ -96,13 +96,13 @@ impl SessionView {
     }
 
     pub fn health(&self, cx: &App) -> ConnectionHealth {
-        self.session.read(cx).health()
+        self.session.read(cx).state().health()
     }
 
     /// Show the launch's tabs (#106): a list in the list tab, a detail in
     /// a tab of its own, both in the session's namespace.
     pub fn open_tabs(&mut self, tabs: Vec<LaunchTab>, window: &mut Window, cx: &mut Context<Self>) {
-        let namespace = self.session.read(cx).namespace().to_string();
+        let namespace = self.session.read(cx).state().namespace().to_string();
         for tab in tabs {
             match tab {
                 LaunchTab::List(kind) => self.show(ListView::Builtin(kind), window, cx),
@@ -215,8 +215,9 @@ impl SessionView {
     fn render_namespace_select(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let session = self.session.read(cx);
-        let current = session.namespace().to_string();
+        let current = session.state().namespace().to_string();
         let names: Vec<String> = session
+            .state()
             .namespaces()
             .iter()
             .filter_map(|namespace| namespace.metadata.name.clone())
@@ -380,7 +381,7 @@ impl SessionView {
                 ),
             );
 
-        if session.crd_access_denied() {
+        if session.state().crd_access_denied() {
             return nav.child(
                 div()
                     .id("nav-crd-denied")
@@ -393,7 +394,7 @@ impl SessionView {
                     .child(CRD_DENIED),
             );
         }
-        for group in session.catalog() {
+        for group in session.state().catalog() {
             let collapsed = self.collapsed.contains(&group.group);
             let toggled = group.group.clone();
             nav = nav.child(
@@ -437,16 +438,15 @@ impl SessionView {
 
 impl Render for SessionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let session = self.session.read(cx);
-        let stale = session.show_stale_warning();
+        let data = self.session.read(cx).state();
+        let stale = data.show_stale_warning();
         // Same banner, but say what failed: the watch may be healthy.
-        let message = if session.discovery_failure().is_some()
-            && session.health() != ConnectionHealth::Stale
-        {
-            DISCOVERY_STALE_MESSAGE
-        } else {
-            STALE_MESSAGE
-        };
+        let message =
+            if data.discovery_failure().is_some() && data.health() != ConnectionHealth::Stale {
+                DISCOVERY_STALE_MESSAGE
+            } else {
+                STALE_MESSAGE
+            };
         let border = cx.theme().border;
         v_flex()
             .size_full()

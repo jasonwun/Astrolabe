@@ -4,18 +4,12 @@ use std::time::Duration;
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
-use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
-use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::object::Operation;
-use astrolabe_kube::pod::{
-    ExecRequest, ExecSession, ForwardRequest, ForwardTarget, LogRequest, LogStream,
-};
+use astrolabe_kube::pod::{ExecRequest, ExecSession, ForwardRequest, LogRequest, LogStream};
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
-use astrolabe_model::catalog::{CustomGroup, CustomKind};
-use astrolabe_model::session::{ConnectionHealth, CustomKindId, WatchKey, Watched};
-use astrolabe_model::session_state::{ActiveForward, Command, SessionState};
+use astrolabe_model::session::{CustomKindId, WatchKey};
+use astrolabe_model::session_state::{Command, SessionState};
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
@@ -206,31 +200,6 @@ impl Session {
         ensured.key
     }
 
-    /// The watch holding `kind`'s objects in `namespace` (every registered
-    /// built-in kind is namespaced).
-    pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: &str) -> WatchKey {
-        self.state.builtin_watch_key(kind, namespace)
-    }
-
-    /// The watch holding `kind`'s objects in `namespace`, once started.
-    pub fn builtin_watch(
-        &self,
-        kind: BuiltinKind,
-        namespace: &str,
-    ) -> Option<&Watched<DynamicObject>> {
-        self.state.builtin_watch(kind, namespace)
-    }
-
-    /// The object `name` in `namespace` of `kind`, from its watch.
-    pub fn builtin_object(
-        &self,
-        kind: BuiltinKind,
-        namespace: &str,
-        name: &str,
-    ) -> Option<&DynamicObject> {
-        self.state.builtin_object(kind, namespace, name)
-    }
-
     /// Ensure the watch an object of kind `id` in `namespace` (`None` when
     /// cluster-scoped) is read from, at the kind's current preferred
     /// version, whatever the namespace selection (#41). Shares the list's
@@ -247,21 +216,10 @@ impl Session {
         Some(ensured.key)
     }
 
-    /// Leave the watched lists (Namespaces or Definitions is shown).
+    /// Leave the watched lists (Namespaces or Definitions is shown). A
+    /// mutation `state()` cannot expose, and it needs no Cluster command.
     pub fn close_list(&mut self) {
         self.state.close_list();
-    }
-
-    /// The watch a kind's list reads for the current namespace selection:
-    /// namespaced kinds follow it, cluster-scoped kinds ignore it.
-    pub fn custom_watch_key(&self, kind: &CustomKind) -> WatchKey {
-        self.state.custom_watch_key(kind)
-    }
-
-    /// The watch holding `kind`'s objects in `namespace`, at its preferred
-    /// version; cluster-scoped kinds ignore `namespace`.
-    pub fn custom_object_watch_key(&self, kind: &CustomKind, namespace: Option<&str>) -> WatchKey {
-        self.state.custom_object_watch_key(kind, namespace)
     }
 
     pub fn set_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
@@ -318,14 +276,6 @@ impl Session {
         self.carry_out(commands, cx);
     }
 
-    /// The forwards to one Pod or Service, in the order they started.
-    pub fn forwards<'a>(
-        &'a self,
-        target: &'a ForwardTarget,
-    ) -> impl Iterator<Item = &'a ActiveForward> {
-        self.state.forwards(target)
-    }
-
     fn start_forward(&mut self, request: ForwardRequest, cx: &mut Context<Self>) {
         let mut forward = self.io.port_forward(request.clone());
         let reports = {
@@ -347,54 +297,6 @@ impl Session {
             _reports: reports,
         });
         cx.notify();
-    }
-
-    pub fn watch_key(&self) -> &WatchKey {
-        self.state.watch_key()
-    }
-
-    pub fn namespaces(&self) -> Vec<&Namespace> {
-        self.state.namespaces()
-    }
-
-    pub fn crds(&self) -> &Watched<CustomResourceDefinition> {
-        self.state.crds()
-    }
-
-    /// RBAC denies listing CRDs: Custom Resources shows an empty-state hint
-    /// (no heuristic reconstruction of kinds, #11).
-    pub fn crd_access_denied(&self) -> bool {
-        self.state.crd_access_denied()
-    }
-
-    pub fn catalog(&self) -> &[CustomGroup] {
-        self.state.catalog()
-    }
-
-    pub fn custom_kind(&self, id: &CustomKindId) -> Option<&CustomKind> {
-        self.state.custom_kind(id)
-    }
-
-    pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
-        self.state.object_watch(key)
-    }
-
-    pub fn namespace(&self) -> &str {
-        self.state.namespace()
-    }
-
-    pub fn discovery_failure(&self) -> Option<&ClusterError> {
-        self.state.discovery_failure()
-    }
-
-    pub fn health(&self) -> ConnectionHealth {
-        self.state.health()
-    }
-
-    /// The disconnect banner: the namespace watch lost its connection, or
-    /// the latest discovery refresh failed (old results stay in use).
-    pub fn show_stale_warning(&self) -> bool {
-        self.state.show_stale_warning()
     }
 }
 

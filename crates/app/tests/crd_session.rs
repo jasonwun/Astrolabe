@@ -186,9 +186,10 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
     cx.run_until_parked();
     cx.read(|cx| {
         let session = h.session.read(cx);
-        assert_eq!(session.namespace(), "default");
+        assert_eq!(session.state().namespace(), "default");
         assert!(
             session
+                .state()
                 .object_watch(&custom_key(Some("default"), "CronTab"))
                 .is_none()
         );
@@ -204,6 +205,7 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
         let watch = h
             .session
             .read(cx)
+            .state()
             .object_watch(&custom_key(Some("default"), "CronTab"))
             .unwrap();
         assert_eq!(watch.health(), ConnectionHealth::Healthy);
@@ -222,10 +224,12 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
     cx.read(|cx| {
         let session = h.session.read(cx);
         let team = session
+            .state()
             .object_watch(&custom_key(Some("team-a"), "CronTab"))
             .unwrap();
         assert_eq!(team.objects().len(), 2);
         let default = session
+            .state()
             .object_watch(&custom_key(Some("default"), "CronTab"))
             .unwrap();
         assert_eq!(default.objects().len(), 1);
@@ -272,8 +276,9 @@ fn an_object_watch_ignores_the_namespace_selection_and_list(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.read(|cx| {
         let session = h.session.read(cx);
-        assert_eq!(session.namespace(), "default");
+        assert_eq!(session.state().namespace(), "default");
         let watch = session
+            .state()
             .object_watch(&custom_key(Some("team-a"), "CronTab"))
             .unwrap();
         assert!(watch.get(Some("team-a"), "nightly").is_some());
@@ -287,6 +292,7 @@ fn an_object_watch_ignores_the_namespace_selection_and_list(cx: &mut TestAppCont
         assert!(
             h.session
                 .read(cx)
+                .state()
                 .object_watch(&custom_key(Some("team-b"), "CronTab"))
                 .is_none()
         )

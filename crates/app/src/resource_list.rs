@@ -192,6 +192,7 @@ impl ResourceListPanel {
         let session = self.session.read(cx);
         let namespace = key.namespace.as_deref().unwrap_or_default();
         let (object, reference) = session
+            .state()
             .builtin_object(kind, namespace, &key.name)
             .and_then(|object| Some((object, row_target?(object)?)))
             .ok_or_else(|| OpenRowError::ObjectUnavailable {
@@ -216,16 +217,16 @@ impl ResourceListPanel {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let _cost = perf::time(perf::Work::ListRefresh);
         let now = clock::now(cx);
-        let session = self.session.read(cx);
+        let data = self.session.read(cx).state();
         let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
             ListView::Namespaces => (
-                project_namespaces(&session.namespaces(), now),
+                project_namespaces(&data.namespaces(), now),
                 ListState::Table,
                 false,
             ),
             ListView::Builtin(kind) => {
                 let registration = kind.registration();
-                let watch = session.builtin_watch(*kind, session.namespace());
+                let watch = data.builtin_watch(*kind, data.namespace());
                 let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                 let state = match watch {
                     Some(watch) if watch.forbidden() => {
@@ -240,8 +241,8 @@ impl ResourceListPanel {
                 )
             }
             ListView::Definitions => {
-                let crds = session.crds();
-                let state = if session.crd_access_denied() {
+                let crds = data.crds();
+                let state = if data.crd_access_denied() {
                     ListState::Message(CRD_DENIED.to_string())
                 } else {
                     ListState::Table
@@ -252,7 +253,7 @@ impl ResourceListPanel {
                     crds.show_stale_warning(),
                 )
             }
-            ListView::Custom(id) => match session.custom_kind(id) {
+            ListView::Custom(id) => match data.custom_kind(id) {
                 None => (
                     ResourceTable::default(),
                     ListState::Message(format!("{} is no longer defined", id.kind)),
@@ -261,7 +262,7 @@ impl ResourceListPanel {
                 Some(kind) => match &kind.resource {
                     KindResource::Undiscovered => (
                         ResourceTable::default(),
-                        ListState::Message(match session.discovery_failure() {
+                        ListState::Message(match data.discovery_failure() {
                             Some(error) => format!("API discovery failed: {error}"),
                             None => "Discovering API resources…".to_string(),
                         }),
@@ -276,7 +277,7 @@ impl ResourceListPanel {
                         false,
                     ),
                     KindResource::Served(_) => {
-                        let watch = session.object_watch(&session.custom_watch_key(kind));
+                        let watch = data.object_watch(&data.custom_watch_key(kind));
                         let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                         let state = match watch {
                             Some(watch) if watch.forbidden() => {
@@ -317,6 +318,7 @@ impl ResourceListPanel {
         let groups: BTreeSet<String> = self
             .session
             .read(cx)
+            .state()
             .crds()
             .objects()
             .iter()
