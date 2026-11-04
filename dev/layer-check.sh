@@ -7,12 +7,21 @@
 # - its sources and tests name no `async fn`, `kube::Client`,
 #   `astrolabe_kube::Cluster` or `cluster::Cluster` (the live handle,
 #   whichever way it is reached; `ClusterId` and other value types are
-#   fine) and read no clock (`::now(`).
+#   fine) and read no clock (`::now(`);
+# - nor the other kube-rs entry points that do I/O or build a connection:
+#   `kube::Api`, `kube::Discovery`, `kube::Config` and the `kube::config`
+#   module (#224). `astrolabe-kube` re-exports `kube` whole so that the
+#   layers can name value types (`DynamicObject`, `ApiResource`, watcher
+#   events); without these rules a layer could start cluster I/O through
+#   `Api` or `Config` instead of `Client`. The rules also match the
+#   `astrolabe_kube::kube::` path and the long forms `kube::api::Api` and
+#   `kube::discovery::Discovery`.
 # `tracing` is on the allowlist for log events only, no I/O (#163).
 # The UI layer (crates/app) does not depend on tokio: the cluster runtime
 # is `astrolabe-kube`'s alone (#159). Its sources and tests name no
-# `kube::Client`, and only the I/O seam (crates/app/src/cluster_io.rs)
-# names the live `Cluster` handle, so no view holds a client (#161).
+# `kube::Client` and none of the entry points above, and only the I/O seam
+# (crates/app/src/cluster_io.rs) names the live `Cluster` handle, so no view
+# holds a client (#161).
 # Its sources build no `ClusterId` from a name: ids come from
 # `astrolabe_kube::clusters()`, so a second source leaves the app as it is
 # (#162). Its tests may, to name scripted clusters. An alias of `ClusterId`
@@ -76,6 +85,16 @@ names() { echo "\\b$1::(\\{[^}]*\\b)?$2\\b"; }
 forbid "$model_dir" '\basync[[:space:]]+fn\b' '`async fn`'
 forbid "$model_dir" "$(names kube Client)" '`kube::Client`'
 forbid "$model_dir" "$(names '(astrolabe_kube|cluster)' Cluster)" '`astrolabe_kube::Cluster`'
+for_layer_entry_points() {
+    local dir=$1
+    forbid "$dir" "$(names 'kube(::api)?' Api)" '`kube::Api`; requests go through Cluster'
+    forbid "$dir" "$(names 'kube(::discovery)?' Discovery)" '`kube::Discovery`; discovery goes through Cluster'
+    forbid "$dir" "$(names 'kube(::config)?' Config)" '`kube::Config`; connections are built in astrolabe-kube'
+    forbid "$dir" '\bkube::config\b' 'the `kube::config` module; connections are built in astrolabe-kube'
+}
+for_layer_entry_points "$model_dir"
+for_layer_entry_points "$app_dir"
+
 forbid "$model_dir" '::now[[:space:]]*\(' 'the clock (`::now(`); pass the time in'
 
 forbid "$app_dir" "$(names kube Client)" '`kube::Client`; requests go through Session'
