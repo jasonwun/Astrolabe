@@ -137,6 +137,23 @@ Reference: `crates/app/src/resource_list.rs`.
   arrives), call `window.dispatch_keystroke` and the next action in one
   `cx.update`, then `run_until_parked`: `press_then_select` in
   `crates/app/tests/workspace_yaml.rs` (#161).
+- Layout in a flex row: a child shrinks below its text only with
+  `.min_w_0()`; `.flex_1()` gives it the width left over and `.flex_none()`
+  keeps a button whole. `.when(..)` needs `use
+  gpui_kit::prelude::FluentBuilder as _` and goes before `.test_support()`
+  (`Observed` has no `when`); `.map(|el| if c { .. } else { .. })` also works
+  (#213).
+- A test that proves an element stays inside the window calls
+  `ui.cx.simulate_resize(size(px(w), px(1600.)))` before opening the
+  detail, and compares `bounds().origin.x + size.width` with `px(w)`. At
+  800pt high, `window.click("pick-port-…")` panicked "is not visible"
+  (#213).
+- A test that loops over several states and panics on the first failure
+  proves only the first. Give each state its own test, then break that
+  state's branch and watch the test fail. A `sed` that rustfmt's line
+  breaks defeat changes nothing and the test "survives": check the diff
+  before trusting the run (#213).
+
 - Snapshots carry element bounds, never laid-out text: a text element's
   bounds are its box, whatever the text's width or truncation. An
   ellipsis, a wrap, or text overflowing its box shows only in the manual

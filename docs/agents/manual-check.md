@@ -260,10 +260,15 @@ push the branch first, then pass `-R jasonwun/Astrolabe --head <branch>
 --base main` (#166).
 
 A port-forward row: probing the local port with `nc -z localhost <port>`,
-when the container listens on nothing, makes a `Last connection failed: ...` text appear, a quick way to check
-the row's layout on a build with #213's fix (before it, the text pushed Stop
-out of the window). `lsof -nP -iTCP:<port> -sTCP:LISTEN` reads the
-listener's state without a connection (#166, #213).
+when the container listens on nothing, makes a `Last connection failed:
+...` text appear: a quick way to check the row's layout. `nc -z` can
+succeed without the text appearing (the error lands only once the
+connection is forwarded); `echo x | nc -w 3 localhost <port>` produced it
+every time. `lsof -nP -iTCP:<port> -sTCP:LISTEN` reads the listener's
+state without a connection (#166, #213).
+
+`dev/resize.sh 2000 800` is capped at the screen: on a 1512pt screen the
+capture is 1512 wide. Say so in the PR rather than call it 2000 (#213).
 
 ## 5. Clean up
 
