@@ -223,7 +223,7 @@ impl ClusterIo {
         &mut self,
         snapshot: &str,
         mode: ApplyMode,
-        served: &ServedResources,
+        served: ServedResources,
     ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
         match self {
             Self::Scripted(cluster) => future::ready((cluster.apply)(snapshot, mode)).boxed(),
@@ -236,7 +236,7 @@ impl ClusterIo {
     pub(crate) fn precheck(
         &mut self,
         snapshot: &str,
-        served: &ServedResources,
+        served: ServedResources,
     ) -> BoxFuture<'static, Result<ApplyReport, ClusterError>> {
         match self {
             Self::Scripted(cluster) => future::ready((cluster.precheck)(snapshot)).boxed(),

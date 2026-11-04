@@ -380,9 +380,8 @@ impl Cluster {
         &self,
         snapshot: &str,
         mode: ApplyMode,
-        served: &ServedResources,
+        served: ServedResources,
     ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
-        let served = served.clone();
         self.send_snapshot(
             snapshot,
             "apply task panicked",
@@ -403,9 +402,8 @@ impl Cluster {
     pub fn precheck(
         &self,
         snapshot: &str,
-        served: &ServedResources,
+        served: ServedResources,
     ) -> impl Future<Output = Result<ApplyReport, ClusterError>> + Send + 'static {
-        let served = served.clone();
         self.send_snapshot(
             snapshot,
             "precheck task panicked",

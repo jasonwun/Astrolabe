@@ -157,9 +157,8 @@ const UNKNOWN_FIELD: &str = r#"{"kind":"Status","apiVersion":"v1","status":"Fail
     {"reason":"FieldValueInvalid","message":"unknown field \"data.key\"","field":"data.key"}]}}"#;
 const PATCH_PATH: &str = "/api/v1/namespaces/default/configmaps/cm";
 
-/// The requests the mock saw, as `METHOD path`, for the discovery-free
-/// assertions.
-type Requests = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+/// The non-`PATCH` requests the mock saw, as `METHOD path`: discovery.
+type DiscoveryRequests = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
 
 /// The `PATCH` requests' query strings, in the order the mock saw them.
 type Patches = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
@@ -211,7 +210,7 @@ async fn apply_sends_the_snapshot_as_a_server_side_apply() {
         .apply(
             CONFIGMAP_YAML,
             ApplyMode::Normal,
-            &ServedResources::default(),
+            ServedResources::default(),
         )
         .await
         .unwrap();
@@ -239,10 +238,10 @@ fn served_configmap() -> ServedResources {
     }])
 }
 
-/// A cluster that serves only the `PATCH`; every other request (that is,
-/// any discovery request) is recorded and refused.
-fn patch_only_cluster() -> (Cluster, Requests) {
-    let recorded = Requests::default();
+/// A cluster that serves the `PATCH`; every other request (that is, any
+/// discovery request) is recorded and answered by `other`.
+fn recording_cluster(other: fn(&str) -> http::Response<Body>) -> (Cluster, DiscoveryRequests) {
+    let recorded = DiscoveryRequests::default();
     let seen = recorded.clone();
     let service = tower::service_fn(move |req: http::Request<Body>| {
         let response = if req.method() == "PATCH" && req.uri().path() == PATCH_PATH {
@@ -251,7 +250,7 @@ fn patch_only_cluster() -> (Cluster, Requests) {
             seen.lock()
                 .unwrap()
                 .push(format!("{} {}", req.method(), req.uri().path()));
-            status(404, "NotFound")
+            other(req.uri().path())
         };
         std::future::ready(Ok::<_, std::convert::Infallible>(response))
     });
@@ -261,16 +260,28 @@ fn patch_only_cluster() -> (Cluster, Requests) {
     )
 }
 
+fn nothing_is_served(_: &str) -> http::Response<Body> {
+    status(404, "NotFound")
+}
+
+fn configmaps_are_discoverable(path: &str) -> http::Response<Body> {
+    if path == "/api/v1" {
+        reply(200, CONFIGMAPS_DISCOVERY)
+    } else {
+        status(404, "NotFound")
+    }
+}
+
 #[tokio::test]
 async fn a_served_kind_is_applied_without_a_discovery_request() {
-    let (cluster, discovery) = patch_only_cluster();
+    let (cluster, discovery) = recording_cluster(nothing_is_served);
 
     let applied = cluster
-        .apply(CONFIGMAP_YAML, ApplyMode::Normal, &served_configmap())
+        .apply(CONFIGMAP_YAML, ApplyMode::Normal, served_configmap())
         .await
         .unwrap();
     let prechecked = cluster
-        .precheck(CONFIGMAP_YAML, &served_configmap())
+        .precheck(CONFIGMAP_YAML, served_configmap())
         .await
         .unwrap();
 
@@ -280,35 +291,45 @@ async fn a_served_kind_is_applied_without_a_discovery_request() {
 
 #[tokio::test]
 async fn an_unserved_kind_falls_back_to_asking_the_apiserver() {
-    let (cluster, _) = configmap_cluster(applied);
+    let (cluster, discovery) = recording_cluster(configmaps_are_discoverable);
 
-    let report = cluster
+    let applied = cluster
         .apply(
             CONFIGMAP_YAML,
             ApplyMode::Normal,
-            &ServedResources::default(),
+            ServedResources::default(),
         )
         .await
         .unwrap();
+    let prechecked = cluster
+        .precheck(CONFIGMAP_YAML, ServedResources::default())
+        .await
+        .unwrap();
 
-    assert!(report.ok);
+    assert!(applied.ok && prechecked.ok);
+    assert_eq!(*discovery.lock().unwrap(), ["GET /api/v1", "GET /api/v1"]);
 }
 
 #[tokio::test]
 async fn an_unserved_kind_the_apiserver_does_not_know_is_reported() {
-    let (cluster, patches) = patch_only_cluster();
+    let (cluster, discovery) = recording_cluster(nothing_is_served);
 
     let report = cluster
         .apply(
             CONFIGMAP_YAML,
             ApplyMode::Normal,
-            &ServedResources::default(),
+            ServedResources::default(),
         )
         .await
         .unwrap();
 
     assert!(!report.ok);
-    let _ = patches;
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    assert!(
+        matches!(&error.error, ApplyError::Global { message } if message.contains("failed to discover")),
+        "{error:?}"
+    );
+    assert!(!discovery.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -319,7 +340,7 @@ async fn a_conflicting_apply_reports_the_conflict() {
         .apply(
             CONFIGMAP_YAML,
             ApplyMode::Normal,
-            &ServedResources::default(),
+            ServedResources::default(),
         )
         .await
         .unwrap();
@@ -340,11 +361,7 @@ async fn force_apply_takes_over_the_conflicting_fields() {
     let (cluster, patches) = configmap_cluster(applied);
 
     let report = cluster
-        .apply(
-            CONFIGMAP_YAML,
-            ApplyMode::Force,
-            &ServedResources::default(),
-        )
+        .apply(CONFIGMAP_YAML, ApplyMode::Force, ServedResources::default())
         .await
         .unwrap();
 
@@ -359,7 +376,7 @@ async fn precheck_is_a_strict_dry_run() {
     let (cluster, patches) = configmap_cluster(applied);
 
     let report = cluster
-        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .precheck(CONFIGMAP_YAML, ServedResources::default())
         .await
         .unwrap();
 
@@ -376,7 +393,7 @@ async fn a_precheck_reports_what_the_apply_would_hit() {
     let (cluster, _) = configmap_cluster(conflicted);
 
     let report = cluster
-        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .precheck(CONFIGMAP_YAML, ServedResources::default())
         .await
         .unwrap();
 
@@ -389,7 +406,7 @@ async fn a_precheck_flags_an_unknown_field_as_strict_decoding() {
     let (cluster, _) = configmap_cluster(unknown_field);
 
     let report = cluster
-        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .precheck(CONFIGMAP_YAML, ServedResources::default())
         .await
         .unwrap();
 
@@ -412,12 +429,12 @@ async fn an_unparsable_snapshot_fails_before_anything_is_sent() {
         .apply(
             "kind: [unclosed",
             ApplyMode::Normal,
-            &ServedResources::default(),
+            ServedResources::default(),
         )
         .await
         .unwrap_err();
     let precheck = cluster
-        .precheck("kind: [unclosed", &ServedResources::default())
+        .precheck("kind: [unclosed", ServedResources::default())
         .await
         .unwrap_err();
 
@@ -434,12 +451,12 @@ async fn apply_and_precheck_fail_with_the_connect_failure() {
         .apply(
             CONFIGMAP_YAML,
             ApplyMode::Normal,
-            &ServedResources::default(),
+            ServedResources::default(),
         )
         .await
         .unwrap_err();
     let precheck = cluster
-        .precheck(CONFIGMAP_YAML, &ServedResources::default())
+        .precheck(CONFIGMAP_YAML, ServedResources::default())
         .await
         .unwrap_err();
 

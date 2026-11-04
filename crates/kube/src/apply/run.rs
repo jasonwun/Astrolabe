@@ -11,7 +11,7 @@ use kube::api::{Patch, PatchParams};
 use kube::core::{DynamicObject, GroupVersionKind};
 use kube::{Api, Client, ResourceExt as _};
 
-use crate::discovery::{self, ServedResources};
+use crate::discovery::{self, ServedResource, ServedResources};
 
 use super::error::{ApplyError, FieldCause, parse_status};
 use super::locate::{Located, locate_field};
@@ -191,7 +191,10 @@ async fn apply_one(
         });
     }
     let gvk = GroupVersionKind::gvk(group, version, &doc.kind);
-    let (resource, namespaced) = discovery::resolve_kind(client, served, &gvk)
+    let ServedResource {
+        resource,
+        namespaced,
+    } = discovery::resolve_kind(client, served, &gvk)
         .await
         .map_err(|e| ApplyError::Global {
             message: format!("failed to discover {}: {e}", gvk.kind),

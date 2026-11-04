@@ -143,10 +143,13 @@ pub(crate) async fn resolve_kind(
     client: &Client,
     served: &ServedResources,
     gvk: &GroupVersionKind,
-) -> kube::Result<(ApiResource, bool)> {
+) -> kube::Result<ServedResource> {
     if let Some(found) = served.resolve(&gvk.group, &gvk.version, &gvk.kind) {
-        return Ok((found.resource.clone(), found.namespaced));
+        return Ok(found.clone());
     }
     let (resource, capabilities) = pinned_kind(client, gvk).await?;
-    Ok((resource, capabilities.scope == Scope::Namespaced))
+    Ok(ServedResource {
+        resource,
+        namespaced: capabilities.scope == Scope::Namespaced,
+    })
 }

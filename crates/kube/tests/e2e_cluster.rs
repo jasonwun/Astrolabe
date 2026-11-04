@@ -105,7 +105,7 @@ fn handle(client: &kube::Client) -> Cluster {
 
 async fn apply(client: &kube::Client, snapshot: &str) -> ApplyReport {
     handle(client)
-        .apply(snapshot, ApplyMode::Normal, &ServedResources::default())
+        .apply(snapshot, ApplyMode::Normal, ServedResources::default())
         .await
         .unwrap()
 }
@@ -359,7 +359,7 @@ async fn apply_409_then_force_apply() {
 
     // Force Apply takes ownership and succeeds.
     let report = handle(&client)
-        .apply(&snapshot, ApplyMode::Force, &ServedResources::default())
+        .apply(&snapshot, ApplyMode::Force, ServedResources::default())
         .await
         .unwrap();
     assert!(
@@ -395,7 +395,7 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
         (
             "precheck",
             handle(&client)
-                .precheck(&snapshot, &ServedResources::default())
+                .precheck(&snapshot, ServedResources::default())
                 .await
                 .unwrap(),
         ),
