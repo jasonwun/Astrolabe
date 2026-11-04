@@ -49,7 +49,10 @@ picks one `Command` variant with `_ => None` hides the next variant a
 ticket adds: list the other variants so the compiler asks for them
 (#165). Adding variants to `Command` can leave its
 `#[expect(clippy::large_enum_variant)]` unfulfilled, which `-D warnings`
-rejects: delete the `expect` when clippy says so (#166).
+rejects: delete the `expect` when clippy says so (#166). Code moved into
+`astrolabe-model` meets the same pedantic lints: a `pub fn` returning
+`Result` needs a `# Errors` section, and `|w| w.method()` becomes
+`Type::method` (#167).
 
 ## Move-only refactors
 

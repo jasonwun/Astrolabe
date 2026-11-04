@@ -220,6 +220,15 @@ of context.
    compacted between the two runs, the clicks were gone, and only the
    session transcript had them.
 
+   `--crop` goes right after the name, before the action: `dev/shot.sh
+   "$D" pods --crop 240,120,640,300 click --x 263 --y 204`. After the
+   action it fails with `Unknown flag --crop` (#167).
+
+   A detail pane's top shows `Created ... (2m14s ago)`: a crop holding
+   it reads `DIFF` for the age alone. Scroll to the section under test
+   (`dev/scroll.sh 860 600 up 80`, then `down 14` reaches a Deployment's
+   Related Pods) and crop there (#167).
+
    Open the same tabs in both runs: an extra tab moves the table down
    10pt and every crop reads `DIFF`.
 
