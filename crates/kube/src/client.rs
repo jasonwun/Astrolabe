@@ -60,3 +60,67 @@ pub fn clusters() -> Result<Vec<ClusterId>, ClusterError> {
     }
     Ok(clusters)
 }
+
+/// The namespace the kubeconfig's context `context` names, or `"default"`
+/// when the context names none or does not exist: what `kubectl` starts in.
+pub(crate) fn context_namespace(config: &kube::config::Kubeconfig, context: &str) -> String {
+    config
+        .contexts
+        .iter()
+        .find(|named| named.name == context)
+        .and_then(|named| named.context.as_ref())
+        .and_then(|context| context.namespace.clone())
+        .unwrap_or_else(|| "default".to_owned())
+}
+
+/// The default namespace of `cluster`'s kubeconfig context. Reads the
+/// kubeconfig, a small file; a kubeconfig that cannot be read answers
+/// `"default"`, and the connect reports the failure.
+pub(crate) fn default_namespace_for(cluster: &ClusterId) -> String {
+    kube::config::Kubeconfig::read().map_or_else(
+        |_| "default".to_owned(),
+        |config| context_namespace(&config, cluster.context()),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::context_namespace;
+
+    const KUBECONFIG: &str = r"apiVersion: v1
+kind: Config
+clusters:
+- name: cluster
+  cluster:
+    server: http://127.0.0.1:8080
+contexts:
+- name: team
+  context:
+    cluster: cluster
+    user: user
+    namespace: team-a
+- name: plain
+  context:
+    cluster: cluster
+    user: user
+users:
+- name: user
+  user: {}
+";
+
+    fn namespace_of(context: &str) -> String {
+        let config = kube::config::Kubeconfig::from_yaml(KUBECONFIG).unwrap();
+        context_namespace(&config, context)
+    }
+
+    #[test]
+    fn a_context_with_a_namespace_starts_in_it() {
+        assert_eq!(namespace_of("team"), "team-a");
+    }
+
+    #[test]
+    fn a_context_without_a_namespace_starts_in_default() {
+        assert_eq!(namespace_of("plain"), "default");
+        assert_eq!(namespace_of("missing"), "default");
+    }
+}

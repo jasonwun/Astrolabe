@@ -157,6 +157,15 @@ impl ClusterIo {
         Self::Live(Cluster::connect(cluster))
     }
 
+    /// The namespace a session starts in: the context's, or `"default"`
+    /// for a scripted cluster.
+    pub(crate) fn default_namespace(&self) -> String {
+        match self {
+            Self::Live(cluster) => cluster.default_namespace().to_owned(),
+            Self::Scripted(_) => "default".to_owned(),
+        }
+    }
+
     /// The Namespace watch; `None` when a scripted cluster scripts none.
     pub(crate) fn watch_namespaces(&mut self) -> Option<mpsc::Receiver<NamespaceWatchMessage>> {
         match self {

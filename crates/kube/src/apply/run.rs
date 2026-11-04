@@ -192,7 +192,9 @@ async fn apply_one(
     let api = if caps.scope == discovery::Scope::Namespaced {
         Api::<DynamicObject>::namespaced_with(
             client.clone(),
-            doc.namespace.as_deref().unwrap_or("default"),
+            doc.namespace
+                .as_deref()
+                .unwrap_or_else(|| client.default_namespace()),
             &resource,
         )
     } else {
@@ -352,6 +354,16 @@ data:
         + Send
         + 'static,
     ) -> (Client, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        mock_client_in("default", handler)
+    }
+
+    /// As [`mock_client`], with `namespace` as the client's default.
+    fn mock_client_in(
+        namespace: &str,
+        handler: impl Fn(&http::Request<kube::client::Body>) -> http::Response<kube::client::Body>
+        + Send
+        + 'static,
+    ) -> (Client, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen_in_handler = std::sync::Arc::clone(&seen);
         let service = tower::service_fn(move |req: http::Request<kube::client::Body>| {
@@ -362,7 +374,7 @@ data:
             let resp = handler(&req);
             std::future::ready(Ok::<_, std::convert::Infallible>(resp))
         });
-        (Client::new(service, "default"), seen)
+        (Client::new(service, namespace), seen)
     }
 
     const DEPLOYMENTS_DISCOVERY: &str = r#"{
@@ -444,6 +456,30 @@ data:
             requests
                 .iter()
                 .any(|r| r == "PATCH /apis/apps/v1/namespaces/default/deployments/nginx"),
+            "requests: {requests:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_one_sends_a_document_without_namespace_to_the_clients_default() {
+        let (client, seen) = mock_client_in("team-a", |req| {
+            match (req.method().as_str(), req.uri().path()) {
+                ("GET", "/apis/apps/v1") => json_response(200, DEPLOYMENTS_DISCOVERY),
+                ("PATCH", "/apis/apps/v1/namespaces/team-a/deployments/nginx") => {
+                    json_response(200, DEPLOYMENT_OBJECT)
+                }
+                _ => unexpected_request(),
+            }
+        });
+        let doc = only_doc("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\n");
+        apply_one(&client, &doc, &PatchParams::apply("test"))
+            .await
+            .unwrap();
+        let requests = seen.lock().unwrap();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r == "PATCH /apis/apps/v1/namespaces/team-a/deployments/nginx"),
             "requests: {requests:?}"
         );
     }
