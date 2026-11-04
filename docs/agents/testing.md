@@ -263,6 +263,13 @@ which also mutated the app crate. It ran past ten minutes, so the PR was
 pushed without its result. CI then missed `delete !` in a pruning line
 the fixes had added (#156 retro).
 
+#249 pushed without that run. Its `SessionState::served_resources`, a
+pass-through of `.cloned().unwrap_or_default()` that every Session test
+reaches only through the scripted cluster, survived `replace ... with
+Default::default()`. A new accessor in `astrolabe-model` needs a test that
+reads it back from a state that has the value and one that has not (#249
+retro).
+
 CI's `mutants` job enforces the bar on every PR, scoped to the PR's diff,
 and fails on every missed mutant there: a justification in the PR does not
 pass it. When no input can tell a mutant from the original (an equivalent

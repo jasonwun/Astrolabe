@@ -288,7 +288,9 @@ gh pr create --body-file body.md --attach ./shot.png   # also gh pr edit / gh pr
 Run it from the directory that holds the shots, so the path passed to
 `--attach` is the one the body names. #164 passed absolute scratch paths
 while the body said `./shot.png`; the body kept the broken relative link
-and gained a second image line (cause unverified). Read the body back with
+and gained a second image line (cause unverified). #249 did the same: its
+shots sat in the scratchpad, so the body kept `./prechecked.png` and gained
+the uploaded images at the bottom. Read the body back with
 `gh pr view --json body` and fix it before enabling auto-merge.
 
 From the shots' directory (outside the repo) `gh` finds no repository:
