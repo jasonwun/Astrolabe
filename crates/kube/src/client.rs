@@ -61,6 +61,9 @@ pub fn clusters() -> Result<Vec<ClusterId>, ClusterError> {
     Ok(clusters)
 }
 
+/// The namespace `kubectl` uses when a context names none.
+const DEFAULT_NAMESPACE: &str = "default";
+
 /// The namespace the kubeconfig's context `context` names, or `"default"`
 /// when the context names none or does not exist: what `kubectl` starts in.
 pub(crate) fn context_namespace(config: &kube::config::Kubeconfig, context: &str) -> String {
@@ -70,7 +73,7 @@ pub(crate) fn context_namespace(config: &kube::config::Kubeconfig, context: &str
         .find(|named| named.name == context)
         .and_then(|named| named.context.as_ref())
         .and_then(|context| context.namespace.clone())
-        .unwrap_or_else(|| "default".to_owned())
+        .unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned())
 }
 
 /// The default namespace of `cluster`'s kubeconfig context. Reads the
@@ -78,7 +81,7 @@ pub(crate) fn context_namespace(config: &kube::config::Kubeconfig, context: &str
 /// `"default"`, and the connect reports the failure.
 pub(crate) fn default_namespace_for(cluster: &ClusterId) -> String {
     kube::config::Kubeconfig::read().map_or_else(
-        |_| "default".to_owned(),
+        |_| DEFAULT_NAMESPACE.to_owned(),
         |config| context_namespace(&config, cluster.context()),
     )
 }

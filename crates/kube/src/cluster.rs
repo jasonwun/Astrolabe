@@ -229,7 +229,9 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    /// Start connecting to `cluster` and return at once.
+    /// Start connecting to `cluster` and return at once, after one read of
+    /// the small kubeconfig file for the context's namespace; the client
+    /// itself connects off the caller's thread.
     ///
     /// # Panics
     ///

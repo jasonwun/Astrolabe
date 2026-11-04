@@ -22,6 +22,8 @@ use futures::{FutureExt as _, channel::mpsc};
 
 use astrolabe_model::session::WatchKey;
 
+use crate::session::DEFAULT_NAMESPACE;
+
 type DiscoverFn = Box<dyn FnMut() -> Result<ServedResources, ClusterError>>;
 type OperateFn = Box<dyn FnMut(&Operation) -> Result<(), ClusterError>>;
 type ApplyFn = Box<dyn FnMut(&str, ApplyMode) -> Result<ApplyReport, ClusterError>>;
@@ -162,7 +164,7 @@ impl ClusterIo {
     pub(crate) fn default_namespace(&self) -> String {
         match self {
             Self::Live(cluster) => cluster.default_namespace().to_owned(),
-            Self::Scripted(_) => "default".to_owned(),
+            Self::Scripted(_) => DEFAULT_NAMESPACE.to_owned(),
         }
     }
 

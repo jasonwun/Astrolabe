@@ -54,6 +54,7 @@ contexts:
   context:
     cluster: cluster
     user: user
+    namespace: team-a
 users:
 - name: user
   user: {{}}
@@ -84,6 +85,11 @@ async fn clusters_are_the_kubeconfig_contexts_current_first() {
         .find(|cluster| cluster.name() == "alpha")
         .unwrap();
     assert_eq!(Cluster::connect(alpha).default_namespace(), "default");
+    let beta = clusters
+        .iter()
+        .find(|cluster| cluster.name() == "beta")
+        .unwrap();
+    assert_eq!(Cluster::connect(beta).default_namespace(), "team-a");
     let error = Cluster::connect(alpha).discover().await.unwrap_err();
     assert_ne!(error.kind(), ClusterErrorKind::Connect, "{error}");
 }
