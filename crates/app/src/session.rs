@@ -9,13 +9,13 @@ use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensio
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::{
-    ExecRequest, ExecSession, ForwardEvent, ForwardRequest, ForwardTarget, LogRequest, LogStream,
+    ExecRequest, ExecSession, ForwardRequest, ForwardTarget, LogRequest, LogStream,
 };
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::{CustomGroup, CustomKind};
-use astrolabe_model::session::{ConnectionHealth, CustomKindId, ForwardState, WatchKey, Watched};
-use astrolabe_model::session_state::{Command, SessionState};
+use astrolabe_model::session::{ConnectionHealth, CustomKindId, WatchKey, Watched};
+use astrolabe_model::session_state::{ActiveForward, Command, SessionState};
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
@@ -29,14 +29,9 @@ use crate::perf;
 /// update of the same object.
 pub const CRD_DEBOUNCE: Duration = Duration::from_millis(400);
 
-/// A port-forward the session keeps until stopped, whether or not its
-/// target's detail tab is open.
-pub struct Forward {
-    pub request: ForwardRequest,
-    pub state: ForwardState,
-    /// The latest connection's failure, while the listener goes on.
-    pub last_error: Option<String>,
-    /// Owns the I/O; dropping it stops the forward.
+/// The I/O of one running forward; dropping it stops the forward.
+struct ForwardTask {
+    request: ForwardRequest,
     _reports: Task<()>,
 }
 
@@ -45,7 +40,7 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 
 pub struct Session {
     state: SessionState,
-    forwards: Vec<Forward>,
+    forward_tasks: Vec<ForwardTask>,
     io: ClusterIo,
 }
 
@@ -83,7 +78,7 @@ impl Session {
     fn start(cluster: ClusterId, io: ClusterIo, namespace: String, cx: &mut Context<Self>) -> Self {
         let mut session = Self {
             state: SessionState::new(cluster, namespace),
-            forwards: Vec::new(),
+            forward_tasks: Vec::new(),
             io,
         };
         spawn_drain(
@@ -136,6 +131,11 @@ impl Session {
                     .detach();
                 }
                 Command::RunDiscovery { run } => self.run_discovery(run, cx),
+                Command::StartForward { request } => self.start_forward(request, cx),
+                Command::StopForward { request } => {
+                    self.forward_tasks.retain(|task| task.request != request);
+                    cx.notify();
+                }
             }
         }
     }
@@ -304,19 +304,32 @@ impl Session {
     /// Start forwarding `request`, unless it already is; a failed forward
     /// starts over.
     pub fn forward_port(&mut self, request: ForwardRequest, cx: &mut Context<Self>) {
-        if let Some(index) = self.forward_index(&request) {
-            if !matches!(self.forwards[index].state, ForwardState::Failed(_)) {
-                return;
-            }
-            self.forwards.remove(index);
-        }
+        let commands = self.state.forward_port(request);
+        self.carry_out(commands, cx);
+    }
+
+    pub fn stop_forward(&mut self, request: &ForwardRequest, cx: &mut Context<Self>) {
+        let commands = self.state.stop_forward(request);
+        self.carry_out(commands, cx);
+    }
+
+    /// The forwards to one Pod or Service, in the order they started.
+    pub fn forwards<'a>(
+        &'a self,
+        target: &'a ForwardTarget,
+    ) -> impl Iterator<Item = &'a ActiveForward> {
+        self.state.forwards(target)
+    }
+
+    fn start_forward(&mut self, request: ForwardRequest, cx: &mut Context<Self>) {
         let mut forward = self.io.port_forward(request.clone());
         let reports = {
             let request = request.clone();
             cx.spawn(async move |this, cx| {
                 while let Some(event) = forward.next().await {
                     let applied = this.update(cx, |session, cx| {
-                        session.forward_reported(&request, event, cx)
+                        session.state.forward_reported(&request, event);
+                        cx.notify();
                     });
                     if applied.is_err() {
                         return;
@@ -324,52 +337,10 @@ impl Session {
                 }
             })
         };
-        self.forwards.push(Forward {
+        self.forward_tasks.push(ForwardTask {
             request,
-            state: ForwardState::Starting,
-            last_error: None,
             _reports: reports,
         });
-        cx.notify();
-    }
-
-    pub fn stop_forward(&mut self, request: &ForwardRequest, cx: &mut Context<Self>) {
-        if let Some(index) = self.forward_index(request) {
-            self.forwards.remove(index);
-            cx.notify();
-        }
-    }
-
-    /// The forwards to one Pod or Service, in the order they started.
-    pub fn forwards<'a>(&'a self, target: &'a ForwardTarget) -> impl Iterator<Item = &'a Forward> {
-        self.forwards
-            .iter()
-            .filter(move |forward| forward.request.target == *target)
-    }
-
-    fn forward_index(&self, request: &ForwardRequest) -> Option<usize> {
-        self.forwards
-            .iter()
-            .position(|forward| forward.request == *request)
-    }
-
-    fn forward_reported(
-        &mut self,
-        request: &ForwardRequest,
-        event: ForwardEvent,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self.forward_index(request) else {
-            return;
-        };
-        let forward = &mut self.forwards[index];
-        match event {
-            ForwardEvent::Listening(port) => forward.state = ForwardState::Listening(port),
-            ForwardEvent::ConnectionFailed(error) => {
-                forward.last_error = Some(error.to_string());
-            }
-            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error.to_string()),
-        }
         cx.notify();
     }
 

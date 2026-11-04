@@ -1,7 +1,8 @@
-//! Session's state and rules (ADR-0002, #164, #165): each watch's `Watched`
+//! Session's state and rules (ADR-0002, #164–#166): each watch's `Watched`
 //! snapshot and Stale state, the namespace selection, the list being
-//! viewed, Discovery and the Catalog. Every input answers with the
-//! `Command`s Session carries out; Session decides nothing about them.
+//! viewed, Discovery, the Catalog and the Forward list's states. Every
+//! input answers with the `Command`s Session carries out; Session decides
+//! nothing about them.
 
 use std::collections::BTreeMap;
 
@@ -11,20 +12,17 @@ use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
 use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
 
 use crate::builtin::BuiltinKind;
 use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
 use crate::discovery_cache::DiscoveryCache;
 use crate::session::{
-    ConnectionHealth, CustomKindId, ResourceKind, SnapshotChange, WatchKey, Watched,
+    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey, Watched,
 };
 
 /// What Session must do after an input.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "commands are short-lived; boxing `StartWatch` would make every consumer unwrap it"
-)]
 #[derive(Clone, Debug)]
 pub enum Command {
     /// Start the watch `key` on `resource`, and feed its messages back to
@@ -39,6 +37,21 @@ pub enum Command {
     /// Run Discovery as `run`, and hand its answer to
     /// `SessionState::discovery_finished` under that number.
     RunDiscovery { run: u64 },
+    /// Start forwarding `request`, and hand every report to
+    /// `SessionState::forward_reported` under it.
+    StartForward { request: ForwardRequest },
+    /// Stop the forward of `request`: drop its I/O.
+    StopForward { request: ForwardRequest },
+}
+
+/// A port-forward the session keeps until stopped, whether or not its
+/// target's detail tab is open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActiveForward {
+    pub request: ForwardRequest,
+    pub state: ForwardState,
+    /// The latest connection's failure, while the listener goes on.
+    pub last_error: Option<String>,
 }
 
 /// A watch an input asked for, and the commands that bring it up.
@@ -82,6 +95,8 @@ pub struct SessionState {
     generation: u64,
     /// Bumped by every Discovery run; only the newest run's answer is kept.
     runs: u64,
+    /// The Forward list, in the order the forwards started.
+    forwards: Vec<ActiveForward>,
 }
 
 impl SessionState {
@@ -103,6 +118,7 @@ impl SessionState {
             catalog: Vec::new(),
             generation: 0,
             runs: 0,
+            forwards: Vec::new(),
         }
     }
 
@@ -256,7 +272,66 @@ impl SessionState {
         self.follow_viewed_list()
     }
 
+    /// Forward `request`, unless it already is; a failed forward starts
+    /// over, at the end of the list.
+    pub fn forward_port(&mut self, request: ForwardRequest) -> Vec<Command> {
+        let mut commands = Vec::new();
+        if let Some(index) = self.forward_index(&request) {
+            if !matches!(self.forwards[index].state, ForwardState::Failed(_)) {
+                return commands;
+            }
+            self.forwards.remove(index);
+            commands.push(Command::StopForward {
+                request: request.clone(),
+            });
+        }
+        self.forwards.push(ActiveForward {
+            request: request.clone(),
+            state: ForwardState::Starting,
+            last_error: None,
+        });
+        commands.push(Command::StartForward { request });
+        commands
+    }
+
+    /// Stop the forward of `request`; one not in the list changes nothing.
+    pub fn stop_forward(&mut self, request: &ForwardRequest) -> Vec<Command> {
+        let Some(index) = self.forward_index(request) else {
+            return Vec::new();
+        };
+        self.forwards.remove(index);
+        vec![Command::StopForward {
+            request: request.clone(),
+        }]
+    }
+
+    /// A report of the forward of `request`; one no longer in the list
+    /// changes nothing.
+    pub fn forward_reported(&mut self, request: &ForwardRequest, event: ForwardEvent) {
+        let Some(index) = self.forward_index(request) else {
+            return;
+        };
+        let forward = &mut self.forwards[index];
+        match event {
+            ForwardEvent::Listening(port) => forward.state = ForwardState::Listening(port),
+            ForwardEvent::ConnectionFailed(error) => {
+                forward.last_error = Some(error.to_string());
+            }
+            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error.to_string()),
+        }
+    }
+
     // Queries
+
+    /// The forwards to one Pod or Service, in the order they started.
+    pub fn forwards<'a>(
+        &'a self,
+        target: &'a ForwardTarget,
+    ) -> impl Iterator<Item = &'a ActiveForward> {
+        self.forwards
+            .iter()
+            .filter(move |forward| forward.request.target == *target)
+    }
 
     /// The Namespaces watch's key; it names the Cluster.
     pub fn watch_key(&self) -> &WatchKey {
@@ -374,6 +449,12 @@ impl SessionState {
             },
             namespace: namespace.filter(|_| kind.namespaced).map(str::to_string),
         }
+    }
+
+    fn forward_index(&self, request: &ForwardRequest) -> Option<usize> {
+        self.forwards
+            .iter()
+            .position(|forward| forward.request == *request)
     }
 
     fn start_run(&mut self) -> Command {

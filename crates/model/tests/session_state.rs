@@ -5,12 +5,14 @@ use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensio
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_kube::object::ObjectKey;
+use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::KindResource;
 use astrolabe_model::session::{
-    ConnectionHealth, CustomKindId, ResourceKind, SnapshotChange, WatchKey,
+    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey,
 };
-use astrolabe_model::session_state::{Command, SessionState, custom_kind};
+use astrolabe_model::session_state::{ActiveForward, Command, SessionState, custom_kind};
 use support::{object, served};
 
 mod support;
@@ -35,7 +37,10 @@ fn started(commands: &[Command]) -> Vec<WatchKey> {
         .iter()
         .filter_map(|command| match command {
             Command::StartWatch { key, .. } => Some(key.clone()),
-            Command::ScheduleDiscovery { .. } | Command::RunDiscovery { .. } => None,
+            Command::ScheduleDiscovery { .. }
+            | Command::RunDiscovery { .. }
+            | Command::StartForward { .. }
+            | Command::StopForward { .. } => None,
         })
         .collect()
 }
@@ -686,4 +691,197 @@ fn the_state_resolves_a_kind_in_its_own_catalog() {
             })
             .is_none()
     );
+}
+
+fn pod_target(name: &str) -> ForwardTarget {
+    ForwardTarget::Pod(ObjectKey::new(Some("default".to_string()), name))
+}
+
+fn forward_request(name: &str, port: u16) -> ForwardRequest {
+    ForwardRequest {
+        target: pod_target(name),
+        port,
+    }
+}
+
+/// The `index`th forward to the Pod `name`.
+fn forward_to(state: &SessionState, name: &str, index: usize) -> ActiveForward {
+    state
+        .forwards(&pod_target(name))
+        .nth(index)
+        .unwrap()
+        .clone()
+}
+
+/// The requests of the forwards to `target`, in list order.
+fn listed(state: &SessionState, target: &ForwardTarget) -> Vec<ForwardRequest> {
+    state
+        .forwards(target)
+        .map(|forward| forward.request.clone())
+        .collect()
+}
+
+fn is_start(command: &Command, request: &ForwardRequest) -> bool {
+    matches!(command, Command::StartForward { request: r } if r == request)
+}
+
+fn is_stop(command: &Command, request: &ForwardRequest) -> bool {
+    matches!(command, Command::StopForward { request: r } if r == request)
+}
+
+#[test]
+fn a_new_forward_starts_and_is_listed_as_starting() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+
+    let commands = state.forward_port(request.clone());
+
+    assert_eq!(commands.len(), 1);
+    assert!(is_start(&commands[0], &request));
+    let forward = forward_to(&state, "web", 0);
+    assert_eq!(forward.state, ForwardState::Starting);
+    assert_eq!(forward.last_error, None);
+}
+
+#[test]
+fn forwarding_the_same_request_again_changes_nothing() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+    state.forward_port(request.clone());
+    state.forward_reported(&request, ForwardEvent::Listening(8080));
+
+    let commands = state.forward_port(request.clone());
+
+    assert!(commands.is_empty());
+    let forward = forward_to(&state, "web", 0);
+    assert_eq!(forward.state, ForwardState::Listening(8080));
+}
+
+#[test]
+fn a_listening_report_sets_the_local_port() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+    state.forward_port(request.clone());
+
+    state.forward_reported(&request, ForwardEvent::Listening(8080));
+
+    let forward = forward_to(&state, "web", 0);
+    assert_eq!(forward.state, ForwardState::Listening(8080));
+}
+
+#[test]
+fn a_connection_failure_keeps_listening_and_records_the_error() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+    state.forward_port(request.clone());
+    state.forward_reported(&request, ForwardEvent::Listening(8080));
+
+    state.forward_reported(
+        &request,
+        ForwardEvent::ConnectionFailed(ClusterError::new("refused")),
+    );
+
+    let forward = forward_to(&state, "web", 0);
+    assert_eq!(forward.state, ForwardState::Listening(8080));
+    assert_eq!(forward.last_error.as_deref(), Some("refused"));
+}
+
+#[test]
+fn a_failed_report_fails_the_forward() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+    state.forward_port(request.clone());
+
+    state.forward_reported(&request, ForwardEvent::Failed(ClusterError::new("gone")));
+
+    let forward = forward_to(&state, "web", 0);
+    assert_eq!(forward.state, ForwardState::Failed("gone".to_string()));
+}
+
+#[test]
+fn a_failed_forward_starts_over_at_the_end_of_the_list() {
+    let mut state = state();
+    let first = forward_request("web", 80);
+    let second = forward_request("web", 443);
+    state.forward_port(first.clone());
+    state.forward_port(second.clone());
+    state.forward_reported(&first, ForwardEvent::Failed(ClusterError::new("gone")));
+
+    let commands = state.forward_port(first.clone());
+
+    assert_eq!(commands.len(), 2);
+    assert!(is_stop(&commands[0], &first));
+    assert!(is_start(&commands[1], &first));
+    assert_eq!(listed(&state, &pod_target("web")), [second, first]);
+    let restarted = forward_to(&state, "web", 1);
+    assert_eq!(restarted.state, ForwardState::Starting);
+    assert_eq!(restarted.last_error, None);
+}
+
+#[test]
+fn stopping_a_forward_removes_it_and_drops_its_io() {
+    let mut state = state();
+    let kept = forward_request("web", 443);
+    let stopped = forward_request("web", 80);
+    state.forward_port(stopped.clone());
+    state.forward_port(kept.clone());
+
+    let commands = state.stop_forward(&stopped);
+
+    assert_eq!(commands.len(), 1);
+    assert!(is_stop(&commands[0], &stopped));
+    assert_eq!(listed(&state, &pod_target("web")), [kept]);
+}
+
+#[test]
+fn stopping_an_unknown_forward_changes_nothing() {
+    let mut state = state();
+    state.forward_port(forward_request("web", 80));
+
+    let commands = state.stop_forward(&forward_request("web", 81));
+
+    assert!(commands.is_empty());
+    assert_eq!(listed(&state, &pod_target("web")).len(), 1);
+}
+
+#[test]
+fn a_report_of_a_stopped_forward_changes_nothing() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+    state.forward_port(request.clone());
+    state.stop_forward(&request);
+
+    state.forward_reported(&request, ForwardEvent::Listening(8080));
+
+    assert_eq!(listed(&state, &pod_target("web")), []);
+}
+
+#[test]
+fn a_report_reaches_only_its_own_forward() {
+    let mut state = state();
+    let web = forward_request("web", 80);
+    let db = forward_request("db", 80);
+    state.forward_port(web.clone());
+    state.forward_port(db.clone());
+
+    state.forward_reported(&web, ForwardEvent::Listening(8080));
+
+    let other = forward_to(&state, "db", 0);
+    assert_eq!(other.state, ForwardState::Starting);
+}
+
+#[test]
+fn the_list_holds_only_the_forwards_of_its_target() {
+    let mut state = state();
+    state.forward_port(forward_request("web", 80));
+    let service = ForwardTarget::Service(ObjectKey::new(Some("default".to_string()), "web"));
+    let on_service = ForwardRequest {
+        target: service.clone(),
+        port: 80,
+    };
+    state.forward_port(on_service.clone());
+
+    assert_eq!(listed(&state, &service), [on_service]);
+    assert_eq!(listed(&state, &pod_target("web")).len(), 1);
+    assert_eq!(listed(&state, &pod_target("db")), []);
 }
