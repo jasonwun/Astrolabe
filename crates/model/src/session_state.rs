@@ -445,8 +445,8 @@ impl SessionState {
         self.objects.get(key)
     }
 
-    /// The watch holding `kind`'s objects in `namespace` (`None` when the
-    /// kind is cluster-scoped).
+    /// The key of the watch holding `kind`'s objects in `namespace` (`None`
+    /// when the kind is cluster-scoped).
     fn builtin_watch_key(&self, kind: BuiltinKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.key.cluster.clone(),
@@ -484,7 +484,7 @@ impl SessionState {
 
     /// The watch holding `kind`'s objects in `namespace`, at its preferred
     /// version; cluster-scoped kinds ignore `namespace`.
-    pub fn custom_object_watch(
+    pub(crate) fn custom_object_watch(
         &self,
         kind: &CustomKind,
         namespace: Option<&str>,
@@ -492,8 +492,8 @@ impl SessionState {
         self.object_watch(&self.custom_object_watch_key(kind, namespace))
     }
 
-    /// The watch holding `kind`'s objects in `namespace`, at its preferred
-    /// version; cluster-scoped kinds ignore `namespace`.
+    /// The key of the watch holding `kind`'s objects in `namespace`, at its
+    /// preferred version; cluster-scoped kinds ignore `namespace`.
     fn custom_object_watch_key(&self, kind: &CustomKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.key.cluster.clone(),
