@@ -25,7 +25,6 @@ const RETRY: Duration = Duration::from_secs(1);
 /// denials do not clear by retrying fast).
 const RETRY_CAP: Duration = Duration::from_secs(30);
 /// How long the relist loop waits before its next LIST.
-#[derive(Debug)]
 struct Retry {
     next: Duration,
 }
@@ -37,10 +36,7 @@ impl Retry {
 
     /// The wait after a failed or ended watch; the one after it is twice
     /// as long, up to [`RETRY_CAP`].
-    fn delay(&mut self, forbidden: bool) -> Duration {
-        if forbidden {
-            return RETRY_CAP;
-        }
+    fn next_delay(&mut self) -> Duration {
         let delay = self.next;
         self.next = (delay * 2).min(RETRY_CAP);
         delay
@@ -162,7 +158,12 @@ where
                 return;
             }
             tracing::info!(cluster = %cluster, "restarting {label} watch");
-            tokio::time::sleep(retry.delay(forbidden)).await;
+            let delay = if forbidden {
+                RETRY_CAP
+            } else {
+                retry.next_delay()
+            };
+            tokio::time::sleep(delay).await;
         }
     };
     (receiver, task)

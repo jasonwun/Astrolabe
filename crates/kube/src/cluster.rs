@@ -25,8 +25,7 @@ use tokio::task::AbortHandle;
 
 use crate::apply::{self, ApplyMode, ApplyReport};
 use crate::discovery::{self, ServedResources};
-use crate::object::ObjectKey;
-use crate::object::Operation;
+use crate::object::{ObjectKey, Operation};
 use crate::pod::{
     self, ExecOutput, ExecRequest, ExecSession, ForwardEvent, ForwardRequest, ForwardTarget,
     LogRequest, LogStream, PortForward,
@@ -640,30 +639,32 @@ impl Cluster {
             let on_error = move |error| {
                 let _ = connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
             };
-            let result = match &request.target {
-                ForwardTarget::Pod(pod) => match namespace_of(pod) {
-                    Ok(namespace) => {
+            let listener_failed =
+                |error: std::io::Error| ClusterError::new(format!("listener: {error}"));
+            let forward = async {
+                match &request.target {
+                    ForwardTarget::Pod(pod) => {
+                        let namespace = namespace_of(pod)?;
                         pod::port_forward(&client, namespace, &pod.name, port, listener, on_error)
                             .await
-                            .map_err(|error| ClusterError::new(format!("listener: {error}")))
+                            .map_err(listener_failed)
                     }
-                    Err(error) => Err(error),
-                },
-                ForwardTarget::Service(service) => match namespace_of(service) {
-                    Ok(namespace) => service::port_forward(
-                        &client,
-                        namespace,
-                        &service.name,
-                        port,
-                        listener,
-                        on_error,
-                    )
-                    .await
-                    .map_err(|error| ClusterError::new(format!("listener: {error}"))),
-                    Err(error) => Err(error),
-                },
+                    ForwardTarget::Service(service) => {
+                        let namespace = namespace_of(service)?;
+                        service::port_forward(
+                            &client,
+                            namespace,
+                            &service.name,
+                            port,
+                            listener,
+                            on_error,
+                        )
+                        .await
+                        .map_err(listener_failed)
+                    }
+                }
             };
-            if let Err(error) = result {
+            if let Err(error) = forward.await {
                 failed(error);
             }
         });
@@ -691,7 +692,8 @@ impl Cluster {
     /// live changes. A failure, or the watch ending, arrives as an `Err`
     /// and is followed by a fresh LIST: 1 s later, then twice as long on each
     /// consecutive failure up to 30 s, starting over after a LIST completes;
-    /// 30 s later after a [`Forbidden`](ClusterErrorKind::Forbidden) one. A connect failure
+    /// 30 s later after a [`Forbidden`](ClusterErrorKind::Forbidden) one. A
+    /// connect failure
     /// arrives as the only message.
     pub fn watch_objects(
         &self,

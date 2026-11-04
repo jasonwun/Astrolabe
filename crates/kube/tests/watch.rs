@@ -130,8 +130,8 @@ async fn the_relist_wait_doubles_up_to_30_seconds() {
     let cluster = mock_cluster(&apiserver);
     let mut watch = cluster.watch_namespaces();
 
-    let mut failures = vec![next_error(&mut watch).await];
-    for _ in 1..8 {
+    let mut failures = Vec::new();
+    for _ in 0..8 {
         failures.push(next_error(&mut watch).await);
     }
 
@@ -151,7 +151,7 @@ async fn a_completed_list_resets_the_relist_wait() {
             namespace_list(&["default"], "1"),
             namespace_list(&["kube-system"], "2"),
         ],
-        vec![support::failing_watch()],
+        vec![support::failing_watch(), Answer::Hang],
     );
     let cluster = mock_cluster(&apiserver);
     let mut watch = cluster.watch_namespaces();
