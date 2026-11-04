@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod detail;
 pub mod discovery_cache;
 pub mod jsonpath;
+pub mod list;
 pub mod operation_text;
 pub mod projection;
 pub mod session;

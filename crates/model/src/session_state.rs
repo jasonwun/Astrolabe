@@ -17,6 +17,7 @@ use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchM
 
 use crate::builtin::BuiltinKind;
 use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
+use crate::detail::DetailTarget;
 use crate::discovery_cache::DiscoveryCache;
 use crate::session::{
     ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey, Watched,
@@ -69,10 +70,12 @@ pub struct Ensured {
     pub commands: Vec<Command>,
 }
 
-/// The list on screen, whose watch follows the namespace selection.
+/// The list on screen; the watched ones follow the namespace selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Viewing {
+pub enum Viewing {
+    Namespaces,
     Builtin(BuiltinKind),
+    Definitions,
     Custom(CustomKindId),
 }
 
@@ -96,7 +99,9 @@ pub struct SessionState {
     /// can start it again.
     resources: BTreeMap<WatchKey, ApiResource>,
     namespace: String,
-    viewing: Option<Viewing>,
+    viewing: Viewing,
+    /// The detail targets whose tabs are open, one entry per tab.
+    details: Vec<DetailTarget>,
     discovery: DiscoveryCache,
     catalog: Vec<CustomGroup>,
     /// Bumped by every Definition change that needs a rediscovery; a
@@ -123,7 +128,8 @@ impl SessionState {
             objects: BTreeMap::new(),
             resources: BTreeMap::new(),
             namespace: namespace.into(),
-            viewing: None,
+            viewing: Viewing::Namespaces,
+            details: Vec::new(),
             discovery: DiscoveryCache::default(),
             catalog: Vec::new(),
             generation: 0,
@@ -256,7 +262,7 @@ impl SessionState {
     /// Enter a built-in kind's list: its watch for the current namespace
     /// starts on first visit (lazy, then resident for the session).
     pub fn open_builtin_list(&mut self, kind: BuiltinKind) -> Ensured {
-        self.viewing = Some(Viewing::Builtin(kind));
+        self.viewing = Viewing::Builtin(kind);
         let namespace = self.namespace.clone();
         self.watch_builtin(kind, Some(&namespace))
     }
@@ -264,14 +270,34 @@ impl SessionState {
     /// Enter a custom kind's instance list, as the Catalog resolves it. `None`
     /// while the kind is unknown or not served.
     pub fn open_custom_list(&mut self, id: &CustomKindId) -> Option<Ensured> {
-        self.viewing = Some(Viewing::Custom(id.clone()));
+        self.viewing = Viewing::Custom(id.clone());
         let namespace = self.namespace.clone();
         self.watch_custom_object(id, Some(&namespace))
     }
 
-    /// Leave the watched lists (Namespaces or Definitions is shown).
-    pub fn close_list(&mut self) {
-        self.viewing = None;
+    /// Enter the Namespaces list; it reads the state's own watch.
+    pub fn open_namespaces_list(&mut self) {
+        self.viewing = Viewing::Namespaces;
+    }
+
+    /// Enter the Definitions list; it reads the state's own watch.
+    pub fn open_definitions_list(&mut self) {
+        self.viewing = Viewing::Definitions;
+    }
+
+    /// A detail tab for `target` opened: a custom target's watch starts at
+    /// its kind's preferred version, and follows it from now on.
+    pub fn open_detail(&mut self, target: DetailTarget) -> Vec<Command> {
+        let commands = self.follow_detail(&target);
+        self.details.push(target);
+        commands
+    }
+
+    /// The detail tab for `target` closed; one not open changes nothing.
+    pub fn close_detail(&mut self, target: &DetailTarget) {
+        if let Some(index) = self.details.iter().position(|open| open == target) {
+            self.details.remove(index);
+        }
     }
 
     /// The watch holding `kind`'s objects in `namespace` (`None` when
@@ -360,6 +386,11 @@ impl SessionState {
     }
 
     // Queries
+
+    /// The list on screen.
+    pub fn viewing(&self) -> &Viewing {
+        &self.viewing
+    }
 
     /// The forwards to one Pod or Service, in the order they started.
     pub fn forwards<'a>(
@@ -518,15 +549,31 @@ impl SessionState {
     }
 
     /// Rebuild the Catalog from the Definitions and the last Discovery; a
-    /// viewed custom kind may have become served, or moved to a new
-    /// preferred version.
+    /// viewed custom kind or an open custom detail may have become served,
+    /// or moved to a new preferred version: the commands start the watches
+    /// that follow them.
     fn rebuild_catalog(&mut self) -> Vec<Command> {
         self.catalog = catalog::catalog(&self.crds.objects(), self.discovery.served());
-        if matches!(self.viewing, Some(Viewing::Custom(_))) {
+        let mut commands = if matches!(self.viewing, Viewing::Custom(_)) {
             self.follow_viewed_list()
         } else {
             Vec::new()
+        };
+        for target in self.details.clone() {
+            commands.extend(self.follow_detail(&target));
         }
+        commands
+    }
+
+    /// The commands that start the watch `target` reads, when it is a
+    /// custom object whose kind is served.
+    fn follow_detail(&mut self, target: &DetailTarget) -> Vec<Command> {
+        let DetailTarget::Custom { id, key } = target else {
+            return Vec::new();
+        };
+        self.watch_custom_object(id, key.namespace.as_deref())
+            .map(|ensured| ensured.commands)
+            .unwrap_or_default()
     }
 
     /// Start the object watch `key` on `resource` unless it runs already.
@@ -549,9 +596,9 @@ impl SessionState {
     fn follow_viewed_list(&mut self) -> Vec<Command> {
         let namespace = self.namespace.clone();
         let ensured = match self.viewing.clone() {
-            Some(Viewing::Builtin(kind)) => Some(self.watch_builtin(kind, Some(&namespace))),
-            Some(Viewing::Custom(id)) => self.watch_custom_object(&id, Some(&namespace)),
-            None => None,
+            Viewing::Builtin(kind) => Some(self.watch_builtin(kind, Some(&namespace))),
+            Viewing::Custom(id) => self.watch_custom_object(&id, Some(&namespace)),
+            Viewing::Namespaces | Viewing::Definitions => None,
         };
         ensured.map(|ensured| ensured.commands).unwrap_or_default()
     }
