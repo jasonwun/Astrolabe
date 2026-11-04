@@ -43,7 +43,11 @@ to an 82-column line. Only fmt and clippy ran locally, so CI's
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
 an unbackticked type name in a doc comment trips `doc_markdown`. Return
-the bare value and wrap at the call sites (#164).
+the bare value and wrap at the call sites (#164). `assert!(x.is_empty())`
+trips `assert_is_empty`: write `assert_eq!(x, [])`. A test helper that
+picks one `Command` variant with `_ => None` hides the next variant a
+ticket adds: list the other variants so the compiler asks for them
+(#165).
 
 ## Move-only refactors
 
@@ -232,6 +236,14 @@ pass it. When no input can tell a mutant from the original (an equivalent
 mutant), change the code so the mutated branch no longer exists: drop a
 `< 0` branch that `max(0)` already covers, or a match arm or branch that
 prints what another one does.
+
+A `SessionState` query that only forwards to a free function (`custom_kind`
+over the Catalog) is a mutant of its own: `-> None` survived until a test
+called the method, not the free function (#165).
+
+For the diff-scoped run, write `pr.diff` under the session's scratchpad
+directory: `$TMPDIR` is empty on this machine, so `> $TMPDIR/pr.diff`
+failed and `--in-diff` reported "Failed to open diff file" (#165).
 
 Origin: #153 moved the projections into `astrolabe-model`. A full run
 reported TIMEOUTs that `--timeout 180` cleared, two real hangs in
