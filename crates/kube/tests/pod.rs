@@ -305,16 +305,20 @@ async fn dropping_a_port_forward_stops_its_listener_and_connections() {
 
     dropping_stops_the_request(forward, on_start, on_drop).await;
 
-    // Dropping aborts the forward's task asynchronously, so the listener closes
-    // shortly after the connection task is cancelled, not at the same instant.
-    // Re-binding the port succeeds only once the listener is gone; connecting
-    // would also start failing when a leaked listener's backlog fills up.
+    // Dropping aborts the forward's task asynchronously, so the listener may
+    // outlive the connection task's cancellation (the suspected cause of #226's
+    // flake, not reproduced). Re-binding the port succeeds only once the
+    // listener is gone; connecting would also start failing when a leaked
+    // listener's backlog fills up.
     tokio::time::timeout(Duration::from_secs(5), async {
-        while tokio::net::TcpListener::bind(("127.0.0.1", local))
-            .await
-            .is_err()
-        {
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        loop {
+            match tokio::net::TcpListener::bind(("127.0.0.1", local)).await {
+                Ok(_) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => panic!("re-binding the forward's port failed: {error}"),
+            }
         }
     })
     .await
