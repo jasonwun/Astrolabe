@@ -162,6 +162,11 @@ path of `<name>.png`, shrunk to one pixel per window point.
 - To fill the YAML editor, put the text on the clipboard and paste it:
   `pbcopy < file.yaml`, then `dev/shot.sh "$D" pasted hotkey --key cmd+v`.
   `press-key` takes no modifier chord; `hotkey` does (#172).
+- A Global apply error (the editor's red notice bar) needs a document the
+  server answers with something other than 409 or 422: a ConfigMap whose
+  `metadata.namespace` does not exist gives a 404, `namespaces "x" not
+  found`. Paste two such documents separated by `---` to see one line per
+  document (#240).
 - `press-key` sends no function keys: `F6` fails with `unsupported
   key 'F6'`. Reach the action another way: the YAML editor's Precheck
   also runs on its own about a second after an edit (#160).
