@@ -29,7 +29,8 @@ struct ForwardTask {
     _reports: Task<()>,
 }
 
-/// The namespace a session starts in unless told otherwise.
+/// The namespace a scripted session starts in unless told otherwise; a live
+/// one starts in its context's.
 pub const DEFAULT_NAMESPACE: &str = "default";
 
 pub struct Session {
@@ -44,11 +45,13 @@ impl Session {
         &self.state
     }
 
-    /// Connect to `cluster`, with `namespace` selected from the start: the
-    /// first namespaced watch already uses it.
-    pub fn new(cluster: ClusterId, namespace: impl Into<String>, cx: &mut Context<Self>) -> Self {
+    /// Connect to `cluster`, with `namespace` selected from the start (the
+    /// context's own when `None`): the first namespaced watch already uses
+    /// it.
+    pub fn new(cluster: ClusterId, namespace: Option<String>, cx: &mut Context<Self>) -> Self {
         let io = ClusterIo::connect(&cluster);
-        Self::start(cluster, io, namespace.into(), cx)
+        let namespace = namespace.unwrap_or_else(|| io.default_namespace());
+        Self::start(cluster, io, namespace, cx)
     }
 
     /// Namespace events only: CRDs never arrive, discovery finds nothing.

@@ -174,7 +174,8 @@ impl WorkspaceView {
 
     /// Open the preselected cluster, or the first one, in the preselected
     /// namespace. An unlisted preselected cluster falls back to the
-    /// launch without preselection: the first cluster in `default`.
+    /// launch without preselection: the first cluster in its context's
+    /// namespace.
     fn select_launch_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Preselection {
             cluster,
@@ -206,8 +207,8 @@ impl WorkspaceView {
         self.open_cluster(cluster, None, window, cx);
     }
 
-    /// Select `cluster`, opening its session in `namespace` (`default` when
-    /// `None`) unless it is open already.
+    /// Select `cluster`, opening its session in `namespace` (the context's
+    /// own when `None`) unless it is open already.
     fn open_cluster(
         &mut self,
         cluster: ClusterId,
@@ -216,15 +217,17 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         if !self.sessions.contains_key(&cluster) {
-            let namespace = namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
             let session = match self
                 .sources
                 .get_mut(&cluster)
                 .and_then(|source| source.take())
             {
-                Some(scripted) => cx.new(|cx| {
-                    SessionView::scripted(cluster.clone(), namespace, scripted, window, cx)
-                }),
+                Some(scripted) => {
+                    let namespace = namespace.unwrap_or_else(|| DEFAULT_NAMESPACE.to_string());
+                    cx.new(|cx| {
+                        SessionView::scripted(cluster.clone(), namespace, scripted, window, cx)
+                    })
+                }
                 None => cx.new(|cx| SessionView::new(cluster.clone(), namespace, window, cx)),
             };
             cx.observe(&session, |_workspace, _session, cx| cx.notify())

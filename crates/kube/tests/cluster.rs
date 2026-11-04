@@ -320,3 +320,12 @@ async fn apply_and_precheck_fail_with_the_connect_failure() {
     assert_eq!(apply.kind(), ClusterErrorKind::Connect);
     assert_eq!(precheck.kind(), ClusterErrorKind::Connect);
 }
+
+#[tokio::test]
+async fn a_handle_over_a_client_reports_the_clients_default_namespace() {
+    let service = tower::service_fn(|_: http::Request<Body>| {
+        std::future::ready(Ok::<_, std::convert::Infallible>(status(404, "NotFound")))
+    });
+    let cluster = Cluster::from_client(Client::new(service, "team-a"), ClusterId::named("mock"));
+    assert_eq!(cluster.default_namespace(), "team-a");
+}

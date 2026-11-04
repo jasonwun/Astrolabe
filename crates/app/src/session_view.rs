@@ -40,7 +40,7 @@ pub struct SessionView {
 impl SessionView {
     pub fn new(
         cluster: ClusterId,
-        namespace: String,
+        namespace: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

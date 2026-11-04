@@ -220,6 +220,8 @@ pub struct Cluster {
     /// Which Cluster, for logs.
     id: ClusterId,
     client: SharedClient,
+    /// The namespace the context names, `"default"` when it names none.
+    default_namespace: String,
     /// Where requests run: the cluster runtime, or the caller's for
     /// `from_client`, so a test's paused clock drives the watch retries.
     runtime: Handle,
@@ -227,7 +229,9 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    /// Start connecting to `cluster` and return at once.
+    /// Start connecting to `cluster` and return at once, after one read of
+    /// the small kubeconfig file for the context's namespace; the client
+    /// itself connects off the caller's thread.
     ///
     /// # Panics
     ///
@@ -237,6 +241,7 @@ impl Cluster {
         let id = cluster.clone();
         let cluster = cluster.clone();
         let runtime = runtime().handle().clone();
+        let default_namespace = crate::client::default_namespace_for(&id);
         // A credential plugin's first run blocks inside config loading, so
         // the connect runs on the cluster runtime, never the caller's thread.
         let client = spawn(
@@ -251,6 +256,7 @@ impl Cluster {
         Self {
             id,
             client: client.boxed().shared(),
+            default_namespace,
             runtime,
             watches: Mutex::default(),
         }
@@ -268,10 +274,18 @@ impl Cluster {
     pub fn from_client(client: Client, id: ClusterId) -> Self {
         Self {
             id,
+            default_namespace: client.default_namespace().to_owned(),
             client: futures::future::ready(Ok(client)).boxed().shared(),
             runtime: Handle::try_current().unwrap_or_else(|_| runtime().handle().clone()),
             watches: Mutex::default(),
         }
+    }
+
+    /// The namespace the context names, `"default"` when it names none:
+    /// where a Session starts and where Apply sends a document that names
+    /// no namespace, as `kubectl` does.
+    pub fn default_namespace(&self) -> &str {
+        &self.default_namespace
     }
 
     /// API Discovery, started at once on the cluster runtime. On the
