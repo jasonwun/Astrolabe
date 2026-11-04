@@ -208,7 +208,7 @@ fn custom_resource_watches_start_lazily_per_namespace_and_stay_resident(cx: &mut
             .state()
             .object_watch(&custom_key(Some("default"), "CronTab"))
             .unwrap();
-        assert_eq!(watch.health(), ConnectionHealth::Healthy);
+        assert_eq!(watch.status().health(), ConnectionHealth::Healthy);
         assert_eq!(watch.objects().len(), 1);
     });
 

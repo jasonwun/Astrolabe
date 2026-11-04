@@ -439,12 +439,13 @@ fn an_object_watch_ending_marks_only_that_watch_stale() {
 
     state.object_ended(&pods);
 
-    assert!(state.object_watch(&pods).unwrap().show_stale_warning());
+    assert!(state.object_watch(&pods).unwrap().status().is_stale());
     assert!(
         !state
             .object_watch(&deployments)
             .unwrap()
-            .show_stale_warning()
+            .status()
+            .is_stale()
     );
     assert!(!state.namespaces_stale());
 }
@@ -477,7 +478,7 @@ fn the_crd_watch_ending_marks_its_snapshot_stale() {
 
     state.crds_ended();
 
-    assert!(state.crds().show_stale_warning());
+    assert!(state.crds().status().is_stale());
     assert!(!state.namespaces_stale());
 }
 
