@@ -147,6 +147,12 @@ path of `<name>.png`, shrunk to one pixel per window point.
   with `kubectl apply`, so `kubectl-client-side-apply` owns every demo
   field. Change one in the editor and Apply to get the conflict and
   Force Apply (#160).
+- A notice above a table pushes the rows down (the Events list's
+  `Cannot open ...` line moved them about 39pt). After a click that raises
+  a notice, take a fresh capture before the next click: #216's second
+  click landed between rows. A click that raises a notice on an Events
+  row needs `dev/demo.yaml`'s synthetic Events (unregistered kind,
+  nameless reference) (#216).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - A view that changes with time (ages): `dev/demo.yaml` objects keep
