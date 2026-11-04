@@ -32,6 +32,14 @@ through the changed path. #172 (field-path parsing in `astrolabe-kube`)
 applied a Deployment with `image: ""` from the YAML editor and read the
 422's line mark.
 
+When the changed path is Exec or Port Forward (#239 moved their namespace
+lookup), drive it in the app, or run its kind e2e before the PR and list
+the run in Evidence: `cargo test -p astrolabe-kube --test e2e_cluster --
+--ignored pod_logs_exec_and_port_forward
+service_port_forward_reaches_a_selected_pod`. #239 drove only Logs by hand
+and ran these two after the merge, when a failure would have been a revert
+(#239 retro).
+
 A change to which source wins when two agree on kind (#243: discovery
 vs the CRD's `spec.scope`) shows the same screen on kind, because the
 sources never disagree there. The screenshots then prove only that
