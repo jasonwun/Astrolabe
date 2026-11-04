@@ -85,8 +85,8 @@ the test changes only its `use` path. Integration tests (`tests/*.rs`)
 link the same library the upper crate builds on, so the types match; the
 library itself still does not depend on the upper crate. Do not rewrite
 the assertions to avoid the import, and do not move a cluster e2e into
-`astrolabe-model`: `dev/layer-check.sh` forbids `async fn` and
-`astrolabe_kube::Cluster` in its tests.
+`astrolabe-model`: `dev/layer-check.sh` forbids `async fn`,
+`astrolabe_kube::Cluster` and the kube-rs I/O entry points in its tests.
 
 Origin: #154 moved the Catalog to `astrolabe-model`. The first version
 rewrote `crd_kind_is_discovered_watched_and_deleted`'s Catalog

@@ -15,7 +15,7 @@
 #   events); without these rules a layer could start cluster I/O through
 #   `Api` or `Config` instead of `Client`. The rules also match the
 #   `astrolabe_kube::kube::` path and the long forms `kube::api::Api` and
-#   `kube::discovery::Discovery`.
+#   `kube::discovery::Discovery`, also inside a one-line `use kube::{..}`.
 # `tracing` is on the allowlist for log events only, no I/O (#163).
 # The UI layer (crates/app) does not depend on tokio: the cluster runtime
 # is `astrolabe-kube`'s alone (#159). Its sources and tests name no
@@ -87,10 +87,10 @@ forbid "$model_dir" "$(names kube Client)" '`kube::Client`'
 forbid "$model_dir" "$(names '(astrolabe_kube|cluster)' Cluster)" '`astrolabe_kube::Cluster`'
 for_layer_entry_points() {
     local dir=$1
-    forbid "$dir" "$(names 'kube(::api)?' Api)" '`kube::Api`; requests go through Cluster'
-    forbid "$dir" "$(names 'kube(::discovery)?' Discovery)" '`kube::Discovery`; discovery goes through Cluster'
-    forbid "$dir" "$(names 'kube(::config)?' Config)" '`kube::Config`; connections are built in astrolabe-kube'
-    forbid "$dir" '\bkube::config\b' 'the `kube::config` module; connections are built in astrolabe-kube'
+    forbid "$dir" "$(names kube '(api::)?Api')" '`kube::Api`; the layers do no I/O of their own'
+    forbid "$dir" "$(names kube '(discovery::)?Discovery')" '`kube::Discovery`; the layers do no I/O of their own'
+    forbid "$dir" "$(names kube Config)" '`kube::Config`; connections are built in astrolabe-kube'
+    forbid "$dir" "$(names kube config)" 'the `kube::config` module; connections are built in astrolabe-kube'
 }
 for_layer_entry_points "$model_dir"
 for_layer_entry_points "$app_dir"
