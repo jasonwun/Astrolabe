@@ -22,7 +22,6 @@ use crate::perf;
 use crate::session::Session;
 use crate::workspace::STALE_MESSAGE;
 use astrolabe_model::detail::{DetailTarget, ReferenceError};
-pub use astrolabe_model::list::CRD_DENIED;
 use astrolabe_model::list::{self, ListOutcome};
 use astrolabe_model::session::CustomKindId;
 

@@ -559,9 +559,11 @@ impl SessionState {
         } else {
             Vec::new()
         };
-        for target in self.details.clone() {
-            commands.extend(self.follow_detail(&target));
+        let details = std::mem::take(&mut self.details);
+        for target in &details {
+            commands.extend(self.follow_detail(target));
         }
+        self.details = details;
         commands
     }
 

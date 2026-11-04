@@ -1130,7 +1130,9 @@ fn a_detail_open_twice_is_followed_until_both_close() {
 
     let commands = state.crds_message(Ok(Event::Apply(crontab_crd_stored_at("v2"))));
 
-    assert_eq!(started(&commands).len(), 1);
+    let moved = started(&commands);
+    assert_eq!(moved.len(), 1);
+    assert!(matches!(&moved[0].kind, ResourceKind::Custom { version, .. } if version == "v2"));
 }
 
 #[test]

@@ -257,3 +257,23 @@ fn a_denied_custom_list_is_forbidden() {
         ListOutcome::Forbidden("No permission to list crontabs here".to_string())
     );
 }
+
+#[test]
+fn definitions_whose_watch_ended_are_stale() {
+    let (mut state, _) = crontab_state();
+    state.open_definitions_list();
+    assert!(!resolved(&state).stale);
+
+    state.crds_ended();
+
+    assert!(resolved(&state).stale);
+}
+
+#[test]
+fn a_served_custom_kind_before_its_first_snapshot_has_no_rows() {
+    let (mut state, run) = crontab_state();
+    state.discovery_finished(run, Ok(crontab_served()));
+    state.open_custom_list(&crontab_id());
+
+    assert_eq!(rows(&resolved(&state)), 0);
+}
