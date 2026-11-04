@@ -95,7 +95,8 @@ Reference: `crates/app/src/resource_list.rs`.
   `metadata.name`, which offers Force Apply:
   `support::conflict_report(snapshot)`; a Precheck's that notes the
   unknown field `spec.bogus`: `support::unknown_field_report(snapshot)`
-  (#161).
+  (#161); one that fails each named document with a Global error:
+  `support::global_report(&["v1 Namespace/a", …])` (#240).
 - Clicking an element whose handler listens for mouse events, such as a
   dock tab or its close button, which `window.click` does not reach:
   `support::mouse_click(cx, id)` presses and releases on where `id` was

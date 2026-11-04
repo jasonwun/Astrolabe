@@ -61,7 +61,8 @@ fn cluster(
         .precheck(move |snapshot: &str| {
             Ok(match answer {
                 Answer::Conflict => support::unknown_field_report(snapshot),
-                Answer::Applied | Answer::Forbidden(_) => clean(),
+                Answer::Forbidden(docs) => support::global_report(docs),
+                Answer::Applied => clean(),
             })
         });
     ((ClusterId::named(name), scripted), namespaces)
@@ -208,6 +209,26 @@ fn with_no_cluster_the_workspace_editor_says_so_and_cannot_apply(cx: &mut TestAp
 }
 
 /// An Apply that fails Global on one document shows that message.
+#[gpui_kit::test]
+fn a_manual_precheck_failing_two_documents_globally_shows_both_messages(cx: &mut TestAppContext) {
+    let applied = Applied::default();
+    let (a, _namespaces) = cluster(
+        "kind-a",
+        &applied,
+        Answer::Forbidden(&["v1 Namespace/a", "v1 Namespace/b"]),
+    );
+    let cx = open_workspace(cx, vec![a]);
+
+    edit(cx, "kind: ConfigMap");
+    cx.simulate_keystrokes("f6");
+    cx.run_until_parked();
+
+    assert_eq!(
+        label(cx, "global-notice"),
+        "v1 Namespace/a: forbidden: v1 Namespace/a\nv1 Namespace/b: forbidden: v1 Namespace/b"
+    );
+}
+
 #[gpui_kit::test]
 fn an_apply_failing_one_document_globally_shows_its_message(cx: &mut TestAppContext) {
     let applied = Applied::default();
