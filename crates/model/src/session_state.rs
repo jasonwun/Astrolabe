@@ -1,11 +1,12 @@
-//! Session's state and rules for watches (ADR-0002, #164): each watch's
-//! `Watched` snapshot and Stale state, the namespace selection and the list
-//! being viewed. Every input answers with the `Command`s Session carries
-//! out; Session decides nothing about them.
+//! Session's state and rules (ADR-0002, #164, #165): each watch's `Watched`
+//! snapshot and Stale state, the namespace selection, the list being
+//! viewed, Discovery and the Catalog. Every input answers with the
+//! `Command`s Session carries out; Session decides nothing about them.
 
 use std::collections::BTreeMap;
 
-use astrolabe_kube::cluster::ClusterId;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
+use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
@@ -13,12 +14,17 @@ use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
 
 use crate::builtin::BuiltinKind;
-use crate::catalog::{CustomGroup, CustomKind, KindResource};
+use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
+use crate::discovery_cache::DiscoveryCache;
 use crate::session::{
     ConnectionHealth, CustomKindId, ResourceKind, SnapshotChange, WatchKey, Watched,
 };
 
 /// What Session must do after an input.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "commands are short-lived; boxing `StartWatch` would make every consumer unwrap it"
+)]
 #[derive(Clone, Debug)]
 pub enum Command {
     /// Start the watch `key` on `resource`, and feed its messages back to
@@ -27,6 +33,12 @@ pub enum Command {
         key: WatchKey,
         resource: ApiResource,
     },
+    /// Start the debounce timer of `generation` (a Definition changed);
+    /// when it elapses, call `SessionState::debounce_elapsed` with it.
+    ScheduleDiscovery { generation: u64 },
+    /// Run Discovery as `run`, and hand its answer to
+    /// `SessionState::discovery_finished` under that number.
+    RunDiscovery { run: u64 },
 }
 
 /// A watch an input asked for, and the commands that bring it up.
@@ -63,6 +75,13 @@ pub struct SessionState {
     objects: BTreeMap<WatchKey, Watched<DynamicObject>>,
     namespace: String,
     viewing: Option<Viewing>,
+    discovery: DiscoveryCache,
+    catalog: Vec<CustomGroup>,
+    /// Bumped by every Definition change that needs a rediscovery; a
+    /// debounce timer counts only if no later change superseded it.
+    generation: u64,
+    /// Bumped by every Discovery run; only the newest run's answer is kept.
+    runs: u64,
 }
 
 impl SessionState {
@@ -80,6 +99,10 @@ impl SessionState {
             objects: BTreeMap::new(),
             namespace: namespace.into(),
             viewing: None,
+            discovery: DiscoveryCache::default(),
+            catalog: Vec::new(),
+            generation: 0,
+            runs: 0,
         }
     }
 
@@ -95,9 +118,30 @@ impl SessionState {
         self.namespaces.mark_stale();
     }
 
-    /// A message of the Definitions watch.
-    pub fn crds_message(&mut self, message: CrdWatchMessage) -> SnapshotChange {
-        self.crds.apply(message)
+    /// A message of the Definitions watch: the Catalog follows it, and a
+    /// change that Discovery may not have seen schedules a rediscovery.
+    pub fn crds_message(&mut self, message: CrdWatchMessage) -> Vec<Command> {
+        let change = self.crds.apply(message);
+        let mut commands = self.rebuild_catalog();
+        // Connect-time Discovery races the first Definition list: a
+        // Definition created in between would stay "not served" until the
+        // next change.
+        let unresolved = change == SnapshotChange::FirstSnapshot
+            && self.catalog.iter().any(|group| {
+                group
+                    .kinds
+                    .iter()
+                    .any(|kind| kind.resource == KindResource::NotServed)
+            });
+        // A relist after a disconnect may hide missed changes; the first
+        // snapshot does not, connect-time Discovery covers it.
+        if change == SnapshotChange::Changed || unresolved {
+            self.generation += 1;
+            commands.push(Command::ScheduleDiscovery {
+                generation: self.generation,
+            });
+        }
+        commands
     }
 
     /// The Definitions watch ended: its snapshot stays, flagged Stale.
@@ -124,6 +168,38 @@ impl SessionState {
         }
     }
 
+    /// Connected: run the first Discovery.
+    pub fn connected(&mut self) -> Vec<Command> {
+        vec![self.start_run()]
+    }
+
+    /// The debounce timer of `generation` elapsed: Discovery runs unless a
+    /// later Definition change superseded the timer.
+    pub fn debounce_elapsed(&mut self, generation: u64) -> Vec<Command> {
+        if generation == self.generation {
+            vec![self.start_run()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Discovery run `run` answered. A newer run in flight or done wins, so
+    /// an older answer changes nothing; a failure keeps the last result.
+    pub fn discovery_finished(
+        &mut self,
+        run: u64,
+        result: Result<ServedResources, ClusterError>,
+    ) -> Vec<Command> {
+        if run != self.runs {
+            return Vec::new();
+        }
+        if let Err(error) = &result {
+            tracing::warn!(cluster = %self.cluster(), error = %error, "discovery failed");
+        }
+        self.discovery.record(result);
+        self.rebuild_catalog()
+    }
+
     /// Enter a built-in kind's list: its watch for the current namespace
     /// starts on first visit (lazy, then resident for the session).
     pub fn open_builtin_list(&mut self, kind: BuiltinKind) -> Ensured {
@@ -134,14 +210,10 @@ impl SessionState {
 
     /// Enter a custom kind's instance list, as `catalog` resolves it. `None`
     /// while the kind is unknown or not served.
-    pub fn open_custom_list(
-        &mut self,
-        id: &CustomKindId,
-        catalog: &[CustomGroup],
-    ) -> Option<Ensured> {
+    pub fn open_custom_list(&mut self, id: &CustomKindId) -> Option<Ensured> {
         self.viewing = Some(Viewing::Custom(id.clone()));
         let namespace = self.namespace.clone();
-        self.watch_custom_object(id, Some(&namespace), catalog)
+        self.watch_custom_object(id, Some(&namespace))
     }
 
     /// Leave the watched lists (Namespaces or Definitions is shown).
@@ -165,33 +237,23 @@ impl SessionState {
         &mut self,
         id: &CustomKindId,
         namespace: Option<&str>,
-        catalog: &[CustomGroup],
     ) -> Option<Ensured> {
-        let kind = custom_kind(catalog, id)?;
+        let kind = custom_kind(&self.catalog, id)?;
         let KindResource::Served(resource) = &kind.resource else {
             return None;
         };
+        let resource = resource.clone();
         let key = self.custom_object_watch_key(kind, namespace);
-        Some(self.ensure(key, resource))
+        Some(self.ensure(key, &resource))
     }
 
     /// Select `namespace`; the viewed list's watch follows it.
-    pub fn set_namespace(&mut self, namespace: String, catalog: &[CustomGroup]) -> Vec<Command> {
+    pub fn set_namespace(&mut self, namespace: String) -> Vec<Command> {
         if self.namespace == namespace {
             return Vec::new();
         }
         self.namespace = namespace;
-        self.follow_viewed_list(catalog)
-    }
-
-    /// The catalog changed: a viewed custom kind may have become served, or
-    /// moved to a new preferred version.
-    pub fn catalog_changed(&mut self, catalog: &[CustomGroup]) -> Vec<Command> {
-        if matches!(self.viewing, Some(Viewing::Custom(_))) {
-            self.follow_viewed_list(catalog)
-        } else {
-            Vec::new()
-        }
+        self.follow_viewed_list()
     }
 
     // Queries
@@ -226,6 +288,29 @@ impl SessionState {
     /// (no heuristic reconstruction of kinds, #11).
     pub fn crd_access_denied(&self) -> bool {
         self.crds.forbidden()
+    }
+
+    /// The custom kinds by API group, as Custom Resources navigation shows
+    /// them.
+    pub fn catalog(&self) -> &[CustomGroup] {
+        &self.catalog
+    }
+
+    /// The kind `id` names in the Catalog.
+    pub fn custom_kind(&self, id: &CustomKindId) -> Option<&CustomKind> {
+        custom_kind(&self.catalog, id)
+    }
+
+    /// The failure of the latest Discovery refresh, if it failed; the old
+    /// result stays in use.
+    pub fn discovery_failure(&self) -> Option<&ClusterError> {
+        self.discovery.failure()
+    }
+
+    /// The disconnect banner: the Namespaces watch lost its connection, or
+    /// the latest Discovery refresh failed.
+    pub fn show_stale_warning(&self) -> bool {
+        self.namespaces.show_stale_warning() || self.discovery.failure().is_some()
     }
 
     pub fn health(&self) -> ConnectionHealth {
@@ -291,6 +376,23 @@ impl SessionState {
         }
     }
 
+    fn start_run(&mut self) -> Command {
+        self.runs += 1;
+        Command::RunDiscovery { run: self.runs }
+    }
+
+    /// Rebuild the Catalog from the Definitions and the last Discovery; a
+    /// viewed custom kind may have become served, or moved to a new
+    /// preferred version.
+    fn rebuild_catalog(&mut self) -> Vec<Command> {
+        self.catalog = catalog::catalog(&self.crds.objects(), self.discovery.served());
+        if matches!(self.viewing, Some(Viewing::Custom(_))) {
+            self.follow_viewed_list()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Start the object watch `key` on `resource` unless it runs already.
     fn ensure(&mut self, key: WatchKey, resource: &ApiResource) -> Ensured {
         let mut commands = Vec::new();
@@ -307,11 +409,11 @@ impl SessionState {
         Ensured { key, commands }
     }
 
-    fn follow_viewed_list(&mut self, catalog: &[CustomGroup]) -> Vec<Command> {
+    fn follow_viewed_list(&mut self) -> Vec<Command> {
         let namespace = self.namespace.clone();
         let ensured = match self.viewing.clone() {
             Some(Viewing::Builtin(kind)) => Some(self.watch_builtin(kind, &namespace)),
-            Some(Viewing::Custom(id)) => self.watch_custom_object(&id, Some(&namespace), catalog),
+            Some(Viewing::Custom(id)) => self.watch_custom_object(&id, Some(&namespace)),
             None => None,
         };
         ensured.map(|ensured| ensured.commands).unwrap_or_default()

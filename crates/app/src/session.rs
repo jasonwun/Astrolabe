@@ -13,12 +13,9 @@ use astrolabe_kube::pod::{
 };
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
-use astrolabe_model::catalog::{self, CustomGroup, CustomKind, KindResource};
-use astrolabe_model::discovery_cache::DiscoveryCache;
-use astrolabe_model::session::{
-    ConnectionHealth, CustomKindId, ForwardState, SnapshotChange, WatchKey, Watched,
-};
-use astrolabe_model::session_state::{self, Command, SessionState};
+use astrolabe_model::catalog::{CustomGroup, CustomKind};
+use astrolabe_model::session::{ConnectionHealth, CustomKindId, ForwardState, WatchKey, Watched};
+use astrolabe_model::session_state::{Command, SessionState};
 use futures::future::BoxFuture;
 use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
@@ -48,12 +45,6 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 
 pub struct Session {
     state: SessionState,
-    discovery: DiscoveryCache,
-    /// Bumped by every CRD change; a debounce timer fires only if no
-    /// later change superseded it.
-    crd_generation: u64,
-    discovery_runs: u64,
-    catalog: Vec<CustomGroup>,
     forwards: Vec<Forward>,
     io: ClusterIo,
 }
@@ -92,67 +83,64 @@ impl Session {
     fn start(cluster: ClusterId, io: ClusterIo, namespace: String, cx: &mut Context<Self>) -> Self {
         let mut session = Self {
             state: SessionState::new(cluster, namespace),
-            discovery: DiscoveryCache::default(),
-            crd_generation: 0,
-            discovery_runs: 0,
-            catalog: Vec::new(),
             forwards: Vec::new(),
             io,
         };
         spawn_drain(
             session.io.watch_namespaces(),
             cx,
-            |session, message| session.state.namespaces_message(message),
+            |session, message| {
+                session.state.namespaces_message(message);
+                Vec::new()
+            },
             |session| session.state.namespaces_ended(),
-            |_, _, _| {},
         );
         spawn_drain(
             session.io.watch_crds(),
             cx,
             |session, message| session.state.crds_message(message),
             |session| session.state.crds_ended(),
-            Self::crds_changed,
         );
-        session.run_discovery(cx);
+        let commands = session.state.connected();
+        session.carry_out(commands, cx);
         session
     }
 
-    fn crds_changed(&mut self, change: SnapshotChange, cx: &mut Context<Self>) {
-        self.rebuild_catalog(cx);
-        // Connect-time discovery races the first CRD list: a CRD created in
-        // between would stay "not served" until the next CRD change.
-        let unresolved = change == SnapshotChange::FirstSnapshot
-            && self.catalog.iter().any(|group| {
-                group
-                    .kinds
-                    .iter()
-                    .any(|kind| kind.resource == KindResource::NotServed)
-            });
-        // A relist after a disconnect may hide missed changes; the first
-        // snapshot does not, connect-time discovery covers it.
-        if change == SnapshotChange::Changed || unresolved {
-            self.schedule_discovery(cx);
+    /// Carry out what `SessionState` asked for.
+    fn carry_out(&mut self, commands: Vec<Command>, cx: &mut Context<Self>) {
+        for command in commands {
+            match command {
+                Command::StartWatch { key, resource } => {
+                    let message_key = key.clone();
+                    let ended_key = key.clone();
+                    spawn_drain(
+                        self.io.watch_objects(&key, &resource),
+                        cx,
+                        move |session, message| {
+                            session.state.object_message(&message_key, message);
+                            Vec::new()
+                        },
+                        move |session| session.state.object_ended(&ended_key),
+                    );
+                    cx.notify();
+                }
+                Command::ScheduleDiscovery { generation } => {
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(CRD_DEBOUNCE).await;
+                        this.update(cx, |session, cx| {
+                            let commands = session.state.debounce_elapsed(generation);
+                            session.carry_out(commands, cx);
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+                Command::RunDiscovery { run } => self.run_discovery(run, cx),
+            }
         }
     }
 
-    fn schedule_discovery(&mut self, cx: &mut Context<Self>) {
-        self.crd_generation += 1;
-        let generation = self.crd_generation;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(CRD_DEBOUNCE).await;
-            this.update(cx, |session, cx| {
-                if session.crd_generation == generation {
-                    session.run_discovery(cx);
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn run_discovery(&mut self, cx: &mut Context<Self>) {
-        self.discovery_runs += 1;
-        let run = self.discovery_runs;
+    fn run_discovery(&mut self, run: u64, cx: &mut Context<Self>) {
         let mut result = self.io.discover();
         // Scripted clusters answer before `discover` returns: finish within
         // this update, as a live answer's arrival can't be awaited here.
@@ -174,42 +162,9 @@ impl Session {
         result: Result<ServedResources, ClusterError>,
         cx: &mut Context<Self>,
     ) {
-        // A newer run is in flight or done; its answer wins.
-        if run != self.discovery_runs {
-            return;
-        }
-        if let Err(error) = &result {
-            tracing::warn!(cluster = %self.state.cluster(), error = %error, "discovery failed");
-        }
-        self.discovery.record(result);
-        self.rebuild_catalog(cx);
-        cx.notify();
-    }
-
-    fn rebuild_catalog(&mut self, cx: &mut Context<Self>) {
-        self.catalog = catalog::catalog(&self.state.crds().objects(), self.discovery.served());
-        let commands = self.state.catalog_changed(&self.catalog);
+        let commands = self.state.discovery_finished(run, result);
         self.carry_out(commands, cx);
-    }
-
-    /// Carry out what `SessionState` asked for.
-    fn carry_out(&mut self, commands: Vec<Command>, cx: &mut Context<Self>) {
-        for command in commands {
-            match command {
-                Command::StartWatch { key, resource } => {
-                    let message_key = key.clone();
-                    let ended_key = key.clone();
-                    spawn_drain(
-                        self.io.watch_objects(&key, &resource),
-                        cx,
-                        move |session, message| session.state.object_message(&message_key, message),
-                        move |session| session.state.object_ended(&ended_key),
-                        |_, _, _| {},
-                    );
-                    cx.notify();
-                }
-            }
-        }
+        cx.notify();
     }
 
     /// Enter a kind's instance list: starts its watch for the current
@@ -220,7 +175,7 @@ impl Session {
         id: &CustomKindId,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
-        let ensured = self.state.open_custom_list(id, &self.catalog)?;
+        let ensured = self.state.open_custom_list(id)?;
         self.carry_out(ensured.commands, cx);
         Some(ensured.key)
     }
@@ -282,9 +237,7 @@ impl Session {
         namespace: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<WatchKey> {
-        let ensured = self
-            .state
-            .watch_custom_object(id, namespace.as_deref(), &self.catalog)?;
+        let ensured = self.state.watch_custom_object(id, namespace.as_deref())?;
         self.carry_out(ensured.commands, cx);
         Some(ensured.key)
     }
@@ -307,7 +260,7 @@ impl Session {
     }
 
     pub fn set_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
-        let commands = self.state.set_namespace(namespace, &self.catalog);
+        let commands = self.state.set_namespace(namespace);
         self.carry_out(commands, cx);
         cx.notify();
     }
@@ -443,11 +396,11 @@ impl Session {
     }
 
     pub fn catalog(&self) -> &[CustomGroup] {
-        &self.catalog
+        self.state.catalog()
     }
 
     pub fn custom_kind(&self, id: &CustomKindId) -> Option<&CustomKind> {
-        session_state::custom_kind(&self.catalog, id)
+        self.state.custom_kind(id)
     }
 
     pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
@@ -459,7 +412,7 @@ impl Session {
     }
 
     pub fn discovery_failure(&self) -> Option<&ClusterError> {
-        self.discovery.failure()
+        self.state.discovery_failure()
     }
 
     pub fn health(&self) -> ConnectionHealth {
@@ -469,28 +422,28 @@ impl Session {
     /// The disconnect banner: the namespace watch lost its connection, or
     /// the latest discovery refresh failed (old results stay in use).
     pub fn show_stale_warning(&self) -> bool {
-        self.state.namespaces_stale() || self.discovery.failure().is_some()
+        self.state.show_stale_warning()
     }
 }
 
 /// Resident drain loop (#8 bridge): feeds every queued message to the state
-/// through `apply`, then notifies once; the channel closing calls `ended`.
+/// through `apply`, carries out the commands it answers with, then notifies
+/// once; the channel closing calls `ended`.
 /// No receiver (a scripted cluster with no script for the watch) starts
 /// nothing.
 fn spawn_drain<K: 'static>(
     receiver: Option<mpsc::Receiver<WatchMessage<K>>>,
     cx: &mut Context<Session>,
-    apply: impl Fn(&mut Session, WatchMessage<K>) -> SnapshotChange + 'static,
+    apply: impl Fn(&mut Session, WatchMessage<K>) -> Vec<Command> + 'static,
     ended: impl Fn(&mut Session) + 'static,
-    changed: impl Fn(&mut Session, SnapshotChange, &mut Context<Session>) + 'static,
 ) {
     let Some(mut receiver) = receiver else {
         return;
     };
     let feed = move |session: &mut Session, message, cx: &mut Context<Session>| {
         perf::count(perf::Event::WatchEvent);
-        let change = apply(session, message);
-        changed(session, change, cx);
+        let commands = apply(session, message);
+        session.carry_out(commands, cx);
     };
     let ended = Rc::new(ended);
     let closed = ended.clone();

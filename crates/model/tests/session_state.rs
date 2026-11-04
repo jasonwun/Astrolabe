@@ -6,7 +6,7 @@ use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_model::builtin::BuiltinKind;
-use astrolabe_model::catalog::{CustomGroup, catalog};
+use astrolabe_model::catalog::KindResource;
 use astrolabe_model::session::{
     ConnectionHealth, CustomKindId, ResourceKind, SnapshotChange, WatchKey,
 };
@@ -33,7 +33,10 @@ fn namespace(name: &str) -> Namespace {
 fn started(commands: &[Command]) -> Vec<WatchKey> {
     commands
         .iter()
-        .map(|Command::StartWatch { key, .. }| key.clone())
+        .filter_map(|command| match command {
+            Command::StartWatch { key, .. } => Some(key.clone()),
+            _ => None,
+        })
         .collect()
 }
 
@@ -67,16 +70,54 @@ fn crontab_id() -> CustomKindId {
     }
 }
 
-/// `CronTab` in the catalog, served unless `discovered` is false.
-fn crontab_catalog(scope: &str, discovered: bool) -> Vec<CustomGroup> {
-    let crd = crontab_crd(scope);
-    let resources = ServedResources::new([served(
+/// The run a `RunDiscovery` among `commands` asks for.
+fn run_of(commands: &[Command]) -> u64 {
+    commands
+        .iter()
+        .find_map(|command| match command {
+            Command::RunDiscovery { run } => Some(*run),
+            _ => None,
+        })
+        .expect("a RunDiscovery command")
+}
+
+/// The generation a `ScheduleDiscovery` among `commands` asks for.
+fn scheduled(commands: &[Command]) -> Option<u64> {
+    commands.iter().find_map(|command| match command {
+        Command::ScheduleDiscovery { generation } => Some(*generation),
+        _ => None,
+    })
+}
+
+/// A Discovery result that serves `CronTab`.
+fn crontab_served(scope: &str) -> ServedResources {
+    ServedResources::new([served(
         "stable.example.com",
         "v1",
         "CronTab",
         scope == "Namespaced",
-    )]);
-    catalog(&[&crd], discovered.then_some(&resources))
+    )])
+}
+
+/// Feeds `state` the first Definition snapshot, a `CronTab` Definition.
+fn list_crontab_crd(state: &mut SessionState, scope: &str) -> Vec<Command> {
+    let mut commands = state.crds_message(Ok(Event::Init));
+    commands.extend(state.crds_message(Ok(Event::InitApply(crontab_crd(scope)))));
+    commands.extend(state.crds_message(Ok(Event::InitDone)));
+    commands
+}
+
+/// A state connected to a cluster whose Definitions list `CronTab`; its
+/// first Discovery answered with the kind served, unless `discovered` is
+/// false.
+fn crontab_state(scope: &str, discovered: bool) -> SessionState {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    list_crontab_crd(&mut state, scope);
+    if discovered {
+        state.discovery_finished(run, Ok(crontab_served(scope)));
+    }
+    state
 }
 
 fn pod_event(name: &str) -> Event<DynamicObject> {
@@ -95,7 +136,9 @@ fn opening_a_builtin_list_starts_its_watch_for_the_selected_namespace() {
 
     assert_eq!(ensured.key, pod_key("default"));
     assert_eq!(started(&ensured.commands), [pod_key("default")]);
-    let Command::StartWatch { resource, .. } = &ensured.commands[0];
+    let Command::StartWatch { resource, .. } = &ensured.commands[0] else {
+        panic!("a StartWatch command");
+    };
     assert_eq!(resource.kind, "Pod");
     assert!(state.object_watch(&ensured.key).is_some());
 }
@@ -125,7 +168,7 @@ fn changing_the_namespace_moves_the_viewed_list_to_it() {
     let mut state = state();
     state.open_builtin_list(BuiltinKind::Pods);
 
-    let commands = state.set_namespace("team-a".to_string(), &[]);
+    let commands = state.set_namespace("team-a".to_string());
 
     assert_eq!(started(&commands), [pod_key("team-a")]);
     assert_eq!(state.namespace(), "team-a");
@@ -135,9 +178,9 @@ fn changing_the_namespace_moves_the_viewed_list_to_it() {
 fn changing_back_to_a_visited_namespace_starts_nothing() {
     let mut state = state();
     state.open_builtin_list(BuiltinKind::Pods);
-    state.set_namespace("team-a".to_string(), &[]);
+    state.set_namespace("team-a".to_string());
 
-    let commands = state.set_namespace("default".to_string(), &[]);
+    let commands = state.set_namespace("default".to_string());
 
     assert!(commands.is_empty());
 }
@@ -148,14 +191,14 @@ fn selecting_the_selected_namespace_starts_nothing() {
     state.open_builtin_list(BuiltinKind::Pods);
     state.close_list();
 
-    assert!(state.set_namespace("default".to_string(), &[]).is_empty());
+    assert!(state.set_namespace("default".to_string()).is_empty());
 }
 
 #[test]
 fn changing_the_namespace_with_no_list_viewed_starts_nothing() {
     let mut state = state();
 
-    let commands = state.set_namespace("team-a".to_string(), &[]);
+    let commands = state.set_namespace("team-a".to_string());
 
     assert!(commands.is_empty());
     assert_eq!(state.namespace(), "team-a");
@@ -167,7 +210,7 @@ fn a_closed_list_no_longer_follows_the_namespace() {
     state.open_builtin_list(BuiltinKind::Pods);
     state.close_list();
 
-    assert!(state.set_namespace("team-a".to_string(), &[]).is_empty());
+    assert!(state.set_namespace("team-a".to_string()).is_empty());
 }
 
 #[test]
@@ -176,7 +219,7 @@ fn the_last_opened_list_is_the_one_that_follows() {
     state.open_builtin_list(BuiltinKind::Pods);
     state.open_builtin_list(BuiltinKind::Deployments);
 
-    let commands = state.set_namespace("team-a".to_string(), &[]);
+    let commands = state.set_namespace("team-a".to_string());
 
     let kinds: Vec<_> = started(&commands).into_iter().map(|key| key.kind).collect();
     assert_eq!(kinds, [ResourceKind::Builtin(BuiltinKind::Deployments)]);
@@ -184,13 +227,12 @@ fn the_last_opened_list_is_the_one_that_follows() {
 
 #[test]
 fn a_namespaced_custom_list_follows_the_namespace() {
-    let mut state = state();
-    let catalog = crontab_catalog("Namespaced", true);
-    let ensured = state.open_custom_list(&crontab_id(), &catalog).unwrap();
+    let mut state = crontab_state("Namespaced", true);
+    let ensured = state.open_custom_list(&crontab_id()).unwrap();
     assert_eq!(ensured.key.namespace.as_deref(), Some("default"));
     assert_eq!(ensured.commands.len(), 1);
 
-    let commands = state.set_namespace("team-a".to_string(), &catalog);
+    let commands = state.set_namespace("team-a".to_string());
 
     let keys = started(&commands);
     assert_eq!(keys.len(), 1);
@@ -204,12 +246,11 @@ fn a_namespaced_custom_list_follows_the_namespace() {
 
 #[test]
 fn a_cluster_scoped_custom_list_ignores_the_namespace() {
-    let mut state = state();
-    let catalog = crontab_catalog("Cluster", true);
-    let ensured = state.open_custom_list(&crontab_id(), &catalog).unwrap();
+    let mut state = crontab_state("Cluster", true);
+    let ensured = state.open_custom_list(&crontab_id()).unwrap();
     assert_eq!(ensured.key.namespace, None);
 
-    let commands = state.set_namespace("team-a".to_string(), &catalog);
+    let commands = state.set_namespace("team-a".to_string());
 
     assert!(commands.is_empty());
 }
@@ -218,18 +259,17 @@ fn a_cluster_scoped_custom_list_ignores_the_namespace() {
 fn a_custom_list_of_an_unknown_kind_starts_nothing() {
     let mut state = state();
 
-    assert!(state.open_custom_list(&crontab_id(), &[]).is_none());
+    assert!(state.open_custom_list(&crontab_id()).is_none());
 }
 
 #[test]
 fn a_custom_list_that_is_not_served_starts_nothing() {
-    let mut state = state();
-    let catalog = crontab_catalog("Namespaced", false);
+    let mut state = crontab_state("Namespaced", false);
 
-    assert!(state.open_custom_list(&crontab_id(), &catalog).is_none());
+    assert!(state.open_custom_list(&crontab_id()).is_none());
     assert!(
         state
-            .watch_custom_object(&crontab_id(), Some("default"), &catalog)
+            .watch_custom_object(&crontab_id(), Some("default"))
             .is_none()
     );
 }
@@ -237,20 +277,23 @@ fn a_custom_list_that_is_not_served_starts_nothing() {
 #[test]
 fn a_viewed_custom_list_starts_its_watch_once_the_kind_is_served() {
     let mut state = state();
-    assert!(
-        state
-            .open_custom_list(&crontab_id(), &crontab_catalog("Namespaced", false))
-            .is_none()
-    );
+    let run = run_of(&state.connected());
+    list_crontab_crd(&mut state, "Namespaced");
+    assert!(state.open_custom_list(&crontab_id()).is_none());
 
-    let commands = state.catalog_changed(&crontab_catalog("Namespaced", true));
+    let commands = state.discovery_finished(run, Ok(crontab_served("Namespaced")));
 
-    assert_eq!(commands.len(), 1);
-    assert!(
-        state
-            .catalog_changed(&crontab_catalog("Namespaced", true))
-            .is_empty()
-    );
+    assert_eq!(started(&commands).len(), 1);
+}
+
+#[test]
+fn a_custom_list_already_watched_starts_nothing_when_the_catalog_changes() {
+    let mut state = crontab_state("Namespaced", true);
+    state.open_custom_list(&crontab_id()).unwrap();
+
+    let commands = state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))));
+
+    assert_eq!(started(&commands), []);
 }
 
 #[test]
@@ -259,22 +302,19 @@ fn a_catalog_change_leaves_a_builtin_list_alone() {
     state.open_builtin_list(BuiltinKind::Pods);
     state.close_list();
     state.open_builtin_list(BuiltinKind::Deployments);
-    state.set_namespace("team-a".to_string(), &[]);
+    state.set_namespace("team-a".to_string());
 
-    assert!(
-        state
-            .catalog_changed(&crontab_catalog("Namespaced", true))
-            .is_empty()
-    );
+    let commands = list_crontab_crd(&mut state, "Namespaced");
+
+    assert_eq!(started(&commands), []);
 }
 
 #[test]
 fn a_custom_object_watch_ignores_the_namespace_selection() {
-    let mut state = state();
-    let catalog = crontab_catalog("Namespaced", true);
+    let mut state = crontab_state("Namespaced", true);
 
     let ensured = state
-        .watch_custom_object(&crontab_id(), Some("team-b"), &catalog)
+        .watch_custom_object(&crontab_id(), Some("team-b"))
         .unwrap();
 
     assert_eq!(ensured.key.namespace.as_deref(), Some("team-b"));
@@ -283,22 +323,23 @@ fn a_custom_object_watch_ignores_the_namespace_selection() {
 
 #[test]
 fn custom_kind_finds_a_kind_by_group_and_name() {
-    let catalog = crontab_catalog("Namespaced", true);
+    let state = crontab_state("Namespaced", true);
+    let catalog = state.catalog();
 
     assert_eq!(
-        custom_kind(&catalog, &crontab_id()).unwrap().plural,
+        custom_kind(catalog, &crontab_id()).unwrap().plural,
         "crontabs"
     );
     let other_group = CustomKindId {
         group: "other.io".to_string(),
         kind: "CronTab".to_string(),
     };
-    assert!(custom_kind(&catalog, &other_group).is_none());
+    assert!(custom_kind(catalog, &other_group).is_none());
     let other_kind = CustomKindId {
         group: "stable.example.com".to_string(),
         kind: "Backup".to_string(),
     };
-    assert!(custom_kind(&catalog, &other_kind).is_none());
+    assert!(custom_kind(catalog, &other_kind).is_none());
 }
 
 #[test]
@@ -447,4 +488,187 @@ fn the_watch_key_names_the_cluster() {
 #[test]
 fn the_cluster_is_the_one_the_state_was_built_for() {
     assert_eq!(state().cluster(), &ClusterId::named("kind-test"));
+}
+
+// Discovery
+
+#[test]
+fn connecting_runs_the_first_discovery() {
+    let mut state = state();
+
+    let commands = state.connected();
+
+    assert!(matches!(commands[..], [Command::RunDiscovery { .. }]));
+}
+
+#[test]
+fn a_changed_definition_schedules_discovery() {
+    let mut state = crontab_state("Namespaced", true);
+
+    let commands = state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))));
+
+    assert!(scheduled(&commands).is_some());
+}
+
+#[test]
+fn a_deleted_definition_schedules_discovery() {
+    let mut state = crontab_state("Namespaced", true);
+
+    let commands = state.crds_message(Ok(Event::Delete(crontab_crd("Namespaced"))));
+
+    assert!(scheduled(&commands).is_some());
+}
+
+#[test]
+fn a_first_snapshot_with_an_unserved_kind_schedules_discovery() {
+    // Connect-time Discovery raced the Definition list and missed the kind.
+    let mut state = state();
+    let run = run_of(&state.connected());
+    state.discovery_finished(run, Ok(ServedResources::default()));
+
+    let commands = list_crontab_crd(&mut state, "Namespaced");
+
+    assert!(scheduled(&commands).is_some());
+}
+
+#[test]
+fn a_first_snapshot_already_discovered_schedules_nothing() {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    state.discovery_finished(run, Ok(crontab_served("Namespaced")));
+
+    let commands = list_crontab_crd(&mut state, "Namespaced");
+
+    assert_eq!(scheduled(&commands), None);
+}
+
+#[test]
+fn a_first_snapshot_before_any_discovery_schedules_nothing() {
+    // Undiscovered is not "not served": the first run is still in flight.
+    let mut state = state();
+    state.connected();
+
+    let commands = list_crontab_crd(&mut state, "Namespaced");
+
+    assert_eq!(scheduled(&commands), None);
+}
+
+#[test]
+fn the_debounce_runs_discovery_when_no_later_change_superseded_it() {
+    let mut state = crontab_state("Namespaced", true);
+    let generation =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+
+    let commands = state.debounce_elapsed(generation);
+
+    assert!(matches!(commands[..], [Command::RunDiscovery { .. }]));
+}
+
+#[test]
+fn a_later_change_supersedes_the_earlier_debounce() {
+    let mut state = crontab_state("Namespaced", true);
+    let first =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    let second =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+
+    assert!(state.debounce_elapsed(first).is_empty());
+    assert!(!state.debounce_elapsed(second).is_empty());
+}
+
+#[test]
+fn each_discovery_run_has_its_own_number() {
+    let mut state = state();
+    let first = run_of(&state.connected());
+    let generation = scheduled(&list_crontab_crd(&mut state, "Namespaced")).unwrap_or_else(|| {
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap()
+    });
+
+    let second = run_of(&state.debounce_elapsed(generation));
+
+    assert!(second > first);
+}
+
+#[test]
+fn a_newer_runs_answer_wins_over_an_older_one() {
+    let mut state = state();
+    let older = run_of(&state.connected());
+    list_crontab_crd(&mut state, "Namespaced");
+    let generation =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    let newer = run_of(&state.debounce_elapsed(generation));
+
+    state.discovery_finished(newer, Ok(crontab_served("Namespaced")));
+    // The older run answers late, with a failure.
+    state.discovery_finished(older, Err(ClusterError::new("late")));
+
+    assert!(state.discovery_failure().is_none());
+    assert!(matches!(
+        state.catalog()[0].kinds[0].resource,
+        KindResource::Served(_)
+    ));
+}
+
+#[test]
+fn an_older_runs_answer_is_dropped_while_a_newer_run_is_in_flight() {
+    let mut state = state();
+    let older = run_of(&state.connected());
+    list_crontab_crd(&mut state, "Namespaced");
+    let generation =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    state.debounce_elapsed(generation);
+
+    state.discovery_finished(older, Ok(crontab_served("Namespaced")));
+
+    assert!(matches!(
+        state.catalog()[0].kinds[0].resource,
+        KindResource::Undiscovered
+    ));
+}
+
+#[test]
+fn the_catalog_follows_the_definitions_before_discovery_catches_up() {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    state.discovery_finished(run, Ok(ServedResources::default()));
+
+    list_crontab_crd(&mut state, "Namespaced");
+
+    assert_eq!(state.catalog().len(), 1);
+    assert_eq!(
+        state.catalog()[0].kinds[0].resource,
+        KindResource::NotServed
+    );
+}
+
+#[test]
+fn a_failed_discovery_keeps_the_kinds_served_behind_the_stale_warning() {
+    let mut state = crontab_state("Namespaced", true);
+    state.namespaces_message(Ok(Event::InitDone));
+    assert!(!state.show_stale_warning());
+    let generation =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    let run = run_of(&state.debounce_elapsed(generation));
+
+    state.discovery_finished(run, Err(ClusterError::new("connection refused")));
+
+    assert!(state.show_stale_warning());
+    assert!(state.discovery_failure().is_some());
+    assert_eq!(state.health(), ConnectionHealth::Healthy);
+    assert!(matches!(
+        state.catalog()[0].kinds[0].resource,
+        KindResource::Served(_)
+    ));
+}
+
+#[test]
+fn a_forbidden_definition_list_leaves_the_catalog_empty() {
+    let mut state = state();
+
+    let commands = state.crds_message(Err(ClusterError::forbidden("crds forbidden")));
+
+    assert!(state.catalog().is_empty());
+    assert!(state.crd_access_denied());
+    assert_eq!(scheduled(&commands), None);
+    assert!(!state.show_stale_warning());
 }
