@@ -20,6 +20,20 @@ through the changed path. #172 (field-path parsing in `astrolabe-kube`)
 applied a Deployment with `image: ""` from the YAML editor and read the
 422's line mark.
 
+A change to which namespace a Session starts in needs a context that names
+one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
+Copy the kubeconfig into the scratchpad, set the namespace on the copy and
+launch with it (#236):
+
+```sh
+kubectl config view --raw > "$SCRATCH/ns.kubeconfig"
+KUBECONFIG="$SCRATCH/ns.kubeconfig" kubectl config set-context kind-astrolabe-dev --namespace="$(dev/demo.sh apply)"
+KUBECONFIG="$SCRATCH/ns.kubeconfig" ASTROLABE_CLUSTER=kind-astrolabe-dev cargo run -p astrolabe
+```
+
+The selector shows that namespace and Pods lists its objects. Write the
+full scratchpad path in each command.
+
 `kind-astrolabe-dev` serves aggregated discovery, so a change to the
 per-group fallback never runs there. Check it there anyway, then again on
 a throwaway pre-1.27 kind cluster with its own kubeconfig, and confirm
