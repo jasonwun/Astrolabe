@@ -40,6 +40,22 @@ Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
 `comment-width.sh` caught it and cost a CI round (#149 retro).
 
+A new rule in `dev/layer-check.sh` gets a probe file for every way to
+write the path, not only the full path: a one-line `use a::{b::X}`, the
+`astrolabe_kube::kube::` route and a long form such as `kube::api::Api`.
+Put each probe in `crates/model/src` and `crates/app/src`, run the script,
+delete the probe, and list the runs in the PR's Evidence.
+
+Origin: #224's first draft caught the full paths but let
+`use kube::{config::Kubeconfig}` through; the Spec reviewer found it and
+the rules were tightened before merge (#224 retro).
+
+A CI failure in a test the diff cannot reach: rerun the failed job once,
+and when it passes file a `needs-triage` issue with both run links instead
+of merging silently. #225's `build-test` failed twice on
+`dropping_a_port_forward_stops_its_listener_and_connections` before it
+passed (#226).
+
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
 an unbackticked type name in a doc comment trips `doc_markdown`. Return
