@@ -216,7 +216,7 @@ impl YamlEditorView {
         }
         // The Session connects lazily and Apply waits on it, so the status
         // names where Apply goes rather than a connection state.
-        self.status_line = format!("cluster {}", session.read(cx).watch_key().cluster);
+        self.status_line = format!("cluster {}", session.read(cx).state().watch_key().cluster);
         self.session = Some(session);
         self.session_version += 1;
         // The last Apply's result describes the previous Cluster: its Force

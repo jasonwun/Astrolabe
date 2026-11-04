@@ -22,6 +22,7 @@ fn namespace(name: &str) -> Namespace {
 
 fn names(session: &Session) -> Vec<String> {
     session
+        .state()
         .namespaces()
         .into_iter()
         .map(|namespace| namespace.metadata.name.clone().unwrap())
@@ -38,11 +39,11 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
 
     cx.read(|cx| {
         let session = session.read(cx);
-        assert_eq!(session.watch_key().cluster.name(), "kind-a");
-        assert_eq!(session.watch_key().kind, ResourceKind::Namespaces);
-        assert_eq!(session.watch_key().namespace, None);
-        assert_eq!(session.health(), ConnectionHealth::Connecting);
-        assert!(!session.show_stale_warning());
+        assert_eq!(session.state().watch_key().cluster.name(), "kind-a");
+        assert_eq!(session.state().watch_key().kind, ResourceKind::Namespaces);
+        assert_eq!(session.state().watch_key().namespace, None);
+        assert_eq!(session.state().health(), ConnectionHealth::Connecting);
+        assert!(!session.state().show_stale_warning());
     });
 
     sender.try_send(Ok(Event::Init)).unwrap();
@@ -54,8 +55,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.health(), ConnectionHealth::Healthy);
-        assert!(!session.show_stale_warning());
+        assert_eq!(session.state().health(), ConnectionHealth::Healthy);
+        assert!(!session.state().show_stale_warning());
     });
 
     sender
@@ -65,8 +66,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.health(), ConnectionHealth::Stale);
-        assert!(session.show_stale_warning());
+        assert_eq!(session.state().health(), ConnectionHealth::Stale);
+        assert!(session.state().show_stale_warning());
     });
 
     sender.try_send(Ok(Event::Init)).unwrap();
@@ -77,8 +78,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.health(), ConnectionHealth::Connecting);
-        assert!(session.show_stale_warning());
+        assert_eq!(session.state().health(), ConnectionHealth::Connecting);
+        assert!(session.state().show_stale_warning());
     });
 
     sender.try_send(Ok(Event::InitDone)).unwrap();
@@ -92,8 +93,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.health(), ConnectionHealth::Healthy);
-        assert!(!session.show_stale_warning());
+        assert_eq!(session.state().health(), ConnectionHealth::Healthy);
+        assert!(!session.state().show_stale_warning());
     });
 
     drop(sender);
@@ -101,8 +102,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.health(), ConnectionHealth::Stale);
-        assert!(session.show_stale_warning());
+        assert_eq!(session.state().health(), ConnectionHealth::Stale);
+        assert!(session.state().show_stale_warning());
     });
 
     // The RUST_LOG-driven event trail covers the health transitions and the
