@@ -705,7 +705,7 @@ fn forward_request(name: &str, port: u16) -> ForwardRequest {
 }
 
 /// The `index`th forward to the Pod `name`.
-fn forward_to(state: &SessionState, name: &str, index: usize) -> ActiveForward {
+fn nth_forward_to_pod(state: &SessionState, name: &str, index: usize) -> ActiveForward {
     state
         .forwards(&pod_target(name))
         .nth(index)
@@ -714,7 +714,7 @@ fn forward_to(state: &SessionState, name: &str, index: usize) -> ActiveForward {
 }
 
 /// The requests of the forwards to `target`, in list order.
-fn listed(state: &SessionState, target: &ForwardTarget) -> Vec<ForwardRequest> {
+fn requests_to(state: &SessionState, target: &ForwardTarget) -> Vec<ForwardRequest> {
     state
         .forwards(target)
         .map(|forward| forward.request.clone())
@@ -738,7 +738,7 @@ fn a_new_forward_starts_and_is_listed_as_starting() {
 
     assert_eq!(commands.len(), 1);
     assert!(is_start(&commands[0], &request));
-    let forward = forward_to(&state, "web", 0);
+    let forward = nth_forward_to_pod(&state, "web", 0);
     assert_eq!(forward.state, ForwardState::Starting);
     assert_eq!(forward.last_error, None);
 }
@@ -753,7 +753,7 @@ fn forwarding_the_same_request_again_changes_nothing() {
     let commands = state.forward_port(request.clone());
 
     assert!(commands.is_empty());
-    let forward = forward_to(&state, "web", 0);
+    let forward = nth_forward_to_pod(&state, "web", 0);
     assert_eq!(forward.state, ForwardState::Listening(8080));
 }
 
@@ -765,7 +765,7 @@ fn a_listening_report_sets_the_local_port() {
 
     state.forward_reported(&request, ForwardEvent::Listening(8080));
 
-    let forward = forward_to(&state, "web", 0);
+    let forward = nth_forward_to_pod(&state, "web", 0);
     assert_eq!(forward.state, ForwardState::Listening(8080));
 }
 
@@ -781,7 +781,7 @@ fn a_connection_failure_keeps_listening_and_records_the_error() {
         ForwardEvent::ConnectionFailed(ClusterError::new("refused")),
     );
 
-    let forward = forward_to(&state, "web", 0);
+    let forward = nth_forward_to_pod(&state, "web", 0);
     assert_eq!(forward.state, ForwardState::Listening(8080));
     assert_eq!(forward.last_error.as_deref(), Some("refused"));
 }
@@ -794,7 +794,7 @@ fn a_failed_report_fails_the_forward() {
 
     state.forward_reported(&request, ForwardEvent::Failed(ClusterError::new("gone")));
 
-    let forward = forward_to(&state, "web", 0);
+    let forward = nth_forward_to_pod(&state, "web", 0);
     assert_eq!(forward.state, ForwardState::Failed("gone".to_string()));
 }
 
@@ -812,8 +812,8 @@ fn a_failed_forward_starts_over_at_the_end_of_the_list() {
     assert_eq!(commands.len(), 2);
     assert!(is_stop(&commands[0], &first));
     assert!(is_start(&commands[1], &first));
-    assert_eq!(listed(&state, &pod_target("web")), [second, first]);
-    let restarted = forward_to(&state, "web", 1);
+    assert_eq!(requests_to(&state, &pod_target("web")), [second, first]);
+    let restarted = nth_forward_to_pod(&state, "web", 1);
     assert_eq!(restarted.state, ForwardState::Starting);
     assert_eq!(restarted.last_error, None);
 }
@@ -830,7 +830,7 @@ fn stopping_a_forward_removes_it_and_drops_its_io() {
 
     assert_eq!(commands.len(), 1);
     assert!(is_stop(&commands[0], &stopped));
-    assert_eq!(listed(&state, &pod_target("web")), [kept]);
+    assert_eq!(requests_to(&state, &pod_target("web")), [kept]);
 }
 
 #[test]
@@ -841,7 +841,7 @@ fn stopping_an_unknown_forward_changes_nothing() {
     let commands = state.stop_forward(&forward_request("web", 81));
 
     assert!(commands.is_empty());
-    assert_eq!(listed(&state, &pod_target("web")).len(), 1);
+    assert_eq!(requests_to(&state, &pod_target("web")).len(), 1);
 }
 
 #[test]
@@ -853,7 +853,7 @@ fn a_report_of_a_stopped_forward_changes_nothing() {
 
     state.forward_reported(&request, ForwardEvent::Listening(8080));
 
-    assert_eq!(listed(&state, &pod_target("web")), []);
+    assert_eq!(requests_to(&state, &pod_target("web")), []);
 }
 
 #[test]
@@ -866,7 +866,7 @@ fn a_report_reaches_only_its_own_forward() {
 
     state.forward_reported(&web, ForwardEvent::Listening(8080));
 
-    let other = forward_to(&state, "db", 0);
+    let other = nth_forward_to_pod(&state, "db", 0);
     assert_eq!(other.state, ForwardState::Starting);
 }
 
@@ -881,7 +881,7 @@ fn the_list_holds_only_the_forwards_of_its_target() {
     };
     state.forward_port(on_service.clone());
 
-    assert_eq!(listed(&state, &service), [on_service]);
-    assert_eq!(listed(&state, &pod_target("web")).len(), 1);
-    assert_eq!(listed(&state, &pod_target("db")), []);
+    assert_eq!(requests_to(&state, &service), [on_service]);
+    assert_eq!(requests_to(&state, &pod_target("web")).len(), 1);
+    assert_eq!(requests_to(&state, &pod_target("db")), []);
 }

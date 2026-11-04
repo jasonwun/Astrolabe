@@ -278,7 +278,7 @@ impl SessionState {
         let mut commands = Vec::new();
         if let Some(index) = self.forward_index(&request) {
             if !matches!(self.forwards[index].state, ForwardState::Failed(_)) {
-                return commands;
+                return Vec::new();
             }
             self.forwards.remove(index);
             commands.push(Command::StopForward {

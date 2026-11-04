@@ -31,6 +31,10 @@ _Avoid_: resync, reconnect (a reconnect is not a relist)
 Showing the previous snapshot while its watch is down or relisting.
 _Avoid_: outdated, offline
 
+**Forward**:
+A port-forward the session keeps until stopped, listed with its state (Starting, Listening, Failed) whether or not its target's detail tab is open.
+_Avoid_: tunnel
+
 ## Views
 
 **Registration**:
