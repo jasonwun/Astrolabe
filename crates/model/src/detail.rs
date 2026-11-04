@@ -151,8 +151,9 @@ impl DetailTarget {
                     return None;
                 };
                 let namespace = key.namespace.as_deref();
-                let watch = state.custom_object_watch_key(kind, namespace);
-                let object = state.object_watch(&watch)?.get(namespace, &key.name)?;
+                let object = state
+                    .custom_object_watch(kind, namespace)?
+                    .get(namespace, &key.name)?;
                 (resource.clone(), key.clone(), Shown::Custom(kind, object))
             }
         };

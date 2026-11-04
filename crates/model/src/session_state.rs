@@ -447,7 +447,7 @@ impl SessionState {
 
     /// The watch holding `kind`'s objects in `namespace` (`None` when the
     /// kind is cluster-scoped).
-    pub fn builtin_watch_key(&self, kind: BuiltinKind, namespace: Option<&str>) -> WatchKey {
+    fn builtin_watch_key(&self, kind: BuiltinKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.key.cluster.clone(),
             kind: ResourceKind::Builtin(kind),
@@ -476,15 +476,25 @@ impl SessionState {
         self.builtin_watch(kind, namespace)?.get(namespace, name)
     }
 
-    /// The watch a kind's list reads for the current namespace selection:
-    /// namespaced kinds follow it, cluster-scoped kinds ignore it.
-    pub fn custom_watch_key(&self, kind: &CustomKind) -> WatchKey {
-        self.custom_object_watch_key(kind, Some(&self.namespace))
+    /// The watch a custom kind's list reads for the current namespace
+    /// selection: namespaced kinds follow it, cluster-scoped kinds ignore it.
+    pub fn custom_watch(&self, kind: &CustomKind) -> Option<&Watched<DynamicObject>> {
+        self.custom_object_watch(kind, Some(&self.namespace))
     }
 
     /// The watch holding `kind`'s objects in `namespace`, at its preferred
     /// version; cluster-scoped kinds ignore `namespace`.
-    pub fn custom_object_watch_key(&self, kind: &CustomKind, namespace: Option<&str>) -> WatchKey {
+    pub fn custom_object_watch(
+        &self,
+        kind: &CustomKind,
+        namespace: Option<&str>,
+    ) -> Option<&Watched<DynamicObject>> {
+        self.object_watch(&self.custom_object_watch_key(kind, namespace))
+    }
+
+    /// The watch holding `kind`'s objects in `namespace`, at its preferred
+    /// version; cluster-scoped kinds ignore `namespace`.
+    fn custom_object_watch_key(&self, kind: &CustomKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.key.cluster.clone(),
             kind: ResourceKind::Custom {

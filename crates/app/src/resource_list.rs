@@ -276,7 +276,7 @@ impl ResourceListPanel {
                         false,
                     ),
                     KindResource::Served(_) => {
-                        let watch = data.object_watch(&data.custom_watch_key(kind));
+                        let watch = data.custom_watch(kind);
                         let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
                         let state = match watch {
                             Some(watch) if watch.status().is_forbidden() => {
