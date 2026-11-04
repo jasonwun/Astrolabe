@@ -52,11 +52,19 @@ pub struct DocError {
 pub struct ApplyReport {
     /// One entry per sent document, in send order.
     pub outcomes: Vec<DocOutcome>,
-    /// True when every document applied cleanly.
-    pub ok: bool,
 }
 
 impl ApplyReport {
+    /// A report of `outcomes`.
+    pub fn new(outcomes: Vec<DocOutcome>) -> Self {
+        Self { outcomes }
+    }
+
+    /// True when every document applied cleanly.
+    pub fn ok(&self) -> bool {
+        self.outcomes.iter().all(|o| o.result.is_ok())
+    }
+
     /// Re-map every cause onto `buffer`, a newer version of the snapshot
     /// that was applied (best-effort: the buffer may have moved on while
     /// the Apply was in flight).
@@ -81,14 +89,11 @@ impl ApplyReport {
     ) -> Self {
         let error = parse_status(status);
         let causes = located_causes(&error, snapshot, doc_index);
-        Self {
-            outcomes: vec![DocOutcome {
-                doc_index,
-                doc: doc.into(),
-                result: Err(DocError { error, causes }),
-            }],
-            ok: false,
-        }
+        Self::new(vec![DocOutcome {
+            doc_index,
+            doc: doc.into(),
+            result: Err(DocError { error, causes }),
+        }])
     }
 }
 
@@ -133,8 +138,7 @@ pub(crate) async fn apply_documents(
         },
     )
     .await;
-    let ok = outcomes.iter().all(|o| o.result.is_ok());
-    Ok(ApplyReport { outcomes, ok })
+    Ok(ApplyReport::new(outcomes))
 }
 
 /// Dry-run precheck (#15): `dry_run` + strict validation. Same per-doc
@@ -166,8 +170,7 @@ pub(crate) async fn precheck_documents(
         },
     )
     .await;
-    let ok = outcomes.iter().all(|o| o.result.is_ok());
-    Ok(ApplyReport { outcomes, ok })
+    Ok(ApplyReport::new(outcomes))
 }
 
 /// Per-document apply operation: the seam between orchestration and the
@@ -341,7 +344,7 @@ data:
             ..Default::default()
         };
         let mut report = ApplyReport::failed(0, "v1 ConfigMap/cm", DOC, &status);
-        assert!(!report.ok);
+        assert!(!report.ok());
         let line = |report: &ApplyReport| match &report.outcomes[0].result {
             Err(error) => error.causes[0].located.location.clone(),
             Ok(()) => panic!("expected a failure"),
@@ -700,7 +703,7 @@ data:
         )
         .await
         .unwrap();
-        assert!(!report.ok);
+        assert!(!report.ok());
         assert_eq!(report.outcomes.len(), 2);
         assert_eq!(report.outcomes[0].doc, "v1 ConfigMap/first");
         assert!(report.outcomes[0].result.is_ok());

@@ -228,7 +228,7 @@ async fn apply_multi_doc_happy_path() {
     ]);
 
     let report = apply(&client, &snapshot).await;
-    assert!(report.ok, "all docs should apply: {:?}", report.outcomes);
+    assert!(report.ok(), "all docs should apply: {:?}", report.outcomes);
     assert_eq!(report.outcomes.len(), 3);
     assert_eq!(report.outcomes[0].doc, format!("v1 Namespace/{ns}"));
     assert_eq!(report.outcomes[1].doc, "v1 ConfigMap/cm");
@@ -261,7 +261,7 @@ async fn apply_422_maps_cause_to_field_line() {
     ]);
 
     let report = apply(&client, &snapshot).await;
-    assert!(!report.ok);
+    assert!(!report.ok());
     assert!(report.outcomes[0].result.is_ok(), "Namespace applies");
     assert!(report.outcomes[1].result.is_ok(), "ConfigMap applies");
 
@@ -303,7 +303,7 @@ async fn apply_409_then_force_apply() {
     // Set up: namespace + ConfigMap owned by a *different* manager.
     let setup = join_docs(&[ns_doc(&ns), configmap_doc(&ns, "cm", "owned-by-other")]);
     let report = apply(&client, &setup).await;
-    assert!(report.ok);
+    assert!(report.ok());
 
     // Re-own data.value under a foreign manager.
     let gvk = GroupVersionKind::gvk("", "v1", "ConfigMap");
@@ -326,7 +326,7 @@ async fn apply_409_then_force_apply() {
     // Our manager now conflicts on data.value.
     let snapshot = join_docs(&[configmap_doc(&ns, "cm", "ours")]);
     let report = apply(&client, &snapshot).await;
-    assert!(!report.ok);
+    assert!(!report.ok());
     let err = report.outcomes[0]
         .result
         .as_ref()
@@ -363,7 +363,7 @@ async fn apply_409_then_force_apply() {
         .await
         .unwrap();
     assert!(
-        report.ok,
+        report.ok(),
         "force apply should succeed: {:?}",
         report.outcomes
     );
@@ -401,7 +401,7 @@ async fn unknown_field_fails_precheck_and_apply_with_located_cause() {
         ),
         ("apply", apply(&client, &snapshot).await),
     ] {
-        assert!(!report.ok, "{label} should flag the unknown field");
+        assert!(!report.ok(), "{label} should flag the unknown field");
         assert!(
             report.outcomes[0].result.is_ok(),
             "{label}: Namespace doc is fine"
@@ -476,7 +476,7 @@ spec:
 "
     );
     let report = apply(&client, &join_docs(&[ns_doc(&ns), crd_doc])).await;
-    assert!(report.ok, "{:?}", report.outcomes);
+    assert!(report.ok(), "{:?}", report.outcomes);
 
     let crds: Api<CustomResourceDefinition> = Api::all(client.clone());
     let crd = crds.get(&crd_name).await.unwrap();
@@ -518,7 +518,7 @@ spec:
     let widget = format!(
         "apiVersion: {group}/v1\nkind: Widget\nmetadata:\n  name: w1\n  namespace: {ns}\nspec:\n  size: large\n"
     );
-    assert!(apply(&client, &widget).await.ok);
+    assert!(apply(&client, &widget).await.ok());
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             match events.next().await.expect("watch ended").unwrap() {
@@ -590,7 +590,7 @@ async fn crd_watch_without_rbac_reports_forbidden() {
 async fn running_nginx(client: &kube::Client, ns: &str) -> String {
     let snapshot = join_docs(&[ns_doc(ns), deployment_doc(ns, "IfNotPresent")]);
     let report = apply(client, &snapshot).await;
-    assert!(report.ok, "setup should apply: {:?}", report.outcomes);
+    assert!(report.ok(), "setup should apply: {:?}", report.outcomes);
     ready_pod(client, ns, None).await
 }
 
@@ -702,7 +702,7 @@ async fn suspend_and_trigger_a_cronjob() {
     let client = default_client().await.unwrap();
     let ns = unique_ns();
     let report = apply(&client, &join_docs(&[ns_doc(&ns), cronjob_doc(&ns)])).await;
-    assert!(report.ok, "setup should apply: {:?}", report.outcomes);
+    assert!(report.ok(), "setup should apply: {:?}", report.outcomes);
     let nightly = ObjectRef {
         resource: ApiResource::erase::<CronJob>(&()),
         key: ObjectKey::new(Some(ns.clone()), "nightly"),
@@ -850,7 +850,7 @@ async fn service_port_forward_reaches_a_selected_pod() {
         "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  namespace: {ns}\nspec:\n  selector:\n    app: nginx\n  ports:\n    - name: http\n      port: 8081\n      targetPort: 80\n"
     );
     let report = apply(&client, &service).await;
-    assert!(report.ok, "service should apply: {:?}", report.outcomes);
+    assert!(report.ok(), "service should apply: {:?}", report.outcomes);
 
     let cluster = handle(&client);
     let forward = cluster.port_forward(ForwardRequest {

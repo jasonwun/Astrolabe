@@ -7,12 +7,7 @@ use futures::channel::mpsc;
 use futures::{SinkExt as _, Stream, StreamExt as _};
 use k8s_openapi::api::core::v1::Namespace;
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use kube::{
-    Api, Client,
-    core::DynamicObject,
-    discovery::ApiResource,
-    runtime::{WatchStreamExt, watcher},
-};
+use kube::{Api, Client, core::DynamicObject, discovery::ApiResource, runtime::watcher};
 
 use crate::cluster::{ClusterError, ClusterId};
 
@@ -23,11 +18,40 @@ pub type NamespaceWatchMessage = WatchMessage<Namespace>;
 pub type CrdWatchMessage = WatchMessage<CustomResourceDefinition>;
 pub type ObjectWatchMessage = WatchMessage<DynamicObject>;
 
-/// Wait before relisting after a failed or ended watch.
+/// Wait before the first relist after a failed or ended watch.
 const RETRY: Duration = Duration::from_secs(1);
-/// Wait before relisting after the apiserver refused the watch with 403:
-/// RBAC denials do not clear by retrying fast.
-const FORBIDDEN_RETRY: Duration = Duration::from_secs(30);
+/// The longest wait before a relist: the wait doubles from [`RETRY`] on each
+/// consecutive failure up to this, and a 403 waits this long at once (RBAC
+/// denials do not clear by retrying fast).
+const RETRY_CAP: Duration = Duration::from_secs(30);
+/// How long the relist loop waits before its next LIST.
+#[derive(Debug)]
+struct Retry {
+    next: Duration,
+}
+
+impl Retry {
+    fn new() -> Self {
+        Self { next: RETRY }
+    }
+
+    /// The wait after a failed or ended watch; the one after it is twice
+    /// as long, up to [`RETRY_CAP`].
+    fn delay(&mut self, forbidden: bool) -> Duration {
+        if forbidden {
+            return RETRY_CAP;
+        }
+        let delay = self.next;
+        self.next = (delay * 2).min(RETRY_CAP);
+        delay
+    }
+
+    /// A LIST completed: the apiserver is reachable, so start over.
+    fn reset(&mut self) {
+        self.next = RETRY;
+    }
+}
+
 /// Messages a watch buffers before its loop waits on the reader.
 const CAPACITY: usize = 256;
 
@@ -35,7 +59,7 @@ pub(crate) fn namespaces(
     client: &Client,
 ) -> impl Stream<Item = Result<watcher::Event<Namespace>, watcher::Error>> + Send + use<> {
     tracing::debug!("starting namespace watch stream");
-    watcher(Api::all(client.clone()), watcher::Config::default()).default_backoff()
+    watcher(Api::all(client.clone()), watcher::Config::default())
 }
 
 /// The resident, cluster-scoped CRD watch behind Custom Resources navigation.
@@ -44,7 +68,7 @@ pub(crate) fn custom_resource_definitions(
 ) -> impl Stream<Item = Result<watcher::Event<CustomResourceDefinition>, watcher::Error>> + Send + use<>
 {
     tracing::debug!("starting CRD watch stream");
-    watcher(Api::all(client.clone()), watcher::Config::default()).default_backoff()
+    watcher(Api::all(client.clone()), watcher::Config::default())
 }
 
 /// One resource's objects, untyped (custom resources and built-in kinds
@@ -60,7 +84,7 @@ pub(crate) fn objects(
         Some(namespace) => Api::namespaced_with(client.clone(), namespace, resource),
         None => Api::all_with(client.clone(), resource),
     };
-    watcher(api, watcher::Config::default()).default_backoff()
+    watcher(api, watcher::Config::default())
 }
 
 /// Whether a watch failed because RBAC denies list/watch (HTTP 403).
@@ -103,6 +127,7 @@ where
                 return;
             }
         };
+        let mut retry = Retry::new();
         loop {
             let events = stream(&client);
             futures::pin_mut!(events);
@@ -113,9 +138,13 @@ where
                     tracing::warn!(cluster = %cluster, error = %error, "{label} watch failed");
                     ClusterError::from(error)
                 });
-                if let Err(error) = &event {
-                    failed = true;
-                    forbidden = error.is_forbidden();
+                match &event {
+                    Err(error) => {
+                        failed = true;
+                        forbidden = error.is_forbidden();
+                    }
+                    Ok(watcher::Event::InitDone) => retry.reset(),
+                    Ok(_) => {}
                 }
                 if sender.send(event).await.is_err() {
                     return;
@@ -133,7 +162,7 @@ where
                 return;
             }
             tracing::info!(cluster = %cluster, "restarting {label} watch");
-            tokio::time::sleep(if forbidden { FORBIDDEN_RETRY } else { RETRY }).await;
+            tokio::time::sleep(retry.delay(forbidden)).await;
         }
     };
     (receiver, task)

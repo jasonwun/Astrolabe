@@ -53,8 +53,8 @@ pub struct ManagerConflict {
 pub enum ApplyError {
     /// 422: per-field validation causes.
     Validation(Vec<FieldCause>),
-    /// 409: SSA conflicts; force-apply is meaningful. `None` managers when
-    /// the message failed to parse (fall back to showing the raw message).
+    /// 409: SSA conflicts, one entry per conflicting manager; force-apply
+    /// is meaningful. Empty when the message failed to parse.
     Conflict(Vec<ManagerConflict>),
     /// Unmappable: 403, admission webhooks, network, unparsable payloads.
     Global { message: String },

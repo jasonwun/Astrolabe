@@ -124,10 +124,7 @@ pub fn open(
                 applied.borrow_mut().push(mode);
                 Ok(match mode {
                     ApplyMode::Normal => conflict_report(snapshot),
-                    ApplyMode::Force => ApplyReport {
-                        outcomes: vec![outcome(Ok(()))],
-                        ok: true,
-                    },
+                    ApplyMode::Force => ApplyReport::new(vec![outcome(Ok(()))]),
                 })
             }
         })
@@ -245,10 +242,7 @@ pub fn global_report(docs: &[&str]) -> ApplyReport {
             }),
         })
         .collect();
-    ApplyReport {
-        outcomes,
-        ok: false,
-    }
+    ApplyReport::new(outcomes)
 }
 
 /// What a plain Apply answers: `kubectl` owns `metadata.name` (409).

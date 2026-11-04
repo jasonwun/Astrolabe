@@ -308,7 +308,7 @@ impl YamlEditorView {
             let current = self.state.read(cx).value().to_string();
             report.remap(&current);
         }
-        if report.ok {
+        if report.ok() {
             self.status_line = "applied".to_string();
             cx.notify();
             return;

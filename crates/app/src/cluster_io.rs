@@ -166,10 +166,7 @@ impl ScriptedCluster {
 
 /// A report with no document in it and nothing wrong.
 fn clean_report() -> ApplyReport {
-    ApplyReport {
-        outcomes: Vec::new(),
-        ok: true,
-    }
+    ApplyReport::new(Vec::new())
 }
 
 pub(crate) enum ClusterIo {
