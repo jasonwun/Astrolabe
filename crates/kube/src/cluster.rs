@@ -207,19 +207,27 @@ impl std::fmt::Display for ClusterId {
     }
 }
 
-/// The Cluster's client, connected once and shared by every request.
+/// One connect attempt, shared by every request that waits on it.
 type SharedClient = Shared<BoxFuture<'static, Result<Client, ClusterError>>>;
+
+/// Starts a connect attempt, at once.
+type Connector = Box<dyn Fn() -> SharedClient + Send + Sync>;
 
 /// The live handle to one Cluster.
 ///
 /// Connecting is lazy and shared: building the handle never blocks, every
 /// request waits on the same connect, and a connect failure fails each
-/// request with a [`Connect`](ClusterErrorKind::Connect) error. Dropping
-/// the handle stops its watches.
+/// request waiting on it with a [`Connect`](ClusterErrorKind::Connect)
+/// error. A failed connect is not kept: the next request, or
+/// [`reconnect`](Self::reconnect), connects again, while a successful one
+/// stays the one client of the handle. Dropping the handle stops its
+/// watches.
 pub struct Cluster {
     /// Which Cluster, for logs.
     id: ClusterId,
-    client: SharedClient,
+    /// The latest connect attempt; replaced once it has failed.
+    client: Mutex<SharedClient>,
+    connector: Connector,
     /// The namespace the context names, `"default"` when it names none.
     default_namespace: String,
     /// Where requests run: the cluster runtime, or the caller's for
@@ -237,29 +245,67 @@ impl Cluster {
     ///
     /// When the cluster runtime cannot be created on first use.
     pub fn connect(cluster: &ClusterId) -> Self {
-        // One copy moves into the connect task, one stays for logs.
         let id = cluster.clone();
-        let cluster = cluster.clone();
         let runtime = runtime().handle().clone();
         let default_namespace = crate::client::default_namespace_for(&id);
-        // A credential plugin's first run blocks inside config loading, so
-        // the connect runs on the cluster runtime, never the caller's thread.
-        let client = spawn(
-            &runtime,
-            async move {
-                crate::client::client_for(&cluster)
-                    .await
-                    .map_err(|error| ClusterError::connect(error.to_string()))
-            },
-            ClusterError::connect("cluster connect task panicked"),
-        );
+        let connector = {
+            let cluster = cluster.clone();
+            let runtime = runtime.clone();
+            move || {
+                let cluster = cluster.clone();
+                // A credential plugin's first run blocks inside config
+                // loading, so the connect runs on the cluster runtime,
+                // never the caller's thread.
+                spawn(
+                    &runtime,
+                    async move {
+                        crate::client::client_for(&cluster)
+                            .await
+                            .map_err(|error| ClusterError::connect(error.to_string()))
+                    },
+                    ClusterError::connect("cluster connect task panicked"),
+                )
+                .boxed()
+                .shared()
+            }
+        };
+        Self::with_connector(id, default_namespace, runtime, Box::new(connector))
+    }
+
+    /// A handle whose connect attempts `connector` starts: the first one
+    /// now.
+    fn with_connector(
+        id: ClusterId,
+        default_namespace: String,
+        runtime: Handle,
+        connector: Connector,
+    ) -> Self {
         Self {
             id,
-            client: client.boxed().shared(),
+            client: Mutex::new(connector()),
+            connector,
             default_namespace,
             runtime,
             watches: Mutex::default(),
         }
+    }
+
+    /// The client of the latest connect attempt. An attempt that failed is
+    /// not kept: a new one starts and every later request shares it.
+    fn client(&self) -> SharedClient {
+        let mut client = self.client.lock().unwrap_or_else(PoisonError::into_inner);
+        if matches!(client.peek(), Some(Err(_))) {
+            *client = (self.connector)();
+        }
+        client.clone()
+    }
+
+    /// Connect again if the last connect failed, started at once. Without
+    /// a failed connect it changes nothing: a connect in flight or done is
+    /// kept. Watches that ended on the failure do not come back by
+    /// themselves; the caller starts them again.
+    pub fn reconnect(&self) {
+        drop(self.client());
     }
 
     /// A handle to `id` over an already built `client`, such as a
@@ -272,13 +318,10 @@ impl Cluster {
     /// Outside a tokio runtime, when the cluster runtime cannot be created
     /// on first use.
     pub fn from_client(client: Client, id: ClusterId) -> Self {
-        Self {
-            id,
-            default_namespace: client.default_namespace().to_owned(),
-            client: futures::future::ready(Ok(client)).boxed().shared(),
-            runtime: Handle::try_current().unwrap_or_else(|_| runtime().handle().clone()),
-            watches: Mutex::default(),
-        }
+        let default_namespace = client.default_namespace().to_owned();
+        let runtime = Handle::try_current().unwrap_or_else(|_| runtime().handle().clone());
+        let connector = move || futures::future::ready(Ok(client.clone())).boxed().shared();
+        Self::with_connector(id, default_namespace, runtime, Box::new(connector))
     }
 
     /// The namespace the context names, `"default"` when it names none:
@@ -306,7 +349,7 @@ impl Cluster {
     pub fn discover(
         &self,
     ) -> impl Future<Output = Result<ServedResources, ClusterError>> + Send + 'static {
-        let client = self.client.clone();
+        let client = self.client();
         spawn(
             &self.runtime,
             async move { Ok(discovery::discover(&client.await?).await?) },
@@ -331,7 +374,7 @@ impl Cluster {
         &self,
         operation: &Operation,
     ) -> impl Future<Output = Result<(), ClusterError>> + Send + 'static {
-        let client = self.client.clone();
+        let client = self.client();
         let operation = operation.clone();
         spawn(
             &self.runtime,
@@ -424,7 +467,7 @@ impl Cluster {
     where
         F: Future<Output = Result<ApplyReport, apply::PayloadError>> + Send + 'static,
     {
-        let client = self.client.clone();
+        let client = self.client();
         let snapshot = snapshot.to_owned();
         spawn(
             &self.runtime,
@@ -456,7 +499,7 @@ impl Cluster {
     /// request's task panicked.
     pub fn logs(&self, request: LogRequest) -> LogStream {
         let (sender, chunks) = mpsc::unbounded();
-        let client = self.client.clone();
+        let client = self.client();
         let work = self.runtime.spawn(async move {
             let stream = async {
                 let pod = &request.pod;
@@ -506,7 +549,7 @@ impl Cluster {
     pub fn exec(&self, request: ExecRequest) -> ExecSession {
         let (input, inputs) = mpsc::unbounded();
         let (sender, output) = mpsc::unbounded();
-        let client = self.client.clone();
+        let client = self.client();
         let work = self.runtime.spawn(async move {
             let exit = async {
                 let pod = &request.pod;
@@ -560,7 +603,7 @@ impl Cluster {
     /// The forward just ends when the request's task panicked.
     pub fn port_forward(&self, request: ForwardRequest) -> PortForward {
         let (sender, events) = mpsc::unbounded();
-        let client = self.client.clone();
+        let client = self.client();
         let work = self.runtime.spawn(async move {
             let failed = |error: ClusterError| {
                 let _ = sender.unbounded_send(ForwardEvent::Failed(error));
@@ -652,7 +695,7 @@ impl Cluster {
         F: Fn(&Client) -> S + Send + 'static,
         S: futures::Stream<Item = Result<watcher::Event<K>, watcher::Error>> + Send,
     {
-        let (receiver, task) = watch::relist(self.id.clone(), label, self.client.clone(), stream);
+        let (receiver, task) = watch::relist(self.id.clone(), label, self.client(), stream);
         let task = self.runtime.spawn(task).abort_handle();
         let mut watches = self.watches.lock().unwrap_or_else(PoisonError::into_inner);
         watches.retain(|watch| !watch.is_finished());
@@ -670,5 +713,89 @@ impl Drop for Cluster {
         for watch in watches.drain(..) {
             watch.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// A client whose every request is a 404.
+    fn mock_client() -> Client {
+        let service = tower::service_fn(|_: http::Request<kube::client::Body>| {
+            std::future::ready(Ok::<_, std::convert::Infallible>(
+                http::Response::builder()
+                    .status(404)
+                    .body(kube::client::Body::empty())
+                    .unwrap(),
+            ))
+        });
+        Client::new(service, "default")
+    }
+
+    /// A handle whose first `failures` connects fail; the count of connect
+    /// attempts is returned beside it.
+    fn flaky(failures: usize) -> (Cluster, Arc<AtomicUsize>) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counted = attempts.clone();
+        let connector = move || {
+            let attempt = counted.fetch_add(1, Ordering::SeqCst);
+            let answer = if attempt < failures {
+                Err(ClusterError::connect("credential plugin not ready"))
+            } else {
+                Ok(mock_client())
+            };
+            futures::future::ready(answer).boxed().shared()
+        };
+        let cluster = Cluster::with_connector(
+            ClusterId::named("flaky"),
+            "default".to_owned(),
+            Handle::current(),
+            Box::new(connector),
+        );
+        (cluster, attempts)
+    }
+
+    #[tokio::test]
+    async fn a_failed_connect_is_not_kept() {
+        let (cluster, attempts) = flaky(1);
+
+        let first = cluster.discover().await.unwrap_err();
+        assert_eq!(first.kind(), ClusterErrorKind::Connect);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        // The next request connects again: the mock answers 404, which is
+        // no longer a connect failure.
+        let second = cluster.discover().await;
+        assert_ne!(
+            second.err().map(|error| error.kind()),
+            Some(ClusterErrorKind::Connect)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_successful_connect_is_shared() {
+        let (cluster, attempts) = flaky(0);
+
+        let _ = cluster.discover().await;
+        let _ = cluster.discover().await;
+        cluster.reconnect();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn reconnect_connects_again_after_a_failure() {
+        let (cluster, attempts) = flaky(1);
+        let _ = cluster.discover().await;
+
+        cluster.reconnect();
+        cluster.reconnect();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 }

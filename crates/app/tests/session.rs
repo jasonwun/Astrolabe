@@ -1,8 +1,9 @@
-use astrolabe::session::Session;
+use astrolabe::session::{ScriptedCluster, Session};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
+use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::session::{ConnectionHealth, ResourceKind};
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, TestAppContext};
@@ -145,5 +146,56 @@ fn session_coalesces_queued_events_into_one_notification(cx: &mut TestAppContext
     cx.read(|cx| {
         assert_eq!(names(session.read(cx)).len(), 10);
         assert_eq!(notifications.get(), 1);
+    });
+}
+
+#[gpui_kit::test]
+fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
+    let (mut namespaces, namespace_events) = mpsc::channel(32);
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let scripted = ScriptedCluster::new(namespace_events)
+        .watch(support::key(BuiltinKind::Pods, "default"), pod_events)
+        .connect_fails(ClusterError::new("kubelogin is not ready"));
+    let session = cx.update(|cx| {
+        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), "default", scripted, cx))
+    });
+    cx.update(|cx| {
+        session.update(cx, |session, cx| {
+            session.open_builtin_list(BuiltinKind::Pods, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let state = session.read(cx).state();
+        assert_eq!(state.health(), ConnectionHealth::Stale);
+        assert!(state.discovery_failure().is_some());
+        assert!(
+            state
+                .builtin_watch(BuiltinKind::Pods, "default")
+                .is_some_and(|watch| watch.status().health() == ConnectionHealth::Stale)
+        );
+    });
+
+    cx.update(|cx| session.update(cx, |session, cx| session.reconnect(cx)));
+    support::snapshot(&mut namespaces, vec![namespace("default")]);
+    support::snapshot(
+        &mut pods,
+        vec![support::object(serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": "web", "namespace": "default"},
+        }))],
+    );
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let state = session.read(cx).state();
+        assert_eq!(names(session.read(cx)), ["default"]);
+        assert_eq!(state.health(), ConnectionHealth::Healthy);
+        assert!(state.discovery_failure().is_none());
+        let watch = state.builtin_watch(BuiltinKind::Pods, "default").unwrap();
+        assert_eq!(watch.status().health(), ConnectionHealth::Healthy);
+        assert!(watch.get(Some("default"), "web").is_some());
     });
 }
