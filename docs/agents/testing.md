@@ -47,7 +47,9 @@ the bare value and wrap at the call sites (#164). `assert!(x.is_empty())`
 trips `assert_is_empty`: write `assert_eq!(x, [])`. A test helper that
 picks one `Command` variant with `_ => None` hides the next variant a
 ticket adds: list the other variants so the compiler asks for them
-(#165).
+(#165). Adding variants to `Command` can leave its
+`#[expect(clippy::large_enum_variant)]` unfulfilled, which `-D warnings`
+rejects: delete the `expect` when clippy says so (#166).
 
 ## Move-only refactors
 

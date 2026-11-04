@@ -79,6 +79,11 @@ first context in `default` instead, and a failed `dev/demo.sh apply` leaves
 `kind-astrolabe-dev` selected and `astrolabe-demo-<worktree>` as the
 namespace.
 
+A debug build takes a while to show its window after `cargo run` prints
+`Running`. Take `start` first and read it before the first click: #166's
+clicks, sent after a fixed sleep, landed on Namespaces instead of Pods and
+the run was redone.
+
 ## 3. Look and drive, via Orca computer use
 
 `orca computer` drives the window from the shell (the bundled guide:
@@ -240,6 +245,16 @@ Run it from the directory that holds the shots, so the path passed to
 while the body said `./shot.png`; the body kept the broken relative link
 and gained a second image line (cause unverified). Read the body back with
 `gh pr view --json body` and fix it before enabling auto-merge.
+
+From the shots' directory (outside the repo) `gh` finds no repository:
+push the branch first, then pass `-R jasonwun/Astrolabe --head <branch>
+--base main` (#166).
+
+A port-forward row: do not probe the local port with `nc` while checking
+Listening. The probe's connection fails against a container that listens
+on nothing, and the row's `Last connection failed: ...` text pushes Stop
+out of the window (#213). Read the state with `lsof -nP -iTCP:<port>
+-sTCP:LISTEN` instead (#166).
 
 ## 5. Clean up
 
