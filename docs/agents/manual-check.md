@@ -11,6 +11,10 @@ crate. It runs "A change that must leave the UI as it was" below on the
 launch view and one list. #148 (an empty crate and a lint table) first
 skipped the check as invisible, and the user asked for it.
 
+A test-only change counts too. #230 (a flaky test's assertion) skipped the
+check as "no UI change" and the user asked for it: drive the path the test
+covers (Pods > `multi` > Port Forward > Stop, then `lsof` on the port).
+
 A backend change counts when its output reaches a view: drive that view
 through the changed path. #172 (field-path parsing in `astrolabe-kube`)
 applied a Deployment with `image: ""` from the YAML editor and read the
@@ -49,6 +53,10 @@ A check on a stale base is redone once main's UI changes land (#75,
 git fetch origin main && git rebase origin/main
 git log --oneline HEAD..origin/main    # done when this prints nothing
 ```
+
+Each Bash call is a fresh shell: `export SCRATCH=...` is gone by the next
+call, and `> $SCRATCH/app.log` then fails on `/app.log`. Write the full
+scratchpad path in every command (#230).
 
 ## 1. Seed the cluster
 
