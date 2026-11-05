@@ -661,7 +661,7 @@ impl SessionState {
                 DetailTarget::Builtin { .. } => {
                     needed.extend(detail::watches(target).iter().map(|watch| {
                         self.builtin_watch_key(watch.kind, watch.namespace.as_deref())
-                    }))
+                    }));
                 }
                 DetailTarget::Custom { id, key } => needed.extend(
                     self.custom_kind(id)
