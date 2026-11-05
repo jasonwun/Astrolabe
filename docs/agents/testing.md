@@ -315,7 +315,15 @@ events: the crate has no `tracing-subscriber` dev-dependency and
 in the test with an `AtomicUsize` and run the call under
 `tracing::subscriber::with_default`; assert zero events when the
 condition is false and one when it is true (`events_logged_by` in
-`crates/model/tests/watched.rs`).
+`crates/model/tests/watched_logging.rs`). Put that test in a binary of its
+own: `with_default` is thread-scoped, so a sibling reaching the same callsite
+races it ("Tests that assert log lines" in `CODING_STANDARDS.md`).
+
+Origin: this section sent #232's test to `watched.rs`, next to tests that log
+the same line. It failed about 1 run in 6 under parallel tests until #285
+moved it out. The proof was the binary run directly 1000 times with 0
+failures, as the brief asked, not a handful of `cargo test` reruns (#285
+retro).
 
 Origin: #232 pushed without the command above. CI's `mutants` job missed
 `!=` to `==` in `Watched::set_status`'s log guard, which only the app's
