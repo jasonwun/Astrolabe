@@ -84,12 +84,14 @@ impl ResourceDetailPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let needed = watches(&target);
+        // Open first: the state then counts the target's watches as needed
+        // while it starts them, and never evicts one for another.
         session.update(cx, |session, cx| {
+            session.open_detail(target.clone(), cx);
             for watch in &needed {
                 session.watch_builtin(watch.kind, watch.namespace.as_deref(), cx);
             }
         });
-        session.update(cx, |session, cx| session.open_detail(target.clone(), cx));
         cx.observe(&session, |_, _, cx| cx.notify()).detach();
         let closing = session.clone();
         cx.on_release(move |panel, cx| {
