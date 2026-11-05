@@ -60,6 +60,10 @@ same: a custom kind's version switch is over before a capture, and a dead
 server cannot open a detail. The screenshots showed a Deployment detail with
 Related Pods and the "no longer exists" text after a `kubectl delete`; the
 model tests drove loading, failed and the version switch (#275 retro).
+#277 (watches and Discovery retry a failed connect) is the same: kind never
+fails its connect, so the screenshots showed Namespaces, Pods and a custom
+kind listing after Discovery, and the kube, model and Session tests drove
+the failure and the recovery (#277 retro).
 
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.

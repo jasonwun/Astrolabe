@@ -387,12 +387,27 @@ the same answer appearing on the path that keeps it; without that control
 it passes whether or not the guard works. Kill the guard's mutant with the
 test, not only the full suite.
 
+A counter that supersedes a pending timer (`generation += 1`) needs a test
+where two timers from successive bumps exist and the older one must fire
+nothing: assert the generations strictly increase, and that the old one's
+`debounce_elapsed` is empty after the newer bump. A test that only checks
+the old timer is dropped passes under `+=` -> `-=` and `+=` -> `*=` (#277:
+both went MISSED until it asserted that).
+
 Origin: #161's stale-Precheck test passed under the `+=` → `*=` mutant of
 `session_version`: the scripted report noted a field the buffer did not
 hold, so no note ever appeared. Typing `spec.bogus` and asserting the note
 while the first Cluster is still selected made it fail (#161 retro).
 
 ## Watch tests on a mock client (paused clock)
+
+A test of connect retries built on a connector that answers at once is
+order-dependent: the poller that `Connection::attempt` spawns may finish an
+attempt before a watch asks, so the watch starts a new one and the attempt
+count shifts by one (#277's first drafts failed on it). To show that two
+watches share one attempt, give the connector a delay on the paused clock
+(`slow_flaky` in `crates/kube/src/cluster.rs`) so both wait on the same
+in-flight attempt, and count attempts after both answer.
 
 Relist and the 403 backoff are tested in the cluster layer, through
 `Cluster::watch_*` over a mock `kube::Client` — reference implementation:
