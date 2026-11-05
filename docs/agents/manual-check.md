@@ -88,6 +88,22 @@ kind delete cluster --name legacy-<issue>
 Origin: #190 rewrote the per-group path. The `kind-astrolabe-dev`
 screenshots alone would have shown only the aggregated path (#190 retro).
 
+A state the cluster cannot produce on its own, "cannot be reached" (#276),
+needs a kubeconfig copy whose server is a dead port, and no
+`ASTROLABE_NAMESPACE` (the app cannot list namespaces without a server):
+
+```sh
+kubectl config view --raw --minify --context kind-astrolabe-dev \
+    | sed -E 's#(server: https://[^:]+):[0-9]+#\1:1#' > "$SCRATCH/dead.kubeconfig"
+KUBECONFIG="$SCRATCH/dead.kubeconfig" ASTROLABE_CLUSTER=kind-astrolabe-dev cargo run -p astrolabe
+```
+
+Each list then shows its error and the workspace banner appears, which
+pushes the sidebar down about 45pt: capture before the first click and read
+the new coordinates off it. A live list with no objects needs a namespace
+with none of the kind, such as `kube-public`'s Pods; the demo namespace
+has every kind.
+
 Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the
 change adds (populated, empty, forbidden), each screenshot has been read
