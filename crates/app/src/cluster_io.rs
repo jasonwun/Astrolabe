@@ -5,7 +5,9 @@
 //! enum, not a trait: this crate knows every adapter and no other crate
 //! adds one (docs/adr/0002).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
 use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterId};
@@ -19,7 +21,9 @@ use astrolabe_kube::pod::{
     ExecInput, ExecOutput, ExecRequest, ExecSession, ForwardEvent, ForwardRequest, LogChunk,
     LogRequest, LogStream, PortForward,
 };
-use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage, Watch};
+use astrolabe_kube::watch::{
+    CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage, Watch, WatchMessage,
+};
 use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, channel::mpsc};
 
@@ -50,7 +54,22 @@ pub struct ScriptedCluster {
     exec: ExecFn,
     port_forward: ForwardFn,
     /// Set while the scripted connect fails; a reconnect clears it.
-    connect_failure: Option<ClusterError>,
+    connect_failure: Rc<RefCell<Option<ClusterError>>>,
+    /// Whether a failed connect leaves the watches open, so that they
+    /// deliver their events once it is cleared, as a live Cluster's do.
+    recovers: bool,
+}
+
+/// Clears the connect failure of a [`ScriptedCluster`] that recovers, as a
+/// live Cluster's does once kubelogin is ready.
+#[derive(Clone)]
+pub struct ConnectRecovery(Rc<RefCell<Option<ClusterError>>>);
+
+impl ConnectRecovery {
+    /// The connect works from now on.
+    pub fn recover(&self) {
+        self.0.borrow_mut().take();
+    }
 }
 
 impl ScriptedCluster {
@@ -68,17 +87,34 @@ impl ScriptedCluster {
             logs: Box::new(|_| Vec::new()),
             exec: Box::new(|_, _| Vec::new()),
             port_forward: Box::new(|_| Vec::new()),
-            connect_failure: None,
+            connect_failure: Rc::default(),
+            recovers: false,
         }
     }
 
     /// The watch of a failed connect: the error, then the end. `None` when
     /// the connect does not fail.
     fn failed_watch<K>(&self) -> Option<Watch<K>> {
-        let error = self.connect_failure.clone()?;
+        let error = self.connect_failure.borrow().clone()?;
         let (mut sender, receiver) = mpsc::channel(1);
         let _ = sender.try_send(Err(error));
         Some(Watch::new(receiver))
+    }
+
+    /// The watch reading `events`. While a recovering connect fails, it
+    /// reports the error first and stays open.
+    fn scripted_watch<K>(
+        &self,
+        events: Option<mpsc::Receiver<WatchMessage<K>>>,
+    ) -> Option<Watch<K>> {
+        let events = events?;
+        let failure = self.connect_failure.borrow().clone();
+        Some(Watch::with_prelude(failure.map(Err), events))
+    }
+
+    /// Whether the connect fails and its watches end on it.
+    fn watches_fail(&self) -> bool {
+        !self.recovers && self.connect_failure.borrow().is_some()
     }
 
     /// The first connect fails with `error`, as a live one does when
@@ -87,8 +123,21 @@ impl ScriptedCluster {
     /// with it. The scripted watches stay unused until a reconnect, which
     /// connects.
     pub fn connect_fails(mut self, error: ClusterError) -> Self {
-        self.connect_failure = Some(error);
+        *self.connect_failure.borrow_mut() = Some(error);
+        self.recovers = false;
         self
+    }
+
+    /// The first connect fails with `error` and recovers by itself, as a
+    /// live one does once kubelogin is ready: each watch delivers the
+    /// error, stays open, and delivers its scripted events; Discovery
+    /// answers with the error. Nothing calls `reconnect`: the returned
+    /// handle ends the failure.
+    pub fn connect_fails_until_recovered(mut self, error: ClusterError) -> (Self, ConnectRecovery) {
+        *self.connect_failure.borrow_mut() = Some(error);
+        self.recovers = true;
+        let recovery = ConnectRecovery(self.connect_failure.clone());
+        (self, recovery)
     }
 
     pub fn crds(mut self, crds: mpsc::Receiver<CrdWatchMessage>) -> Self {
@@ -194,7 +243,9 @@ impl ClusterIo {
     /// new attempt, a scripted one stops failing.
     pub(crate) fn reconnect(&mut self) {
         match self {
-            Self::Scripted(cluster) => cluster.connect_failure = None,
+            Self::Scripted(cluster) => {
+                cluster.connect_failure.borrow_mut().take();
+            }
             Self::Live(cluster) => cluster.reconnect(),
         }
     }
@@ -203,8 +254,11 @@ impl ClusterIo {
     /// its connect does not fail.
     pub(crate) fn watch_namespaces(&mut self) -> Option<Watch<Namespace>> {
         match self {
-            Self::Scripted(cluster) if cluster.connect_failure.is_some() => cluster.failed_watch(),
-            Self::Scripted(cluster) => cluster.namespaces.take().map(Watch::new),
+            Self::Scripted(cluster) if cluster.watches_fail() => cluster.failed_watch(),
+            Self::Scripted(cluster) => {
+                let events = cluster.namespaces.take();
+                cluster.scripted_watch(events)
+            }
             Self::Live(cluster) => Some(cluster.watch_namespaces()),
         }
     }
@@ -213,8 +267,11 @@ impl ClusterIo {
     /// connect does not fail.
     pub(crate) fn watch_crds(&mut self) -> Option<Watch<CustomResourceDefinition>> {
         match self {
-            Self::Scripted(cluster) if cluster.connect_failure.is_some() => cluster.failed_watch(),
-            Self::Scripted(cluster) => cluster.crds.take().map(Watch::new),
+            Self::Scripted(cluster) if cluster.watches_fail() => cluster.failed_watch(),
+            Self::Scripted(cluster) => {
+                let events = cluster.crds.take();
+                cluster.scripted_watch(events)
+            }
             Self::Live(cluster) => Some(cluster.watch_crds()),
         }
     }
@@ -227,8 +284,11 @@ impl ClusterIo {
         resource: &ApiResource,
     ) -> Option<Watch<DynamicObject>> {
         match self {
-            Self::Scripted(cluster) if cluster.connect_failure.is_some() => cluster.failed_watch(),
-            Self::Scripted(cluster) => cluster.watches.remove(key).map(Watch::new),
+            Self::Scripted(cluster) if cluster.watches_fail() => cluster.failed_watch(),
+            Self::Scripted(cluster) => {
+                let events = cluster.watches.remove(key);
+                cluster.scripted_watch(events)
+            }
             Self::Live(cluster) => Some(cluster.watch_objects(resource, key.namespace.as_deref())),
         }
     }
@@ -236,11 +296,13 @@ impl ClusterIo {
     /// API discovery; a scripted cluster's answer is ready at once.
     pub(crate) fn discover(&mut self) -> BoxFuture<'static, Result<ServedResources, ClusterError>> {
         match self {
-            Self::Scripted(cluster) => future::ready(match cluster.connect_failure.clone() {
-                Some(error) => Err(error),
-                None => (cluster.discover)(),
-            })
-            .boxed(),
+            Self::Scripted(cluster) => {
+                future::ready(match cluster.connect_failure.borrow().clone() {
+                    Some(error) => Err(error),
+                    None => (cluster.discover)(),
+                })
+                .boxed()
+            }
             Self::Live(cluster) => cluster.discover().boxed(),
         }
     }

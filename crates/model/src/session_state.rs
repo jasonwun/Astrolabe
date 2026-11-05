@@ -5,15 +5,18 @@
 //! nothing about them.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
-use astrolabe_kube::cluster::{ClusterError, ClusterId};
+use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
-use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage};
+use astrolabe_kube::watch::{
+    CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage, RETRY, RETRY_CAP,
+};
 
 use crate::builtin::BuiltinKind;
 use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
@@ -41,6 +44,10 @@ pub enum Command {
     /// Start the debounce timer of `generation` (a Definition changed);
     /// when it elapses, call `SessionState::debounce_elapsed` with it.
     ScheduleDiscovery { generation: u64 },
+    /// Start the timer of `generation` for a failed Discovery run: after
+    /// `delay`, call `SessionState::debounce_elapsed` with it, as for a
+    /// scheduled one.
+    RetryDiscovery { generation: u64, delay: Duration },
     /// Run Discovery as `run`, and hand its answer to
     /// `SessionState::discovery_finished` under that number.
     RunDiscovery { run: u64 },
@@ -123,6 +130,10 @@ pub struct SessionState {
     generation: u64,
     /// Bumped by every Discovery run; only the newest run's answer is kept.
     runs: u64,
+    /// The newest run that has answered; below `runs` while one is in flight.
+    answered: u64,
+    /// Newest runs in a row that failed, for the retry's backoff.
+    discovery_failures: u32,
     /// The Forward list, in the order the forwards started.
     forwards: Vec<ActiveForward>,
 }
@@ -150,15 +161,25 @@ impl SessionState {
             catalog: Vec::new(),
             generation: 0,
             runs: 0,
+            answered: 0,
+            discovery_failures: 0,
             forwards: Vec::new(),
         }
     }
 
     // Inputs
 
-    /// A message of the Namespaces watch.
-    pub fn namespaces_message(&mut self, message: NamespaceWatchMessage) -> SnapshotChange {
-        self.namespaces.apply(message)
+    /// A message of the Namespaces watch. Its first event after Discovery
+    /// failed to connect runs Discovery at once, as the Definitions
+    /// watch's does: one of them still delivers when RBAC refuses the
+    /// other.
+    pub fn namespaces_message(
+        &mut self,
+        message: NamespaceWatchMessage,
+    ) -> (SnapshotChange, Vec<Command>) {
+        let reached = message.is_ok() && self.discovery_failed_to_connect();
+        let change = self.namespaces.apply(message);
+        (change, self.rediscover_if(reached).into_iter().collect())
     }
 
     /// The Namespaces watch ended: its snapshot stays, flagged Stale.
@@ -168,7 +189,11 @@ impl SessionState {
 
     /// A message of the Definitions watch: the Catalog follows it, and a
     /// change that Discovery may not have seen schedules a rediscovery.
+    /// Its first event after Discovery failed to connect runs Discovery at
+    /// once: the Cluster can be reached now, so the retry's backoff need
+    /// not run out.
     pub fn crds_message(&mut self, message: CrdWatchMessage) -> Vec<Command> {
+        let reached = message.is_ok() && self.discovery_failed_to_connect();
         let change = self.crds.apply(message);
         let mut commands = self.rebuild_catalog();
         // Connect-time Discovery races the first Definition list: a
@@ -183,7 +208,9 @@ impl SessionState {
             });
         // A relist after a disconnect may hide missed changes; the first
         // snapshot does not, connect-time Discovery covers it.
-        if change == SnapshotChange::Changed || unresolved {
+        if let Some(run) = self.rediscover_if(reached) {
+            commands.push(run);
+        } else if change == SnapshotChange::Changed || unresolved {
             self.generation += 1;
             commands.push(Command::ScheduleDiscovery {
                 generation: self.generation,
@@ -259,7 +286,10 @@ impl SessionState {
     }
 
     /// Discovery run `run` answered. A newer run in flight or done wins, so
-    /// an older answer changes nothing; a failure keeps the last result.
+    /// an older answer changes nothing. A failure keeps the last result and
+    /// is retried after a growing wait (a watch's relist schedule:
+    /// [`RETRY`] doubling up to [`RETRY_CAP`]), until
+    /// a run succeeds; a Definition change meanwhile supersedes the retry.
     pub fn discovery_finished(
         &mut self,
         run: u64,
@@ -268,11 +298,19 @@ impl SessionState {
         if run != self.runs {
             return Vec::new();
         }
+        self.answered = run;
+        let failed = result.is_err();
         if let Err(error) = &result {
             tracing::warn!(cluster = %self.cluster(), error = %error, "discovery failed");
         }
         self.discovery.record(result);
-        self.rebuild_catalog()
+        let mut commands = self.rebuild_catalog();
+        if failed {
+            commands.push(self.retry_discovery());
+        } else {
+            self.discovery_failures = 0;
+        }
+        commands
     }
 
     /// Enter a built-in kind's list: its watch for the current namespace
@@ -562,6 +600,39 @@ impl SessionState {
         self.forwards
             .iter()
             .position(|forward| forward.request == *request)
+    }
+
+    /// The latest run failed because the client could not be built, and no
+    /// newer run is in flight.
+    fn discovery_failed_to_connect(&self) -> bool {
+        self.answered == self.runs
+            && self
+                .discovery
+                .failure()
+                .is_some_and(|error| error.kind() == ClusterErrorKind::Connect)
+    }
+
+    /// Run Discovery now when `reached`: the run covers any pending timer,
+    /// which it supersedes.
+    fn rediscover_if(&mut self, reached: bool) -> Option<Command> {
+        if !reached {
+            return None;
+        }
+        self.generation += 1;
+        Some(self.start_run())
+    }
+
+    /// The timer for the next try of a failed run: a newer generation, so
+    /// any earlier timer is superseded.
+    fn retry_discovery(&mut self) -> Command {
+        // Past 2^5 the cap rules; the clamp only keeps the shift in range.
+        let doublings = self.discovery_failures.min(8);
+        self.discovery_failures = self.discovery_failures.saturating_add(1);
+        self.generation += 1;
+        Command::RetryDiscovery {
+            generation: self.generation,
+            delay: RETRY.saturating_mul(1 << doublings).min(RETRY_CAP),
+        }
     }
 
     fn start_run(&mut self) -> Command {

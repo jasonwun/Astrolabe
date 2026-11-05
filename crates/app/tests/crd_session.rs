@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use astrolabe::session::{DEFAULT_NAMESPACE, ScriptedCluster, Session};
+use astrolabe::session::{ConnectRecovery, DEFAULT_NAMESPACE, ScriptedCluster, Session};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
@@ -352,4 +352,139 @@ fn an_evicted_watch_is_stopped_and_starts_again_when_asked(cx: &mut TestAppConte
         assert!(state.object_watch(&pod_key("ns0")).is_some());
     });
     senders.clear();
+}
+
+/// A scripted Cluster whose connect fails until the returned handle recovers
+/// it: every watch reports the error and stays open, Discovery answers with
+/// it, and nothing calls `reconnect`.
+struct Recovering {
+    session: Entity<Session>,
+    recovery: ConnectRecovery,
+    namespaces: mpsc::Sender<Result<Event<Namespace>, ClusterError>>,
+    crds: mpsc::Sender<Result<Event<CustomResourceDefinition>, ClusterError>>,
+    pods: mpsc::Sender<ObjectWatchMessage>,
+    crontabs: mpsc::Sender<ObjectWatchMessage>,
+    discoveries: Rc<Cell<usize>>,
+}
+
+fn recovering(cx: &mut TestAppContext) -> Recovering {
+    let (namespaces, namespace_events) = mpsc::channel(32);
+    let (crds, crd_events) = mpsc::channel(32);
+    let (pods, pod_events) = mpsc::channel(32);
+    let (crontabs, crontab_events) = mpsc::channel(32);
+    let discoveries = Rc::new(Cell::new(0));
+    let (cluster, recovery) = ScriptedCluster::new(namespace_events)
+        .crds(crd_events)
+        .watch(
+            WatchKey {
+                cluster: ClusterId::named("kind-a"),
+                kind: ResourceKind::Builtin(BuiltinKind::Pods),
+                namespace: Some(DEFAULT_NAMESPACE.to_string()),
+            },
+            pod_events,
+        )
+        .watch(
+            custom_key(Some(DEFAULT_NAMESPACE), "CronTab"),
+            crontab_events,
+        )
+        .discover({
+            let discoveries = discoveries.clone();
+            move || {
+                discoveries.set(discoveries.get() + 1);
+                Ok(ServedResources::new([served(
+                    "stable.example.com",
+                    "CronTab",
+                    true,
+                )]))
+            }
+        })
+        .connect_fails_until_recovered(ClusterError::connect("kubelogin is not ready"));
+    let session = cx.update(|cx| {
+        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), DEFAULT_NAMESPACE, cluster, cx))
+    });
+    Recovering {
+        session,
+        recovery,
+        namespaces,
+        crds,
+        pods,
+        crontabs,
+        discoveries,
+    }
+}
+
+/// The rules live in `SessionState` and the retry in `Cluster`; this pins
+/// that a Session whose first connect failed brings back its built-in list,
+/// its custom-kind list and the stale-discovery banner without a call to
+/// `reconnect` (#277).
+#[gpui_kit::test]
+fn a_session_recovers_by_itself_from_a_failed_first_connect(cx: &mut TestAppContext) {
+    let mut h = recovering(cx);
+    cx.update(|cx| {
+        h.session.update(cx, |session, cx| {
+            session.open_builtin_list(BuiltinKind::Pods, cx);
+        });
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let state = h.session.read(cx).state();
+        assert_eq!(state.health(), ConnectionHealth::Stale);
+        assert!(state.show_stale_warning());
+        assert!(state.discovery_failure().is_some());
+    });
+
+    // The connect works from now on; the watches' next events arrive.
+    h.recovery.recover();
+    snapshot(&mut h.namespaces, vec![Namespace::default()]);
+    snapshot(
+        &mut h.crds,
+        vec![crd("stable.example.com", "CronTab", "Namespaced")],
+    );
+    snapshot(&mut h.pods, Vec::new());
+    cx.run_until_parked();
+
+    let key = cx
+        .update(|cx| {
+            h.session.update(cx, |session, cx| {
+                session.open_custom_list(&crontab_id(), cx)
+            })
+        })
+        .expect("the CronTab kind is served once Discovery ran again");
+    snapshot(&mut h.crontabs, vec![object(Some("default"), "nightly")]);
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let state = h.session.read(cx).state();
+        assert!(!state.show_stale_warning());
+        assert!(state.discovery_failure().is_none());
+        assert_eq!(state.health(), ConnectionHealth::Healthy);
+        let pods = state
+            .builtin_watch(BuiltinKind::Pods, Some(DEFAULT_NAMESPACE))
+            .unwrap();
+        assert_eq!(pods.status().health(), ConnectionHealth::Healthy);
+        let crontabs = state.object_watch(&key).unwrap();
+        assert!(crontabs.get(Some("default"), "nightly").is_some());
+    });
+}
+
+/// With no Definition event to trigger it, the failed run retries on its
+/// own timer.
+#[gpui_kit::test]
+fn a_failed_discovery_retries_on_a_timer_with_no_user_action(cx: &mut TestAppContext) {
+    let h = recovering(cx);
+    cx.run_until_parked();
+    let failed = |cx: &TestAppContext| {
+        cx.read(|cx| h.session.read(cx).state().discovery_failure().is_some())
+    };
+    assert!(failed(cx));
+
+    h.recovery.recover();
+    cx.executor().advance_clock(Duration::from_millis(999));
+    cx.run_until_parked();
+    assert!(failed(cx), "the first retry waits a second");
+    cx.executor().advance_clock(Duration::from_millis(1));
+    cx.run_until_parked();
+
+    assert!(!failed(cx));
+    assert_eq!(h.discoveries.get(), 1);
 }

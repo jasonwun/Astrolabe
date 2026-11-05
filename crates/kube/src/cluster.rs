@@ -298,21 +298,60 @@ type SharedClient = Shared<BoxFuture<'static, Result<Client, ClusterError>>>;
 /// Starts a connect attempt, at once.
 type Connector = Box<dyn Fn() -> SharedClient + Send + Sync>;
 
+/// The connect attempts of one Cluster: the latest one, and how to start
+/// the next. Shared by the handle and its watches, so a watch retrying
+/// after a failed connect joins the attempt a request started.
+struct Connection {
+    /// The latest connect attempt; replaced once it has failed.
+    client: Mutex<SharedClient>,
+    connector: Connector,
+    runtime: Handle,
+}
+
+impl Connection {
+    /// Start connecting, with the first attempt now.
+    fn new(runtime: Handle, connector: Connector) -> Self {
+        Self {
+            client: Mutex::new(Self::attempt(&runtime, &connector)),
+            connector,
+            runtime,
+        }
+    }
+
+    /// Start a connect attempt, and poll it on `runtime` so its failure is
+    /// seen even when no request awaits it: [`Shared::peek`] answers only
+    /// once the attempt has been polled to its end.
+    fn attempt(runtime: &Handle, connector: &Connector) -> SharedClient {
+        let attempt = connector();
+        runtime.spawn(attempt.clone().map(drop));
+        attempt
+    }
+
+    /// The client of the latest connect attempt. An attempt that failed is
+    /// not kept: a new one starts and every later request shares it.
+    fn client(&self) -> SharedClient {
+        let mut client = self.client.lock().unwrap_or_else(PoisonError::into_inner);
+        if matches!(client.peek(), Some(Err(_))) {
+            *client = Self::attempt(&self.runtime, &self.connector);
+        }
+        client.clone()
+    }
+}
+
 /// The live handle to one Cluster.
 ///
 /// Connecting is lazy and shared: building the handle never blocks, every
 /// request waits on the same connect, and a connect failure fails each
 /// request waiting on it with a [`Connect`](ClusterErrorKind::Connect)
-/// error. A failed connect is not kept: the next request, or
-/// [`reconnect`](Self::reconnect), connects again, while a successful one
-/// stays the one client of the handle. A watch stops when its [`Watch`] is
+/// error. A failed connect is not kept: the next request, a watch retrying
+/// or [`reconnect`](Self::reconnect) connects again, while a successful
+/// one stays the one client of the handle. A watch stops when its [`Watch`] is
 /// dropped or when the handle is, whichever comes first.
 pub struct Cluster {
     /// Which Cluster, for logs.
     id: ClusterId,
-    /// The latest connect attempt; replaced once it has failed.
-    client: Mutex<SharedClient>,
-    connector: Connector,
+    /// The connect attempts, shared with the watches.
+    connection: Arc<Connection>,
     /// The namespace the context names, `"default"` when it names none.
     default_namespace: String,
     /// Where requests run: the cluster runtime, or the caller's for
@@ -368,40 +407,25 @@ impl Cluster {
         runtime: Handle,
         connector: Connector,
     ) -> Self {
-        let client = Self::attempt(&runtime, &connector);
         Self {
             id,
-            client: Mutex::new(client),
-            connector,
+            connection: Arc::new(Connection::new(runtime.clone(), connector)),
             default_namespace,
             runtime,
             stop: tokio::sync::watch::channel(()).0,
         }
     }
 
-    /// Start a connect attempt, and poll it on `runtime` so its failure is
-    /// seen even when no request awaits it: [`Shared::peek`] answers only
-    /// once the attempt has been polled to its end.
-    fn attempt(runtime: &Handle, connector: &Connector) -> SharedClient {
-        let attempt = connector();
-        runtime.spawn(attempt.clone().map(drop));
-        attempt
-    }
-
-    /// The client of the latest connect attempt. An attempt that failed is
-    /// not kept: a new one starts and every later request shares it.
+    /// The client of the latest connect attempt; see [`Connection::client`].
     fn client(&self) -> SharedClient {
-        let mut client = self.client.lock().unwrap_or_else(PoisonError::into_inner);
-        if matches!(client.peek(), Some(Err(_))) {
-            *client = Self::attempt(&self.runtime, &self.connector);
-        }
-        client.clone()
+        self.connection.client()
     }
 
     /// Connect again if the last connect failed, started at once. Without
     /// a failed connect it changes nothing: a connect in flight or done is
-    /// kept. Watches that ended on the failure do not come back by
-    /// themselves; the caller starts them again.
+    /// kept. Watches do not need it: they retry a failed connect on their
+    /// own. It starts the connect now, for a caller that cannot wait for
+    /// their backoff.
     pub fn reconnect(&self) {
         drop(self.client());
     }
@@ -792,8 +816,12 @@ impl Cluster {
     /// and is followed by a fresh LIST: 1 s later, then twice as long on
     /// each consecutive failure up to 30 s, starting over after a LIST
     /// completes; 30 s later after a
-    /// [`Forbidden`](ClusterErrorKind::Forbidden) one. A connect failure
-    /// arrives as the only message.
+    /// [`Forbidden`](ClusterErrorKind::Forbidden) one. A failed connect
+    /// arrives as a [`Connect`](ClusterErrorKind::Connect) `Err` too, and
+    /// the watch asks the handle for its client again after the same wait
+    /// (sharing the connect attempt with every other request), so its
+    /// events arrive once a connect succeeds, with no call to
+    /// [`reconnect`](Self::reconnect).
     pub fn watch_objects(
         &self,
         resource: &ApiResource,
@@ -813,7 +841,9 @@ impl Cluster {
         F: Fn(&Client) -> S + Send + 'static,
         S: futures::Stream<Item = Result<watcher::Event<K>, watcher::Error>> + Send,
     {
-        let (messages, task) = watch::relist(self.id.clone(), label, self.client(), stream);
+        let connection = self.connection.clone();
+        let (messages, task) =
+            watch::relist(self.id.clone(), label, move || connection.client(), stream);
         let mut stopped = self.stop.subscribe();
         let task = self.runtime.spawn(async move {
             // `changed` fails once the Cluster, the only sender, is gone.
@@ -842,6 +872,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+    use crate::watch::Watch;
 
     fn service_error(error: impl std::error::Error + Send + Sync + 'static) -> kube::Error {
         kube::Error::Service(Box::new(error))
@@ -888,32 +919,58 @@ mod tests {
         assert_eq!(error.to_string(), "web has no namespace");
     }
 
-    /// A client whose every request is a 404.
+    /// A client whose Namespace LIST answers `default`, whose WATCH stays
+    /// open and silent, and whose every other request is a 404.
     fn mock_client() -> Client {
-        let service = tower::service_fn(|_: http::Request<kube::client::Body>| {
-            std::future::ready(Ok::<_, std::convert::Infallible>(
-                http::Response::builder()
-                    .status(404)
-                    .body(kube::client::Body::empty())
-                    .unwrap(),
-            ))
+        let service = tower::service_fn(|request: http::Request<kube::client::Body>| {
+            let target = request.uri().to_string();
+            async move {
+                let response = if target.contains("watch=true") {
+                    return std::future::pending().await;
+                } else if target.contains("/api/v1/namespaces") {
+                    http::Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(kube::client::Body::from(NAMESPACE_LIST.as_bytes().to_vec()))
+                } else {
+                    http::Response::builder()
+                        .status(404)
+                        .body(kube::client::Body::empty())
+                };
+                Ok::<_, std::convert::Infallible>(response.unwrap())
+            }
         });
         Client::new(service, "default")
     }
 
+    /// Synthetic: a minimal shape, not captured from a server.
+    const NAMESPACE_LIST: &str = r#"{"apiVersion":"v1","kind":"NamespaceList","metadata":{"resourceVersion":"1"},"items":[{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"default"}}]}"#;
+
     /// A handle whose first `failures` connects fail; the count of connect
     /// attempts is returned beside it.
     fn flaky(failures: usize) -> (Cluster, Arc<AtomicUsize>) {
+        slow_flaky(failures, std::time::Duration::ZERO)
+    }
+
+    /// As [`flaky`], but each connect takes `delay` to answer, so
+    /// requests made meanwhile wait on the same attempt.
+    fn slow_flaky(failures: usize, delay: std::time::Duration) -> (Cluster, Arc<AtomicUsize>) {
         let attempts = Arc::new(AtomicUsize::new(0));
         let counted = attempts.clone();
         let connector = move || {
             let attempt = counted.fetch_add(1, Ordering::SeqCst);
-            let answer = if attempt < failures {
-                Err(ClusterError::connect("credential plugin not ready"))
-            } else {
-                Ok(mock_client())
-            };
-            futures::future::ready(answer).boxed().shared()
+            async move {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                if attempt < failures {
+                    Err(ClusterError::connect("credential plugin not ready"))
+                } else {
+                    Ok(mock_client())
+                }
+            }
+            .boxed()
+            .shared()
         };
         let cluster = Cluster::with_connector(
             ClusterId::named("flaky"),
@@ -971,6 +1028,71 @@ mod tests {
         cluster.reconnect();
         cluster.reconnect();
 
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    /// The next message of `watch`, and how long the paused clock took.
+    async fn next_after<K>(watch: &mut Watch<K>) -> (watch::WatchMessage<K>, std::time::Duration) {
+        let started = tokio::time::Instant::now();
+        let message = watch.next().await.expect("the watch ended");
+        (message, started.elapsed())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_watch_whose_connects_fail_delivers_events_once_one_succeeds() {
+        // The first attempt failed before the watch asked; the watch's own
+        // first ask starts the second, which fails too.
+        let (cluster, attempts) = flaky(2);
+        let mut watch = cluster.watch_namespaces();
+
+        let (error, _) = next_after(&mut watch).await;
+        assert_eq!(error.unwrap_err().kind(), ClusterErrorKind::Connect);
+
+        // Nobody called `reconnect`: the next attempt is the watch's, after
+        // the first backoff.
+        let (init, waited) = next_after(&mut watch).await;
+        assert!(matches!(init, Ok(watcher::Event::Init)));
+        assert_eq!(waited, std::time::Duration::from_secs(1));
+        let (applied, _) = next_after(&mut watch).await;
+        assert!(matches!(applied, Ok(watcher::Event::InitApply(_))));
+        let (done, _) = next_after(&mut watch).await;
+        assert!(matches!(done, Ok(watcher::Event::InitDone)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_retries_back_off_to_the_relist_cap() {
+        let (cluster, _) = flaky(usize::MAX);
+        let mut watch = cluster.watch_namespaces();
+
+        let (first, _) = next_after(&mut watch).await;
+        assert!(first.is_err());
+        let mut waits = Vec::new();
+        for _ in 0..8 {
+            let (message, waited) = next_after(&mut watch).await;
+            assert_eq!(message.unwrap_err().kind(), ClusterErrorKind::Connect);
+            waits.push(waited.as_secs());
+        }
+
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30, 30]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watches_retrying_after_one_failure_share_one_connect() {
+        let (cluster, attempts) = slow_flaky(1, std::time::Duration::from_millis(10));
+        let mut namespaces = cluster.watch_namespaces();
+        let mut crds = cluster.watch_crds();
+
+        // Both wait on the first attempt and report its failure.
+        assert!(next_after(&mut namespaces).await.0.is_err());
+        assert!(next_after(&mut crds).await.0.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        // Both wait out the same second, then ask again: one new attempt.
+        let (init, _) = next_after(&mut namespaces).await;
+        assert!(matches!(init, Ok(watcher::Event::Init)));
+        let (init, _) = next_after(&mut crds).await;
+        assert!(matches!(init, Ok(watcher::Event::Init)));
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 }

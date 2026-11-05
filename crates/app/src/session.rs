@@ -17,7 +17,7 @@ use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::ScriptedCluster;
+pub use crate::cluster_io::{ConnectRecovery, ScriptedCluster};
 use crate::perf;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
@@ -121,10 +121,7 @@ impl Session {
                     let drain = spawn_drain(
                         self.io.watch_namespaces(),
                         cx,
-                        |session, message| {
-                            session.state.namespaces_message(message);
-                            Vec::new()
-                        },
+                        |session, message| session.state.namespaces_message(message).1,
                         |session| session.state.namespaces_ended(),
                     );
                     self.set_drain(Drain::Namespaces, drain);
@@ -154,15 +151,10 @@ impl Session {
                     cx.notify();
                 }
                 Command::ScheduleDiscovery { generation } => {
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(CRD_DEBOUNCE).await;
-                        this.update(cx, |session, cx| {
-                            let commands = session.state.debounce_elapsed(generation);
-                            session.carry_out(commands, cx);
-                        })
-                        .ok();
-                    })
-                    .detach();
+                    self.schedule_discovery(generation, CRD_DEBOUNCE, cx);
+                }
+                Command::RetryDiscovery { generation, delay } => {
+                    self.schedule_discovery(generation, delay, cx);
                 }
                 Command::RunDiscovery { run } => self.run_discovery(run, cx),
                 Command::StartForward { request } => self.start_forward(request, cx),
@@ -184,6 +176,20 @@ impl Session {
             Some(drain) => self.drains.insert(which, drain),
             None => self.drains.remove(&which),
         };
+    }
+
+    /// After `delay`, run Discovery unless a newer `generation` superseded
+    /// this timer.
+    fn schedule_discovery(&self, generation: u64, delay: Duration, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update(cx, |session, cx| {
+                let commands = session.state.debounce_elapsed(generation);
+                session.carry_out(commands, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn run_discovery(&mut self, run: u64, cx: &mut Context<Self>) {
