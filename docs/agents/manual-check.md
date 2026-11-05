@@ -92,6 +92,26 @@ kind delete cluster --name legacy-<issue>
 Origin: #190 rewrote the per-group path. The `kind-astrolabe-dev`
 screenshots alone would have shown only the aggregated path (#190 retro).
 
+A change to how Discovery treats a failing group version needs a group
+version that fails on the legacy node, and a wait for the skip line, not
+for the first log line. An `APIService` whose Service is missing answers
+503 on `/apis/<group>/<version>` and is still listed under `/apis`:
+
+```sh
+kubectl --kubeconfig "$K" apply -f - <<'YAML'
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata: {name: v1.broken.example.com}
+spec: {group: broken.example.com, version: v1, groupPriorityMinimum: 100, versionPriority: 10, service: {name: nope, namespace: default}}
+YAML
+```
+
+Launch with `RUST_LOG=astrolabe_kube=debug,kube_client=warn`: the second
+filter prints each `failed with status 503` line, so a stall shows as
+retries instead of silence. #279's kube test, over a mock, passed in
+milliseconds while the real node needed about ten minutes to reach the
+skip, because kube-client retries a 503 15 times by default (#279 retro).
+
 A state the cluster cannot produce on its own, "cannot be reached" (#276),
 needs a kubeconfig copy whose server is a dead port, and no
 `ASTROLABE_NAMESPACE` (the app cannot list namespaces without a server):
