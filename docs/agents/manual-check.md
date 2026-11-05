@@ -369,7 +369,11 @@ of context.
    Pods crop reaches the Age column (`3m18s` against `4m7s` read `DIFF`):
    crop Pods to `440,85,470,320` instead (#244). #223's
    refactor of Session's queries read `same` on five views this way
-   (#223).
+   (#223). #278 (query shape, built-in scope, error kinds) read `same` on
+   Namespaces, Pods, Deployments and Definitions with the click and crop
+   coordinates in this paragraph, first try; launch each app as
+   `(nohup <binary> > log 2>&1 &)` from the worktree, so it outlives the
+   Bash call and `dev/shot.sh` finds it (#278 retro).
 
    A freshly seeded Deployments or Events list reads `DIFF` for its
    ages alone: Deployments `67s` against `99s`, and Events' `Count` and

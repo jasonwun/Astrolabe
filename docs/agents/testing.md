@@ -62,6 +62,10 @@ Chain the fix, the re-run and the push with `&&`, never `;`. #243's
 carry on with the 83-column line. Use Edit for a one-line change, then
 re-run the failing script before committing (#243 retro).
 
+A `cd crates/kube && python3 ...` carries to the next Bash call: the one
+after ran in `crates/kube`, and its repo-relative paths were wrong. Use
+absolute paths or a subshell `(cd dir && ...)` (#278 retro).
+
 A new rule in `dev/layer-check.sh` gets a probe file for every way to
 write the path, not only the full path: a one-line `use a::{b::X}`, the
 `astrolabe_kube::kube::` route and a long form such as `kube::api::Api`.
