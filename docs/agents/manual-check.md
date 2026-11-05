@@ -313,6 +313,15 @@ of context.
    `440,85,900,320` (Pods) and `440,85,900,360` (Definitions). #223's
    refactor of Session's queries read `same` on five views this way
    (#223).
+
+   A freshly seeded Deployments or Events list reads `DIFF` for its
+   ages alone: Deployments `67s` against `99s`, and Events' `Count` and
+   `Last Seen` move with live cluster events. Crop those two to the
+   columns left of Age (`440,85,340,320` for Deployments, `440,85,400,320`
+   for Events) and read the ages' difference as the clock, not the view
+   (#237). The only demo custom kind with an object is Widget `gizmo`:
+   scroll the sidebar (`dev/scroll.sh 330 700 down 30`), click Widget
+   (272,816), then its row (500,160) to check a custom detail (#237).
 4. Read one pair per view, for the PR's Evidence.
 
 Clean up with `git worktree remove "$SCRATCH/base"`.
