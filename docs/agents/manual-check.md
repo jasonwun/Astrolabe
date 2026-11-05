@@ -65,6 +65,18 @@ fails its connect, so the screenshots showed Namespaces, Pods and a custom
 kind listing after Discovery, and the kube, model and Session tests drove
 the failure and the recovery (#277 retro).
 
+A state that needs a revoked permission (#282: a list denied after its
+Snapshot) needs an identity whose rights you can edit, not the admin one.
+Create a ServiceAccount, a ClusterRole (`namespaces`, `pods`,
+`customresourcedefinitions` get/list/watch) and a ClusterRoleBinding with
+`kubectl apply -f -` (`create clusterrolebinding --serviceaccount` rejected
+the namespace here), put `kubectl create token` in a copy of the kubeconfig
+(`set-credentials`, then `set-context --current --user`), launch with it,
+then patch the ClusterRole. An established watch ignores the change: the
+banner appeared only after the watch timed out and its relist got the 403,
+about 5 minutes, so `sleep 290` once instead of poking the pod. Delete the
+ClusterRole and binding afterwards, they are cluster-scoped (#282 retro).
+
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
 Copy the kubeconfig into the scratchpad, set the namespace on the copy and
@@ -403,7 +415,10 @@ while the body said `./shot.png`; the body kept the broken relative link
 and gained a second image line (cause unverified). #249 did the same: its
 shots sat in the scratchpad, so the body kept `./prechecked.png` and gained
 the uploaded images at the bottom. Read the body back with
-`gh pr view --json body` and fix it before enabling auto-merge.
+`gh pr view --json body` and fix it before enabling auto-merge. The
+scratchpad is not a git repository, so pass `-R jasonwun/Astrolabe --head
+<branch> --base main` there, or `gh` fails with "not a git repository"
+(#282 retro; its body came out right: two uploaded images, no `./` link).
 
 From the shots' directory (outside the repo) `gh` finds no repository:
 push the branch first, then pass `-R jasonwun/Astrolabe --head <branch>
