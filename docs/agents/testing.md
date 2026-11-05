@@ -409,7 +409,7 @@ task not yet polled when its `Cluster` drops can queue one `Init` before it
 is cancelled: asserting the next message is `None` passed alone and failed
 about one run in two (#274's `dropping_the_cluster_stops_its_watches`). Read
 the stream to its end under a timeout, and count the dropped requests with
-`support::closed_requests()`. Run a new test of this kind 15 times
+`Apiserver::closed_requests()`. Run a new test of this kind 15 times
 (`for i in $(seq 15); do cargo test ...; done`) before the push: a one-off
 pass hid the race.
 
