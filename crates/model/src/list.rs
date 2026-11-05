@@ -1,7 +1,8 @@
 //! List resolution (#237): what the viewed list shows, read from a
 //! `SessionState`'s watches with no GPUI view, the counterpart of
-//! `detail::resolve`. The outcome (rows, loading, failed, forbidden, undefined,
-//! not served) and the Stale flag are decided here; the panel renders the answer.
+//! `detail::resolve`. The outcome (rows, loading, failed, forbidden,
+//! undefined, not served) and the Stale flag are decided here; the panel
+//! renders the answer.
 
 use std::collections::BTreeSet;
 
