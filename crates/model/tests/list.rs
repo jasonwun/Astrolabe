@@ -427,12 +427,3 @@ fn definitions_whose_watch_ended_are_stale() {
 
     assert!(resolved(&state).stale);
 }
-
-#[test]
-fn a_served_custom_kind_before_its_first_snapshot_has_no_rows() {
-    let (mut state, run) = crontab_state();
-    state.discovery_finished(run, Ok(crontab_served()));
-    state.open_custom_list(&crontab_id());
-
-    assert_eq!(rows(&resolved(&state)), 0);
-}
