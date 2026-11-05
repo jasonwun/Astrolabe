@@ -169,14 +169,14 @@ fn definitions_that_failed_before_a_snapshot_are_failed() {
     );
 }
 
-fn failed_pods(message: Option<Result<(), ClusterError>>) -> Resolved {
+/// Pods whose watch failed with `error`, or ended with none.
+fn failed_pods(error: Option<ClusterError>) -> Resolved {
     let mut state = state();
     let key = state.open_builtin_list(BuiltinKind::Pods).key;
-    match message {
-        Some(Err(error)) => {
+    match error {
+        Some(error) => {
             state.object_message(&key, Err(error));
         }
-        Some(Ok(())) => unreachable!(),
         None => state.object_ended(&key),
     }
     resolved(&state)
@@ -184,7 +184,7 @@ fn failed_pods(message: Option<Result<(), ClusterError>>) -> Resolved {
 
 #[test]
 fn a_builtin_list_that_failed_unreachable_carries_the_error() {
-    let resolved = failed_pods(Some(Err(ClusterError::unreachable("refused"))));
+    let resolved = failed_pods(Some(ClusterError::unreachable("refused")));
 
     let ListOutcome::Failed(Some(error)) = &resolved.outcome else {
         panic!("expected failed, got {:?}", resolved.outcome);
@@ -195,7 +195,7 @@ fn a_builtin_list_that_failed_unreachable_carries_the_error() {
 
 #[test]
 fn a_builtin_list_that_failed_to_connect_carries_the_error() {
-    let resolved = failed_pods(Some(Err(ClusterError::connect("no kubeconfig"))));
+    let resolved = failed_pods(Some(ClusterError::connect("no kubeconfig")));
 
     let ListOutcome::Failed(Some(error)) = &resolved.outcome else {
         panic!("expected failed, got {:?}", resolved.outcome);
@@ -249,7 +249,7 @@ fn failed_messages_name_the_kind_of_failure() {
     );
     assert_eq!(
         failed_message(None),
-        "The connection ended before the list loaded"
+        "The watch ended before the list loaded"
     );
 }
 

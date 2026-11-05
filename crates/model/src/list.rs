@@ -44,7 +44,7 @@ pub enum ListOutcome {
 /// The text shown where a list's watch failed before its first snapshot.
 pub fn failed_message(error: Option<&ClusterError>) -> String {
     match error {
-        None => "The connection ended before the list loaded".to_string(),
+        None => "The watch ended before the list loaded".to_string(),
         Some(error) => match error.kind() {
             ClusterErrorKind::Connect => format!("Cannot connect to the cluster: {error}"),
             ClusterErrorKind::Unreachable => format!("Cannot reach the cluster: {error}"),
@@ -69,7 +69,7 @@ pub fn resolve(state: &SessionState, groups: &BTreeSet<String>, now: Timestamp) 
             Some(state.namespaces_watch()),
             "namespaces",
             |_| forbidden_message("namespaces"),
-            |watch| project_namespaces(&watch.objects().collect::<Vec<_>>(), now),
+            |objects| project_namespaces(objects, now),
         ),
         Viewing::Builtin(kind) => {
             let registration = kind.registration();
@@ -77,14 +77,14 @@ pub fn resolve(state: &SessionState, groups: &BTreeSet<String>, now: Timestamp) 
                 state.builtin_watch(*kind, Some(state.namespace())),
                 registration.label,
                 forbidden_message,
-                |watch| (registration.list)(&watch.objects().collect::<Vec<_>>(), now),
+                |objects| (registration.list)(objects, now),
             )
         }
         Viewing::Definitions => from_watch(
             Some(state.crds()),
             "custom resource definitions",
             |_| CRD_DENIED.to_string(),
-            |watch| project_definitions(&watch.objects().collect::<Vec<_>>(), groups, now),
+            |objects| project_definitions(objects, groups, now),
         ),
         Viewing::Custom(id) => custom(state, id, now),
     }
@@ -96,10 +96,12 @@ fn from_watch<K: ResourceExt>(
     watch: Option<&Watched<K>>,
     label: &str,
     forbidden: impl FnOnce(&str) -> String,
-    rows: impl FnOnce(&Watched<K>) -> ResourceTable,
+    rows: impl FnOnce(&[&K]) -> ResourceTable,
 ) -> Resolved {
     let outcome = match (Watched::reading(watch), watch) {
-        (WatchReading::Rows, Some(watch)) => ListOutcome::Rows(rows(watch)),
+        (WatchReading::Rows, Some(watch)) => {
+            ListOutcome::Rows(rows(&watch.objects().collect::<Vec<_>>()))
+        }
         (WatchReading::Failed(error), _) => ListOutcome::Failed(error.cloned()),
         (WatchReading::Forbidden, _) => ListOutcome::Forbidden(forbidden(label)),
         (WatchReading::Loading | WatchReading::Rows, _) => {
@@ -138,7 +140,7 @@ fn custom(state: &SessionState, id: &crate::session::CustomKindId, now: Timestam
             state.custom_watch(kind),
             &kind.plural,
             forbidden_message,
-            |watch| project_custom_resources(kind, &watch.objects().collect::<Vec<_>>(), now),
+            |objects| project_custom_resources(kind, objects, now),
         ),
     }
 }

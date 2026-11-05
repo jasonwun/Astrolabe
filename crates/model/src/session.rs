@@ -369,8 +369,9 @@ impl<K: ResourceExt> Watched<K> {
         self.last_error.as_ref()
     }
 
-    /// What a reader of this watch can show: the one rule the list and the
-    /// detail share (#276). A watch that is not there is [`Loading`] too.
+    /// What a reader of this watch can show: the list's rule (#276), which
+    /// the detail's can reuse (#275). A watch that is not there is
+    /// [`Loading`] too: the viewed list's watch is started with it.
     ///
     /// [`Loading`]: WatchReading::Loading
     pub fn reading(watch: Option<&Self>) -> WatchReading<'_> {
