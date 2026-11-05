@@ -417,7 +417,7 @@ impl SessionState {
     }
 
     pub fn namespaces(&self) -> Vec<&Namespace> {
-        self.namespaces.objects()
+        self.namespaces.objects().collect()
     }
 
     pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
@@ -553,7 +553,10 @@ impl SessionState {
     /// or moved to a new preferred version: the commands start the watches
     /// that follow them.
     fn rebuild_catalog(&mut self) -> Vec<Command> {
-        self.catalog = catalog::catalog(&self.crds.objects(), self.discovery.served());
+        self.catalog = catalog::catalog(
+            &self.crds.objects().collect::<Vec<_>>(),
+            self.discovery.served(),
+        );
         let mut commands = if matches!(self.viewing, Viewing::Custom(_)) {
             self.follow_viewed_list()
         } else {

@@ -8,6 +8,11 @@ use kube::discovery::ApiResource;
 
 /// An object's identity within one resource's snapshot: its namespace (`None`
 /// when cluster-scoped) and name. Displays as `namespace/name` or `name`.
+///
+/// The derived `Ord` (namespace, then name; `None` first) must match the
+/// `KeyView` ordering in `astrolabe-model`'s `session.rs`, which
+/// `Watched::get` uses for allocation-free lookups. Reordering the fields
+/// breaks it; `crates/model/tests/watched.rs` catches that.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ObjectKey {
     pub namespace: Option<String>,

@@ -51,7 +51,9 @@ pub fn resolve(state: &SessionState, groups: &BTreeSet<String>, now: Timestamp) 
         Viewing::Builtin(kind) => {
             let registration = kind.registration();
             let watch = state.builtin_watch(*kind, Some(state.namespace()));
-            let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
+            let objects = watch
+                .map(|watch| watch.objects().collect::<Vec<_>>())
+                .unwrap_or_default();
             let outcome = match watch {
                 Some(watch) if watch.status().is_forbidden() => {
                     ListOutcome::Forbidden(forbidden_message(registration.label))
@@ -68,7 +70,11 @@ pub fn resolve(state: &SessionState, groups: &BTreeSet<String>, now: Timestamp) 
             let outcome = if state.crd_access_denied() {
                 ListOutcome::Forbidden(CRD_DENIED.to_string())
             } else {
-                ListOutcome::Rows(project_definitions(&crds.objects(), groups, now))
+                ListOutcome::Rows(project_definitions(
+                    &crds.objects().collect::<Vec<_>>(),
+                    groups,
+                    now,
+                ))
             };
             Resolved {
                 outcome,
@@ -103,7 +109,9 @@ fn custom(state: &SessionState, id: &crate::session::CustomKindId, now: Timestam
         ))),
         KindResource::Served(_) => {
             let watch = state.custom_watch(kind);
-            let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
+            let objects = watch
+                .map(|watch| watch.objects().collect::<Vec<_>>())
+                .unwrap_or_default();
             let outcome = match watch {
                 Some(watch) if watch.status().is_forbidden() => {
                     ListOutcome::Forbidden(forbidden_message(&kind.plural))

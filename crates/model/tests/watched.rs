@@ -20,7 +20,6 @@ fn namespace(name: &str) -> Namespace {
 fn names(watched: &Watched<Namespace>) -> Vec<String> {
     watched
         .objects()
-        .into_iter()
         .map(|namespace| namespace.metadata.name.clone().unwrap())
         .collect()
 }
@@ -372,4 +371,64 @@ fn only_a_health_change_is_logged() {
     });
 
     assert_eq!((same, changed), (0, 1));
+}
+
+#[test]
+fn objects_come_out_in_key_order_and_get_matches_namespace_and_name() {
+    use astrolabe_kube::k8s_openapi::api::core::v1::ConfigMap;
+
+    fn config_map(namespace: Option<&str>, name: &str) -> ConfigMap {
+        ConfigMap {
+            metadata: ObjectMeta {
+                namespace: namespace.map(str::to_string),
+                name: Some(name.to_string()),
+                ..ObjectMeta::default()
+            },
+            ..ConfigMap::default()
+        }
+    }
+
+    let mut watched = Watched::new(ClusterId::named("kind-test"), "configmap");
+    watched.apply(Ok(Event::Init));
+    for (namespace, name) in [
+        (Some("b"), "x"),
+        (Some("a"), "z"),
+        (None, "m"),
+        (Some("a"), "y"),
+        (Some("a-2"), "m"),
+        (Some("a"), "yy"),
+        (Some("é"), "m"),
+    ] {
+        watched.apply(Ok(Event::InitApply(config_map(namespace, name))));
+    }
+    watched.apply(Ok(Event::InitDone));
+
+    let order: Vec<_> = watched
+        .objects()
+        .map(|o| {
+            (
+                o.metadata.namespace.clone(),
+                o.metadata.name.clone().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            (None, "m".to_string()),
+            (Some("a".to_string()), "y".to_string()),
+            (Some("a".to_string()), "yy".to_string()),
+            (Some("a".to_string()), "z".to_string()),
+            (Some("a-2".to_string()), "m".to_string()),
+            (Some("b".to_string()), "x".to_string()),
+            (Some("é".to_string()), "m".to_string()),
+        ]
+    );
+    assert!(watched.get(Some("a-2"), "m").is_some());
+    assert!(watched.get(Some("é"), "m").is_some());
+    assert!(watched.get(Some("a"), "yy").is_some());
+    assert!(watched.get(Some("a"), "z").is_some());
+    assert!(watched.get(None, "m").is_some());
+    assert!(watched.get(Some("a"), "m").is_none());
+    assert!(watched.get(None, "z").is_none());
 }
