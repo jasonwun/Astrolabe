@@ -368,22 +368,32 @@ mod tests {
         KeyRef { namespace, name }
     }
 
+    fn view<'a>(key: &'a KeyRef<'a>) -> &'a dyn KeyView {
+        key
+    }
+
     #[test]
     fn key_views_compare_by_namespace_then_name() {
-        let (a, b) = (key(Some("a"), "z"), key(Some("b"), "a"));
-        let (a, b): (&dyn KeyView, &dyn KeyView) = (&a, &b);
-        assert!(a != b);
-        assert_eq!(a.partial_cmp(b), Some(Ordering::Less));
-        assert_eq!(b.partial_cmp(a), Some(Ordering::Greater));
+        let early = key(Some("a"), "z");
+        let late = key(Some("b"), "a");
+        assert!(view(&early) != view(&late));
+        assert_eq!(view(&early).partial_cmp(view(&late)), Some(Ordering::Less));
+        assert_eq!(
+            view(&late).partial_cmp(view(&early)),
+            Some(Ordering::Greater)
+        );
 
-        let (x, y) = (key(None, "m"), key(Some("a"), "a"));
-        assert_eq!((&x as &dyn KeyView).partial_cmp(&y), Some(Ordering::Less));
+        let cluster = key(None, "m");
+        assert_eq!(
+            view(&cluster).partial_cmp(view(&early)),
+            Some(Ordering::Less)
+        );
 
-        let (p, q) = (key(Some("a"), "m"), key(Some("a"), "n"));
-        assert!((&p as &dyn KeyView) != (&q as &dyn KeyView));
-
-        let (m, n) = (key(Some("a"), "m"), key(Some("a"), "m"));
-        assert!((&m as &dyn KeyView) == (&n as &dyn KeyView));
-        assert_eq!((&m as &dyn KeyView).partial_cmp(&n), Some(Ordering::Equal));
+        let first = key(Some("a"), "m");
+        let second = key(Some("a"), "n");
+        let same = key(Some("a"), "m");
+        assert!(view(&first) != view(&second));
+        assert!(view(&first) == view(&same));
+        assert_eq!(view(&first).partial_cmp(view(&same)), Some(Ordering::Equal));
     }
 }
