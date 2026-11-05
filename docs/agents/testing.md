@@ -82,10 +82,13 @@ passed (#226).
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
 an unbackticked type name in a doc comment trips `doc_markdown`. Return
 the bare value and wrap at the call sites (#164). `assert!(x.is_empty())`
-trips `assert_is_empty`: write `assert_eq!(x, [])`. A test helper that
+trips `assert_is_empty`: write `assert_eq!(x, [])`, or
+`assert_eq!(x, Vec::<T>::new())` where the element type is not inferred;
+for `!x.is_empty()` assert on `x.first()` (#245). A test helper that
 picks one `Command` variant with `_ => None` hides the next variant a
 ticket adds: list the other variants so the compiler asks for them
-(#165). Adding variants to `Command` can leave its
+(#165; #245's `stopped()` helper broke the rule again and neither
+review caught it). Adding variants to `Command` can leave its
 `#[expect(clippy::large_enum_variant)]` unfulfilled, which `-D warnings`
 rejects: delete the `expect` when clippy says so (#166). Code moved into
 `astrolabe-model` meets the same pedantic lints: a `pub fn` returning
