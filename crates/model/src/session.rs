@@ -189,7 +189,7 @@ impl<'a> std::borrow::Borrow<dyn KeyView + 'a> for ObjectKey {
 // name.
 impl PartialEq for dyn KeyView + '_ {
     fn eq(&self, other: &Self) -> bool {
-        self.namespace() == other.namespace() && self.name() == other.name()
+        self.cmp(other).is_eq()
     }
 }
 
@@ -356,4 +356,34 @@ pub enum ForwardState {
     /// Accepting on this localhost port.
     Listening(u16),
     Failed(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+
+    use super::{KeyRef, KeyView};
+
+    fn key<'a>(namespace: Option<&'a str>, name: &'a str) -> KeyRef<'a> {
+        KeyRef { namespace, name }
+    }
+
+    #[test]
+    fn key_views_compare_by_namespace_then_name() {
+        let (a, b) = (key(Some("a"), "z"), key(Some("b"), "a"));
+        let (a, b): (&dyn KeyView, &dyn KeyView) = (&a, &b);
+        assert!(a != b);
+        assert_eq!(a.partial_cmp(b), Some(Ordering::Less));
+        assert_eq!(b.partial_cmp(a), Some(Ordering::Greater));
+
+        let (x, y) = (key(None, "m"), key(Some("a"), "a"));
+        assert_eq!((&x as &dyn KeyView).partial_cmp(&y), Some(Ordering::Less));
+
+        let (p, q) = (key(Some("a"), "m"), key(Some("a"), "n"));
+        assert!((&p as &dyn KeyView) != (&q as &dyn KeyView));
+
+        let (m, n) = (key(Some("a"), "m"), key(Some("a"), "m"));
+        assert!((&m as &dyn KeyView) == (&n as &dyn KeyView));
+        assert_eq!((&m as &dyn KeyView).partial_cmp(&n), Some(Ordering::Equal));
+    }
 }
