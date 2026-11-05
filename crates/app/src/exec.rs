@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::pod::{ExecInput, ExecOutput, ExecSession};
 use astrolabe_terminal::backend::{AlacrittyBackend, ExitStatus, RemoteSink, remote};
 use astrolabe_terminal::{TerminalBackend, TerminalView};
@@ -38,7 +39,7 @@ impl RemoteSink for SessionSink {
 enum SessionState {
     Running,
     Exited(u8),
-    Failed(String),
+    Failed(ClusterError),
 }
 
 pub struct ExecPanel {
@@ -78,9 +79,9 @@ impl ExecPanel {
                         break SessionState::Exited(code);
                     }
                     Some(ExecOutput::Exited(Err(error))) => {
-                        break SessionState::Failed(error.to_string());
+                        break SessionState::Failed(error);
                     }
-                    None => break SessionState::Failed("session dropped".to_string()),
+                    None => break SessionState::Failed(ClusterError::new("session dropped")),
                 }
             };
             panel

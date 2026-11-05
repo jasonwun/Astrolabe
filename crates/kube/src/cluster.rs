@@ -74,7 +74,7 @@ pub enum ClusterErrorKind {
     /// [`Other`](ClusterErrorKind::Other) instead.
     Connect,
     /// The apiserver could not be reached after a successful connect: the
-    /// transport failed (connection refused or reset, a timeout), so a
+    /// transport failed (connection refused, a timeout), so a
     /// view can say "cluster unreachable" instead of a generic error.
     Unreachable,
     /// The apiserver refused the request (HTTP 403), which some views show
@@ -459,6 +459,8 @@ impl Cluster {
     ///   built, or its connect task panicked;
     /// - [`Forbidden`](ClusterErrorKind::Forbidden) when the apiserver
     ///   refuses a request (403);
+    /// - [`Unreachable`](ClusterErrorKind::Unreachable) when the apiserver
+    ///   cannot be reached after the connect;
     /// - [`Other`](ClusterErrorKind::Other) when it fails any other way,
     ///   e.g. the object is gone (404), or the request's task panicked.
     pub fn operate(
@@ -581,7 +583,8 @@ impl Cluster {
     ///   ([`Connect`](ClusterErrorKind::Connect));
     /// - the apiserver refuses the request, e.g. the container does not
     ///   exist ([`Forbidden`](ClusterErrorKind::Forbidden) for a 403,
-    ///   [`Other`](ClusterErrorKind::Other) otherwise);
+    ///   [`Unreachable`](ClusterErrorKind::Unreachable) when it cannot be
+    ///   reached, [`Other`](ClusterErrorKind::Other) otherwise);
     /// - reading the stream fails ([`Other`](ClusterErrorKind::Other)).
     ///
     /// The stream just ends when the server closes it, or when the
@@ -628,7 +631,8 @@ impl Cluster {
     ///   ([`Connect`](ClusterErrorKind::Connect));
     /// - the apiserver refuses the request
     ///   ([`Forbidden`](ClusterErrorKind::Forbidden) for a 403,
-    ///   [`Other`](ClusterErrorKind::Other) otherwise);
+    ///   [`Unreachable`](ClusterErrorKind::Unreachable) when it cannot be
+    ///   reached, [`Other`](ClusterErrorKind::Other) otherwise);
     /// - the remote streams fail, or the server ends the command with a
     ///   failure that is not an exit code
     ///   ([`Other`](ClusterErrorKind::Other)).
@@ -679,8 +683,9 @@ impl Cluster {
     /// [`ConnectionFailed`](ForwardEvent::ConnectionFailed) and the
     /// listener goes on: [`Forbidden`](ClusterErrorKind::Forbidden) when
     /// the apiserver refuses it (403), including the Service lookup;
-    /// [`Other`](ClusterErrorKind::Other) for any other failure, a Service
-    /// with no running Pod or no such port included.
+    /// [`Unreachable`](ClusterErrorKind::Unreachable) when it cannot be
+    /// reached; [`Other`](ClusterErrorKind::Other) for any other failure,
+    /// a Service with no running Pod or no such port included.
     ///
     /// The forward's last report is [`Failed`](ForwardEvent::Failed)
     /// when:
