@@ -59,6 +59,15 @@ pub enum ConnectionHealth {
     Stale,
 }
 
+/// Why a watch's old snapshot may no longer be true.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaleCause {
+    /// The watch failed, ended or is relisting.
+    ConnectionLost,
+    /// RBAC denies the watch; the connection is fine.
+    Denied,
+}
+
 /// What a reader shows for one watch (see `Watched::reading`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WatchReading<'a> {
@@ -67,9 +76,10 @@ pub enum WatchReading<'a> {
     /// The watch failed or ended before any snapshot. The error is none when
     /// the watch ended without one.
     Failed(Option<&'a ClusterError>),
-    /// RBAC denies the watch.
+    /// RBAC denies the watch and no snapshot was ever taken.
     Forbidden,
     /// The snapshot is shown, empty or not; the status says whether stale.
+    /// A denied watch that holds a snapshot reads as rows too (#282).
     Rows,
 }
 
@@ -119,6 +129,15 @@ impl WatchStatus {
             Self::Relisting | Self::Stale => true,
             Self::Forbidden { has_snapshot } => has_snapshot,
             Self::Connecting | Self::Live | Self::Failed => false,
+        }
+    }
+
+    /// Why the old snapshot is stale; none when it is not.
+    pub fn stale_cause(self) -> Option<StaleCause> {
+        match self {
+            Self::Relisting | Self::Stale => Some(StaleCause::ConnectionLost),
+            Self::Forbidden { has_snapshot: true } => Some(StaleCause::Denied),
+            Self::Connecting | Self::Live | Self::Failed | Self::Forbidden { .. } => None,
         }
     }
 
@@ -381,8 +400,13 @@ impl<K: ResourceExt> Watched<K> {
         match watch.status {
             WatchStatus::Connecting => WatchReading::Loading,
             WatchStatus::Failed => WatchReading::Failed(watch.last_error.as_ref()),
-            WatchStatus::Forbidden { .. } => WatchReading::Forbidden,
-            WatchStatus::Live | WatchStatus::Relisting | WatchStatus::Stale => WatchReading::Rows,
+            WatchStatus::Forbidden {
+                has_snapshot: false,
+            } => WatchReading::Forbidden,
+            WatchStatus::Forbidden { has_snapshot: true }
+            | WatchStatus::Live
+            | WatchStatus::Relisting
+            | WatchStatus::Stale => WatchReading::Rows,
         }
     }
 

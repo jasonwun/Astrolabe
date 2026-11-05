@@ -486,3 +486,17 @@ fn only_gone_says_no_longer_exists() {
         Some(("detail-gone", "Pod web no longer exists".to_string()))
     );
 }
+
+#[test]
+fn a_builtin_detail_denied_after_a_snapshot_still_shows_its_object() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    snapshot(&mut state, BuiltinKind::Deployments, vec![web_deployment()]);
+    forbid(
+        &mut state,
+        BuiltinKind::Deployments,
+        "deployments is forbidden",
+    );
+
+    assert_eq!(resolved(&target, &state).object.key.name, "web");
+}
