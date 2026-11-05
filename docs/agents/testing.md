@@ -403,6 +403,16 @@ Relist and the 403 backoff are tested in the cluster layer, through
   thread-scoped one (`set_default`) races other tests' threads over
   tracing's per-callsite cache and loses events.
 
+A test that a watch stops asserts the apiserver side, not the reader's next
+message. kube-rs sends `Event::Init` before it issues the LIST, so a watch
+task not yet polled when its `Cluster` drops can queue one `Init` before it
+is cancelled: asserting the next message is `None` passed alone and failed
+about one run in two (#274's `dropping_the_cluster_stops_its_watches`). Read
+the stream to its end under a timeout, and count the dropped requests with
+`support::closed_requests()`. Run a new test of this kind 15 times
+(`for i in $(seq 15); do cargo test ...; done`) before the push: a one-off
+pass hid the race.
+
 Origin: #156 (replaced the scripted TCP apiserver test from #28/#16).
 
 ## Merge gate

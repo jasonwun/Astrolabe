@@ -52,7 +52,10 @@ unchanged on kind, the same as for #243. Say in the PR that the
 screenshots prove only that, and name the test that drives the new path.
 #245's eviction needs more than 16 watches, so 17 namespaces or kinds: its
 screenshots showed lists and a detail with Related unchanged, and the model
-and Session tests drove the eviction.
+and Session tests drove the eviction. #274 (a dropped reader stops its
+watch) is the same: the screenshots showed Pods and Namespaces listing and a
+`kubectl delete` reaching the view, and the kube tests counted the closed
+apiserver requests.
 
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
