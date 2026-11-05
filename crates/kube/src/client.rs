@@ -17,19 +17,31 @@ pub async fn default_client() -> kube::Result<kube::Client> {
     kube::Client::try_default().await
 }
 
-/// Build a client for `cluster`, whatever the kubeconfig's
-/// `current-context` names.
+/// What reading the kubeconfig gave: one connect attempt's only read.
+pub(crate) type KubeconfigRead = Result<kube::config::Kubeconfig, kube::config::KubeconfigError>;
+
+/// Read the kubeconfig, which blocks on a small file.
+pub(crate) fn read_kubeconfig() -> KubeconfigRead {
+    kube::config::Kubeconfig::read()
+}
+
+/// Build a client for `cluster` from `kubeconfig`, whatever its
+/// `current-context` names. The caller reads it afresh for each connect
+/// attempt, so a retry sees a kubeconfig fixed since the last failure.
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when the kubeconfig cannot be read or parsed, has no
-/// context for `cluster`, or the client cannot be built from it.
-pub(crate) async fn client_for(cluster: &ClusterId) -> kube::Result<kube::Client> {
+/// A [`kube::Error`] when the kubeconfig could not be read or parsed, has
+/// no context for `cluster`, or the client cannot be built from it.
+pub(crate) async fn client_for(
+    cluster: &ClusterId,
+    kubeconfig: KubeconfigRead,
+) -> kube::Result<kube::Client> {
     let options = kube::config::KubeConfigOptions {
         context: Some(cluster.context().to_owned()),
         ..kube::config::KubeConfigOptions::default()
     };
-    let mut config = kube::Config::from_kubeconfig(&options).await?;
+    let mut config = kube::Config::from_custom_kubeconfig(kubeconfig?, &options).await?;
     config.default_retry = false;
     Ok(kube::client::ClientBuilder::try_from(config)?
         .with_layer(&BoundedRetryLayer)
@@ -117,13 +129,13 @@ pub(crate) fn context_namespace(config: &kube::config::Kubeconfig, context: &str
         .unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned())
 }
 
-/// The default namespace of `cluster`'s kubeconfig context. Reads the
-/// kubeconfig, a small file; a kubeconfig that cannot be read answers
-/// `"default"`, and the connect reports the failure.
-pub(crate) fn default_namespace_for(cluster: &ClusterId) -> String {
-    kube::config::Kubeconfig::read().map_or_else(
+/// The default namespace of `cluster`'s kubeconfig context in `kubeconfig`;
+/// one that could not be read answers `"default"`, and the connect reports
+/// the failure.
+pub(crate) fn default_namespace_for(kubeconfig: &KubeconfigRead, cluster: &ClusterId) -> String {
+    kubeconfig.as_ref().map_or_else(
         |_| DEFAULT_NAMESPACE.to_owned(),
-        |config| context_namespace(&config, cluster.context()),
+        |config| context_namespace(config, cluster.context()),
     )
 }
 

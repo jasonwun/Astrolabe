@@ -134,7 +134,7 @@ impl DetailTarget {
             Self::Namespace { name } => (
                 ApiResource::erase::<Namespace>(&()),
                 ObjectKey::cluster_scoped(name.clone()),
-                Shown::Namespace(in_watch(Some(state.namespaces_watch()), None, name)?),
+                Shown::Namespace(in_watch(Some(state.namespaces()), None, name)?),
             ),
             Self::Definition { name } => (
                 ApiResource::erase::<CustomResourceDefinition>(&()),

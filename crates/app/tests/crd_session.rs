@@ -428,8 +428,8 @@ fn a_session_recovers_by_itself_from_a_failed_first_connect(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.read(|cx| {
         let state = h.session.read(cx).state();
-        assert_eq!(state.health(), ConnectionHealth::Stale);
-        assert!(state.show_stale_warning());
+        assert_eq!(state.status().health, ConnectionHealth::Stale);
+        assert!(state.status().show_stale_warning());
         assert!(state.discovery_failure().is_some());
     });
 
@@ -455,9 +455,9 @@ fn a_session_recovers_by_itself_from_a_failed_first_connect(cx: &mut TestAppCont
 
     cx.read(|cx| {
         let state = h.session.read(cx).state();
-        assert!(!state.show_stale_warning());
+        assert!(!state.status().show_stale_warning());
         assert!(state.discovery_failure().is_none());
-        assert_eq!(state.health(), ConnectionHealth::Healthy);
+        assert_eq!(state.status().health, ConnectionHealth::Healthy);
         let pods = state
             .builtin_watch(BuiltinKind::Pods, Some(DEFAULT_NAMESPACE))
             .unwrap();

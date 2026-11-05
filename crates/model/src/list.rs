@@ -66,7 +66,7 @@ pub struct Resolved {
 pub fn resolve(state: &SessionState, groups: &BTreeSet<String>, now: Timestamp) -> Resolved {
     match state.viewing() {
         Viewing::Namespaces => from_watch(
-            Some(state.namespaces_watch()),
+            Some(state.namespaces()),
             "namespaces",
             |_| forbidden_message("namespaces"),
             |objects| project_namespaces(objects, now),

@@ -118,7 +118,7 @@ fn a_stream_ending_before_any_snapshot_is_unreachable_not_stale() {
 
     watched.mark_stale();
 
-    assert_eq!(watched.status(), WatchStatus::Unreachable);
+    assert_eq!(watched.status(), WatchStatus::Failed);
     assert_eq!(watched.status().health(), ConnectionHealth::Stale);
     assert!(!watched.status().is_stale());
 
@@ -209,7 +209,7 @@ fn a_failure_before_any_snapshot_is_unreachable() {
 
     watched.apply(Err(ClusterError::new("connection refused")));
 
-    assert_eq!(watched.status(), WatchStatus::Unreachable);
+    assert_eq!(watched.status(), WatchStatus::Failed);
 }
 
 #[test]

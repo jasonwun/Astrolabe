@@ -15,6 +15,8 @@
 
 use kube::core::Status;
 
+use crate::cluster::ClusterErrorKind;
+
 use super::fieldpath::{Segment, parse_field_path, split_top_level};
 
 /// One field-level cause with its normalized path.
@@ -57,8 +59,14 @@ pub enum ApplyError {
     /// is meaningful. Empty when the message failed to parse.
     Conflict(Vec<ManagerConflict>),
     /// Unmappable: 403, admission webhooks, network, unparsable payloads.
-    /// `forbidden` is set when the apiserver refused it with 403.
-    Global { message: String, forbidden: bool },
+    /// `kind` says which: a 403 is
+    /// [`Forbidden`](ClusterErrorKind::Forbidden), a transport failure
+    /// [`Unreachable`](ClusterErrorKind::Unreachable), the rest
+    /// [`Other`](ClusterErrorKind::Other).
+    Global {
+        message: String,
+        kind: ClusterErrorKind,
+    },
 }
 
 /// Classify and parse a failed apply's status body.
@@ -86,7 +94,7 @@ pub(crate) fn parse_status(status: &Status) -> ApplyError {
             if causes.is_empty() {
                 ApplyError::Global {
                     message: status.message.clone(),
-                    forbidden: false,
+                    kind: ClusterErrorKind::Other,
                 }
             } else {
                 ApplyError::Validation(causes)
@@ -99,7 +107,11 @@ pub(crate) fn parse_status(status: &Status) -> ApplyError {
             } else {
                 status.message.clone()
             },
-            forbidden: status.code == 403,
+            kind: if status.code == 403 {
+                ClusterErrorKind::Forbidden
+            } else {
+                ClusterErrorKind::Other
+            },
         },
     }
 }
@@ -480,9 +492,9 @@ mod tests {
     fn forbidden_403_is_global() {
         let s = status(403, "deployments.apps is forbidden", vec![]);
         match parse_status(&s) {
-            ApplyError::Global { message, forbidden } => {
+            ApplyError::Global { message, kind } => {
                 assert!(message.contains("forbidden"));
-                assert!(forbidden, "a 403 is Forbidden");
+                assert_eq!(kind, ClusterErrorKind::Forbidden);
             }
             other => panic!("expected Global, got {other:?}"),
         }
@@ -493,7 +505,9 @@ mod tests {
         for code in [401, 404, 500] {
             let s = status(code, "refused", vec![]);
             match parse_status(&s) {
-                ApplyError::Global { forbidden, .. } => assert!(!forbidden, "{code}"),
+                ApplyError::Global { kind, .. } => {
+                    assert_eq!(kind, ClusterErrorKind::Other, "{code}");
+                }
                 other => panic!("expected Global, got {other:?}"),
             }
         }

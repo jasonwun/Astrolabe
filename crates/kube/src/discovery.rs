@@ -2,6 +2,7 @@
 //! changes. Caching the result is the caller's job.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use kube::Client;
 use kube::core::{GroupVersion, GroupVersionKind};
@@ -15,10 +16,11 @@ pub struct ServedResource {
     pub namespaced: bool,
 }
 
-/// Every (group, version, kind) the apiserver serves.
+/// Every (group, version, kind) the apiserver serves. Clones share the one
+/// map, so handing the result to each Apply and Precheck copies nothing.
 #[derive(Clone, Debug, Default)]
 pub struct ServedResources {
-    by_gvk: HashMap<GroupVersionKind, ServedResource>,
+    by_gvk: Arc<HashMap<GroupVersionKind, ServedResource>>,
 }
 
 impl ServedResources {
@@ -34,7 +36,9 @@ impl ServedResources {
                 (gvk, served)
             })
             .collect();
-        Self { by_gvk }
+        Self {
+            by_gvk: Arc::new(by_gvk),
+        }
     }
 
     fn from_groups<'a>(groups: impl IntoIterator<Item = &'a ApiGroup>) -> Self {
