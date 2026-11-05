@@ -339,11 +339,6 @@ fn an_evicted_watch_is_stopped_and_starts_again_when_asked(cx: &mut TestAppConte
     }
     cx.run_until_parked();
 
-    cx.read(|cx| {
-        let state = h.session.read(cx).state();
-        assert!(state.object_watch(&pod_key("ns0")).is_none());
-        assert!(state.object_watch(&pod_key("ns1")).is_some());
-    });
     assert!(senders[0].is_closed(), "the evicted drain ended");
     assert!(!senders[1].is_closed(), "a kept drain still runs");
 

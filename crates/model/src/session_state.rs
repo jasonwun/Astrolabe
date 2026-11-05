@@ -633,15 +633,14 @@ impl SessionState {
             .map(|(key, used)| (*used, key.clone()))
             .collect();
         idle.sort();
-        idle.into_iter()
-            .take(excess)
-            .map(|(_, key)| {
-                self.objects.remove(&key);
-                self.resources.remove(&key);
-                self.last_used.remove(&key);
-                Command::StopWatch { key }
-            })
-            .collect()
+        let mut commands = Vec::new();
+        for (_, key) in idle.into_iter().take(excess) {
+            self.objects.remove(&key);
+            self.resources.remove(&key);
+            self.last_used.remove(&key);
+            commands.push(Command::StopWatch { key });
+        }
+        commands
     }
 
     /// The object watches the viewed list and the open details read.

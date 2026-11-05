@@ -74,6 +74,13 @@ fn fill_with_services(state: &mut SessionState, count: usize) -> Vec<Command> {
         .collect()
 }
 
+fn team_a_pod() -> DetailTarget {
+    DetailTarget::Builtin {
+        kind: BuiltinKind::Pods,
+        key: ObjectKey::new(Some("team-a".to_string()), "web".to_string()),
+    }
+}
+
 fn service_key(namespace: &str) -> WatchKey {
     WatchKey {
         kind: ResourceKind::Builtin(BuiltinKind::Services),
@@ -1265,10 +1272,7 @@ fn the_viewed_list_is_never_evicted() {
 #[test]
 fn the_watches_of_an_open_detail_are_never_evicted() {
     let mut state = state();
-    let target = DetailTarget::Builtin {
-        kind: BuiltinKind::Pods,
-        key: ObjectKey::new(Some("team-a".to_string()), "web".to_string()),
-    };
+    let target = team_a_pod();
     let needed = watches(&target);
     assert_eq!(
         needed.first().map(|watch| watch.kind),
@@ -1295,10 +1299,7 @@ fn the_watches_of_an_open_detail_are_never_evicted() {
 #[test]
 fn a_closed_detail_releases_its_watches_to_eviction() {
     let mut state = state();
-    let target = DetailTarget::Builtin {
-        kind: BuiltinKind::Pods,
-        key: ObjectKey::new(Some("team-a".to_string()), "web".to_string()),
-    };
+    let target = team_a_pod();
     let shown = state.watch_builtin(BuiltinKind::Pods, Some("team-a")).key;
     state.open_detail(target.clone());
     state.close_detail(&target);
