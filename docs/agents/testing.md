@@ -501,3 +501,8 @@ duration (#279 retro; `docs/adr/0003-bounded-client-retry.md`).
 
 `grep -rn pattern crates --include=*.rs` fails in zsh with `no matches
 found`: quote the glob (`--include='*.rs'`) (#275 retro).
+
+`astrolabe-kube`'s `test-support` cargo feature gates test-only API such as
+`ApplyReport::failed`. A dependent enables it under its own
+`[dev-dependencies]` only (resolver 3 keeps it out of a plain build), as
+`astrolabe` does (#278).

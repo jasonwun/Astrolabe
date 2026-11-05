@@ -532,9 +532,10 @@ impl SessionState {
 
     /// What the cluster indicator and the disconnect banner show.
     pub fn status(&self) -> SessionStatus {
+        let namespaces = self.namespaces.status();
         SessionStatus {
-            health: self.namespaces.status().health(),
-            namespaces_stale: self.namespaces.status().is_stale(),
+            health: namespaces.health(),
+            namespaces_stale: namespaces.is_stale(),
             discovery_failed: self.discovery.failure().is_some(),
             crd_access_denied: self.crds.status().is_forbidden(),
         }

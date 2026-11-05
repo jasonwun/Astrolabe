@@ -17,4 +17,3 @@ serde_json.workspace = true
 [dev-dependencies]
 # `ApplyReport::failed` for the scripted Cluster in tests (#278).
 astrolabe-kube = { workspace = true, features = ["test-support"] }
-
