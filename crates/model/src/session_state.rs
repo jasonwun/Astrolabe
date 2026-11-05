@@ -436,6 +436,11 @@ impl SessionState {
         self.namespaces.objects().collect()
     }
 
+    /// The Namespaces watch.
+    pub fn namespaces_watch(&self) -> &Watched<Namespace> {
+        &self.namespaces
+    }
+
     pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
         self.namespaces.get(None, name)
     }

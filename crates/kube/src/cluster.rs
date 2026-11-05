@@ -110,8 +110,16 @@ impl ClusterError {
         Self::message_only(ClusterErrorKind::Forbidden, message)
     }
 
-    fn connect(message: impl Into<String>) -> Self {
+    /// A [`Connect`](ClusterErrorKind::Connect) failure: what a scripted
+    /// cluster answers a failed first connect with.
+    pub fn connect(message: impl Into<String>) -> Self {
         Self::message_only(ClusterErrorKind::Connect, message)
+    }
+
+    /// An [`Unreachable`](ClusterErrorKind::Unreachable) failure: what a
+    /// scripted cluster answers a transport failure with.
+    pub fn unreachable(message: impl Into<String>) -> Self {
+        Self::message_only(ClusterErrorKind::Unreachable, message)
     }
 
     fn message_only(kind: ClusterErrorKind, message: impl Into<String>) -> Self {

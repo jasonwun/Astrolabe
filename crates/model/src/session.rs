@@ -59,6 +59,20 @@ pub enum ConnectionHealth {
     Stale,
 }
 
+/// What a reader shows for one watch (see `Watched::reading`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchReading<'a> {
+    /// No snapshot yet: the first list is in progress, or not started.
+    Loading,
+    /// The watch failed or ended before any snapshot. The error is none when
+    /// the watch ended without one.
+    Failed(Option<&'a ClusterError>),
+    /// RBAC denies the watch.
+    Forbidden,
+    /// The snapshot is shown, empty or not; the status says whether stale.
+    Rows,
+}
+
 /// What one watch message did to the watcher's object set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SnapshotChange {
@@ -353,6 +367,22 @@ impl<K: ResourceExt> Watched<K> {
     /// is live again.
     pub fn last_error(&self) -> Option<&ClusterError> {
         self.last_error.as_ref()
+    }
+
+    /// What a reader of this watch can show: the one rule the list and the
+    /// detail share (#276). A watch that is not there is [`Loading`] too.
+    ///
+    /// [`Loading`]: WatchReading::Loading
+    pub fn reading(watch: Option<&Self>) -> WatchReading<'_> {
+        let Some(watch) = watch else {
+            return WatchReading::Loading;
+        };
+        match watch.status {
+            WatchStatus::Connecting => WatchReading::Loading,
+            WatchStatus::Unreachable => WatchReading::Failed(watch.last_error.as_ref()),
+            WatchStatus::Forbidden { .. } => WatchReading::Forbidden,
+            WatchStatus::Live | WatchStatus::Relisting | WatchStatus::Stale => WatchReading::Rows,
+        }
     }
 
     /// Goes up whenever the committed snapshot changes (`apply` returns
