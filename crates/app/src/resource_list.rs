@@ -336,8 +336,9 @@ impl Render for ResourceListPanel {
             .track_focus(&self.focus_handle)
             .size_full()
             .when_some(self.stale, |this, cause| {
-                // Distinct ids and texts per cause keep `try_find` unambiguous; the
-                // alert inside takes `(id, 0)` because an id tuple needs a number.
+                // Distinct ids and texts per cause keep `try_find`
+                // unambiguous; the alert takes `(id, 0)`: a tuple id needs a
+                // number.
                 let (id, text) = match cause {
                     StaleCause::ConnectionLost => ("list-stale", STALE_MESSAGE),
                     StaleCause::Denied => ("list-denied", DENIED_STALE_MESSAGE),
