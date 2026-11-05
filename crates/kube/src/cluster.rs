@@ -435,7 +435,7 @@ impl Cluster {
     ///   cannot be reached after the connect (every request can fail this
     ///   way);
     /// - [`Other`](ClusterErrorKind::Other) when it fails any other way
-    ///   (a 404 from `/apis/<group>/<version>` aside), or the request's
+    ///   (a 404 or 5xx from `/apis/<group>/<version>` aside), or the request's
     ///   task panicked.
     pub fn discover(
         &self,
