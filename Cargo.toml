@@ -48,7 +48,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 # Dev-only: mock `kube::Client` services for apply orchestration tests.
 http = "1"
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5", features = ["util", "retry", "buffer"] }
 # Benchmarks only (spikes/*): RSS and load-average samples, gpui frame-trace
 # timestamps, and the editor benchmark's incremental-parse measurement.
 libc = "0.2"

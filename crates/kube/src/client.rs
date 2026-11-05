@@ -29,8 +29,50 @@ pub(crate) async fn client_for(cluster: &ClusterId) -> kube::Result<kube::Client
         context: Some(cluster.context().to_owned()),
         ..kube::config::KubeConfigOptions::default()
     };
-    let config = kube::Config::from_kubeconfig(&options).await?;
-    kube::Client::try_from(config)
+    let mut config = kube::Config::from_kubeconfig(&options).await?;
+    config.default_retry = false;
+    Ok(kube::client::ClientBuilder::try_from(config)?
+        .with_layer(&BoundedRetryLayer)
+        .build())
+}
+
+/// Retries 429/503/504 up to 3 times, within about a second.
+///
+/// kube-client's own retry (`Config::default_retry`) makes 15 attempts that
+/// back off to minutes, so a Discovery request to an unavailable
+/// `APIService` (503) took about ten minutes to fail (#279). Its policy is
+/// not configurable, so the default is turned off and this replaces it. See
+/// `docs/adr/0003-bounded-client-retry.md` for the costs and when to revisit.
+#[derive(Clone, Copy)]
+struct BoundedRetryLayer;
+
+impl<S, B> tower::Layer<S> for BoundedRetryLayer
+where
+    S: tower::Service<
+            http::Request<kube::client::Body>,
+            Response = http::Response<B>,
+            Error = tower::BoxError,
+        > + Send
+        + 'static,
+    S::Future: Send + 'static,
+    B: Send + 'static,
+{
+    type Service = tower::retry::Retry<
+        kube::client::retry::RetryPolicy,
+        tower::buffer::Buffer<http::Request<kube::client::Body>, S::Future>,
+    >;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        // `Retry` needs a `Clone` service and kube-client's stack is not one.
+        let policy = kube::client::retry::RetryPolicy::new(
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(500),
+            3,
+            true,
+        )
+        .expect("the retry bounds are ordered");
+        tower::retry::Retry::new(policy, tower::buffer::Buffer::new(inner, 1024))
+    }
 }
 
 /// The Clusters the user can open: the kubeconfig's contexts, the current
@@ -124,5 +166,46 @@ users:
     fn a_context_without_a_namespace_starts_in_default() {
         assert_eq!(namespace_of("plain"), "default");
         assert_eq!(namespace_of("missing"), "default");
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tower::{Layer, Service, ServiceExt};
+
+    use super::BoundedRetryLayer;
+
+    async fn attempts_for(status: u16) -> (usize, u16) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = attempts.clone();
+        let inner = tower::service_fn(move |_: http::Request<kube::client::Body>| {
+            count.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Ok::<_, tower::BoxError>(
+                http::Response::builder()
+                    .status(status)
+                    .body(String::new())
+                    .unwrap(),
+            ))
+        });
+        let mut service = BoundedRetryLayer.layer(inner);
+        let request = http::Request::builder()
+            .uri("/apis/g/v1")
+            .body(kube::client::Body::empty())
+            .unwrap();
+        let response = service.ready().await.unwrap().call(request).await.unwrap();
+        (attempts.load(Ordering::SeqCst), response.status().as_u16())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_503_is_retried_three_times_then_returned() {
+        assert_eq!(attempts_for(503).await, (4, 503));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_404_is_not_retried() {
+        assert_eq!(attempts_for(404).await, (1, 404));
     }
 }
