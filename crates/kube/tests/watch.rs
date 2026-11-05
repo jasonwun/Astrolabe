@@ -62,7 +62,7 @@ async fn dropping_the_cluster_stops_its_watches() {
     }
 }
 
-/// Lets spawned tasks run on the paused clock until they have nothing left.
+/// Lets spawned tasks run: the paused clock jumps 1 ms once they are idle.
 async fn settle() {
     tokio::time::sleep(Duration::from_millis(1)).await;
 }

@@ -313,7 +313,7 @@ pub struct Cluster {
     /// Dropped with the handle, which ends every running watch: a watch
     /// task holds the receiving side and stops once the sender is gone.
     /// Nothing is kept per watch; its reader's [`Watch`] stops it alone.
-    watches: tokio::sync::watch::Sender<()>,
+    stop: tokio::sync::watch::Sender<()>,
 }
 
 impl Cluster {
@@ -367,7 +367,7 @@ impl Cluster {
             connector,
             default_namespace,
             runtime,
-            watches: tokio::sync::watch::channel(()).0,
+            stop: tokio::sync::watch::channel(()).0,
         }
     }
 
@@ -806,12 +806,12 @@ impl Cluster {
         S: futures::Stream<Item = Result<watcher::Event<K>, watcher::Error>> + Send,
     {
         let (messages, task) = watch::relist(self.id.clone(), label, self.client(), stream);
-        let mut dropped = self.watches.subscribe();
+        let mut stopped = self.stop.subscribe();
         let task = self.runtime.spawn(async move {
             // `changed` fails once the Cluster, the only sender, is gone.
             tokio::select! {
                 () = task => {}
-                _ = dropped.changed() => {}
+                _ = stopped.changed() => {}
             }
         });
         Watch::with_work(messages, task.abort_handle())

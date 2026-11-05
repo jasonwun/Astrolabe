@@ -14,7 +14,7 @@ futures.workspace = true
 tracing.workspace = true
 # Exec stream pump and port-forward listener (#17): the IO traits
 # kube-client's streams use, and the local TCP listener. The watch relist
-# loop's retry timers (#156).
+# loop's retry timers (#156), and the Cluster's watch stop signal (#274).
 tokio = { workspace = true, features = ["io-util", "macros", "net", "sync", "time"] }
 
 [dev-dependencies]

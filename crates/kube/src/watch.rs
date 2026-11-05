@@ -58,12 +58,6 @@ impl<K> Watch<K> {
     }
 }
 
-impl<K> From<mpsc::Receiver<WatchMessage<K>>> for Watch<K> {
-    fn from(messages: mpsc::Receiver<WatchMessage<K>>) -> Self {
-        Self::new(messages)
-    }
-}
-
 impl<K> Stream for Watch<K> {
     type Item = WatchMessage<K>;
 
