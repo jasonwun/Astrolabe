@@ -5,6 +5,7 @@
 
 use std::convert::Infallible;
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use astrolabe_kube::cluster::{Cluster, ClusterId};
@@ -12,8 +13,7 @@ use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::kube::Client;
 use astrolabe_kube::kube::client::Body;
 use astrolabe_kube::kube::runtime::watcher::Event;
-use astrolabe_kube::watch::NamespaceWatchMessage;
-use futures::channel::mpsc;
+use astrolabe_kube::watch::{NamespaceWatchMessage, Watch};
 use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, StreamExt as _};
 
@@ -33,6 +33,8 @@ pub struct Apiserver {
     watches: Mutex<Vec<Answer>>,
     seen_lists: Mutex<Vec<String>>,
     seen_watches: Mutex<Vec<String>>,
+    /// How many hanging requests have been dropped, i.e. closed.
+    closed: Arc<AtomicUsize>,
 }
 
 impl Apiserver {
@@ -46,6 +48,11 @@ impl Apiserver {
 
     pub fn lists(&self) -> Vec<String> {
         self.seen_lists.lock().unwrap().clone()
+    }
+
+    /// How many requests that never answered have been dropped since.
+    pub fn closed_requests(&self) -> usize {
+        self.closed.load(Ordering::SeqCst)
     }
 
     pub fn watches(&self) -> Vec<String> {
@@ -68,8 +75,24 @@ impl Apiserver {
         match answer {
             Answer::Ok(body) => future::ready(reply(200, &body)).boxed(),
             Answer::Status(code, reason) => future::ready(status(code, reason)).boxed(),
-            Answer::Hang => future::pending().boxed(),
+            Answer::Hang => {
+                let closed = Closed(self.closed.clone());
+                async move {
+                    let _closed = closed;
+                    future::pending().await
+                }
+                .boxed()
+            }
         }
+    }
+}
+
+/// Counts the request it lives in as closed once that request is dropped.
+struct Closed(Arc<AtomicUsize>);
+
+impl Drop for Closed {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -122,7 +145,7 @@ pub fn mock_cluster(apiserver: &Arc<Apiserver>) -> Cluster {
     Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock"))
 }
 
-pub async fn next(watch: &mut mpsc::Receiver<NamespaceWatchMessage>) -> NamespaceWatchMessage {
+pub async fn next(watch: &mut Watch<Namespace>) -> NamespaceWatchMessage {
     watch.next().await.expect("the watch ended")
 }
 
@@ -131,7 +154,7 @@ pub fn name(namespace: &Namespace) -> &str {
 }
 
 /// Asserts the next messages are one complete LIST of `names`.
-pub async fn assert_list(watch: &mut mpsc::Receiver<NamespaceWatchMessage>, names: &[&str]) {
+pub async fn assert_list(watch: &mut Watch<Namespace>, names: &[&str]) {
     assert!(matches!(next(watch).await, Ok(Event::Init)));
     for expected in names {
         match next(watch).await {

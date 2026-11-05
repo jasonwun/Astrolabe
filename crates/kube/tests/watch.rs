@@ -47,17 +47,68 @@ async fn dropping_the_cluster_stops_its_watches() {
     let cluster = mock_cluster(&apiserver);
     let mut watch = cluster.watch_namespaces();
     assert_list(&mut watch, &["default"]).await;
-    // A later watch prunes finished ones and must keep the running first.
+    // A later watch must not disturb the running first.
     let mut later = cluster.watch_namespaces();
 
     drop(cluster);
 
-    // Bounded, so a watch that outlives its handle fails instead of
-    // hanging: the paused clock reaches the bound once nothing else runs.
+    // Messages queued before the drop may still arrive (a watch not yet
+    // polled sends its `Init` first); the stream must then end. Bounded, so
+    // a watch that outlives its handle fails instead of hanging: the paused
+    // clock reaches the bound once nothing else runs.
     for watch in [&mut watch, &mut later] {
-        let ended = tokio::time::timeout(Duration::from_secs(60), watch.next()).await;
-        assert!(matches!(ended, Ok(None)), "the watch outlived its handle");
+        let ended = tokio::time::timeout(Duration::from_secs(60), watch.count()).await;
+        assert!(ended.is_ok(), "the watch outlived its handle");
     }
+}
+
+/// Lets spawned tasks run on the paused clock until they have nothing left.
+async fn settle() {
+    tokio::time::sleep(Duration::from_millis(1)).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_the_reader_of_a_quiet_watch_closes_its_apiserver_watch() {
+    // The watch request never answers: no message follows the LIST, so the
+    // relist loop has nothing to send and cannot notice its reader going.
+    let apiserver = Apiserver::new(vec![namespace_list(&["default"], "1")], Vec::new());
+    let cluster = mock_cluster(&apiserver);
+    let mut watch = cluster.watch_namespaces();
+    assert_list(&mut watch, &["default"]).await;
+    settle().await;
+    assert_eq!(apiserver.watches().len(), 1);
+    assert_eq!(apiserver.closed_requests(), 0, "the watch is open");
+
+    drop(watch);
+    settle().await;
+
+    assert_eq!(apiserver.closed_requests(), 1, "the watch stayed open");
+    drop(cluster);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_the_cluster_closes_the_apiserver_watch_of_every_reader() {
+    let apiserver = Apiserver::new(
+        vec![
+            namespace_list(&["default"], "1"),
+            namespace_list(&["default"], "1"),
+        ],
+        Vec::new(),
+    );
+    let cluster = mock_cluster(&apiserver);
+    let mut first = cluster.watch_namespaces();
+    let mut second = cluster.watch_namespaces();
+    assert_list(&mut first, &["default"]).await;
+    assert_list(&mut second, &["default"]).await;
+    settle().await;
+    assert_eq!(apiserver.closed_requests(), 0);
+
+    // Both readers stay alive: only the Cluster going stops the watches.
+    drop(cluster);
+    settle().await;
+
+    assert_eq!(apiserver.closed_requests(), 2);
+    drop((first, second));
 }
 
 /// No kubeconfig names this context, on CI or a dev machine.
@@ -110,7 +161,7 @@ fn a_forbidden_error_is_forbidden_and_shows_its_message() {
 
 /// Read messages until the next error, and when it arrived.
 async fn next_error(
-    watch: &mut futures::channel::mpsc::Receiver<astrolabe_kube::watch::NamespaceWatchMessage>,
+    watch: &mut astrolabe_kube::watch::Watch<astrolabe_kube::k8s_openapi::api::core::v1::Namespace>,
 ) -> Instant {
     loop {
         if next(watch).await.is_err() {

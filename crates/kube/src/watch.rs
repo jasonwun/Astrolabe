@@ -1,6 +1,8 @@
 //! Resident watches (#28, #147): one watch's messages, and the relist loop
 //! behind [`Cluster`](crate::cluster::Cluster)'s `watch_*` methods.
 
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::channel::mpsc;
@@ -8,6 +10,7 @@ use futures::{SinkExt as _, Stream, StreamExt as _};
 use k8s_openapi::api::core::v1::Namespace;
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{Api, Client, core::DynamicObject, discovery::ApiResource, runtime::watcher};
+use tokio::task::AbortHandle;
 
 use crate::cluster::{ClusterError, ClusterId};
 
@@ -17,6 +20,65 @@ pub type WatchMessage<K> = Result<watcher::Event<K>, ClusterError>;
 pub type NamespaceWatchMessage = WatchMessage<Namespace>;
 pub type CrdWatchMessage = WatchMessage<CustomResourceDefinition>;
 pub type ObjectWatchMessage = WatchMessage<DynamicObject>;
+
+/// One resident watch, as its reader sees it: the messages of
+/// [`Cluster`](crate::cluster::Cluster)'s `watch_*` methods. Dropping it
+/// stops the relist task and closes its apiserver watch, even when the
+/// watch is quiet and would never send a message to notice.
+pub struct Watch<K> {
+    messages: mpsc::Receiver<WatchMessage<K>>,
+    work: Option<AbortHandle>,
+}
+
+impl<K> Watch<K> {
+    /// A watch reading `messages`, with no task behind it.
+    pub fn new(messages: mpsc::Receiver<WatchMessage<K>>) -> Self {
+        Self {
+            messages,
+            work: None,
+        }
+    }
+
+    /// The watch reading `messages`, owning the task that feeds them.
+    pub(crate) fn with_work(messages: mpsc::Receiver<WatchMessage<K>>, work: AbortHandle) -> Self {
+        Self {
+            messages,
+            work: Some(work),
+        }
+    }
+
+    /// The next message if one is already queued, without waiting.
+    ///
+    /// # Errors
+    ///
+    /// [`mpsc::TryRecvError`]: `is_closed` once the watch has ended and its
+    /// queue is empty, otherwise nothing is queued yet.
+    pub fn try_recv(&mut self) -> Result<WatchMessage<K>, mpsc::TryRecvError> {
+        self.messages.try_recv()
+    }
+}
+
+impl<K> From<mpsc::Receiver<WatchMessage<K>>> for Watch<K> {
+    fn from(messages: mpsc::Receiver<WatchMessage<K>>) -> Self {
+        Self::new(messages)
+    }
+}
+
+impl<K> Stream for Watch<K> {
+    type Item = WatchMessage<K>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.messages).poll_next(cx)
+    }
+}
+
+impl<K> Drop for Watch<K> {
+    fn drop(&mut self) {
+        if let Some(work) = self.work.take() {
+            work.abort();
+        }
+    }
+}
 
 /// Wait before the first relist after a failed or ended watch.
 const RETRY: Duration = Duration::from_secs(1);
@@ -87,7 +149,7 @@ pub(crate) fn objects(
 /// receiver. Any stream error restarts the watcher from a fresh LIST (#28):
 /// a silent watch resumption would emit no `InitDone`, leaving the reader
 /// stale. The loop ends once the receiver is dropped and the loop next
-/// sends.
+/// sends; [`Watch`] stops it sooner, when its reader goes.
 pub(crate) fn relist<K, F, S>(
     cluster: ClusterId,
     label: &'static str,

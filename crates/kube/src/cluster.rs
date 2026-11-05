@@ -21,7 +21,6 @@ use kube::discovery::ApiResource;
 use kube::runtime::watcher;
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
-use tokio::task::AbortHandle;
 
 use crate::apply::{self, ApplyMode, ApplyReport};
 use crate::discovery::{self, ServedResources};
@@ -32,7 +31,7 @@ use crate::pod::{
 };
 use crate::resource;
 use crate::service;
-use crate::watch::{self, WatchMessage};
+use crate::watch::{self, Watch};
 
 /// The cluster runtime, built on first use.
 ///
@@ -298,8 +297,8 @@ type Connector = Box<dyn Fn() -> SharedClient + Send + Sync>;
 /// request waiting on it with a [`Connect`](ClusterErrorKind::Connect)
 /// error. A failed connect is not kept: the next request, or
 /// [`reconnect`](Self::reconnect), connects again, while a successful one
-/// stays the one client of the handle. Dropping the handle stops its
-/// watches.
+/// stays the one client of the handle. A watch stops when its [`Watch`] is
+/// dropped or when the handle is, whichever comes first.
 pub struct Cluster {
     /// Which Cluster, for logs.
     id: ClusterId,
@@ -311,7 +310,10 @@ pub struct Cluster {
     /// Where requests run: the cluster runtime, or the caller's for
     /// `from_client`, so a test's paused clock drives the watch retries.
     runtime: Handle,
-    watches: Mutex<Vec<AbortHandle>>,
+    /// Dropped with the handle, which ends every running watch: a watch
+    /// task holds the receiving side and stops once the sender is gone.
+    /// Nothing is kept per watch; its reader's [`Watch`] stops it alone.
+    watches: tokio::sync::watch::Sender<()>,
 }
 
 impl Cluster {
@@ -365,7 +367,7 @@ impl Cluster {
             connector,
             default_namespace,
             runtime,
-            watches: Mutex::default(),
+            watches: tokio::sync::watch::channel(()).0,
         }
     }
 
@@ -754,35 +756,41 @@ impl Cluster {
         PortForward::with_work(events, work.abort_handle())
     }
 
-    /// Watch the Cluster's Namespaces, resident until the handle is
-    /// dropped. See [`watch_objects`](Self::watch_objects) for the
-    /// messages.
-    pub fn watch_namespaces(&self) -> mpsc::Receiver<WatchMessage<Namespace>> {
+    /// Watch the Cluster's Namespaces. The watch stops when the returned
+    /// [`Watch`] or the handle is dropped, whichever comes first. See
+    /// [`watch_objects`](Self::watch_objects) for the messages.
+    pub fn watch_namespaces(&self) -> Watch<Namespace> {
         self.watch("namespace", watch::namespaces)
     }
 
-    /// Watch the Cluster's `CustomResourceDefinition`s, resident until the
-    /// handle is dropped. See [`watch_objects`](Self::watch_objects) for
-    /// the messages.
-    pub fn watch_crds(&self) -> mpsc::Receiver<WatchMessage<CustomResourceDefinition>> {
+    /// Watch the Cluster's `CustomResourceDefinition`s. The watch stops
+    /// when the returned [`Watch`] or the handle is dropped, whichever
+    /// comes first. See [`watch_objects`](Self::watch_objects) for the
+    /// messages.
+    pub fn watch_crds(&self) -> Watch<CustomResourceDefinition> {
         self.watch("CRD", watch::custom_resource_definitions)
     }
 
-    /// Watch `resource`'s objects, resident until the handle is dropped:
-    /// in `namespace`, or cluster-wide for `None` (a cluster-scoped kind).
+    /// Watch `resource`'s objects: in `namespace`, or cluster-wide for
+    /// `None` (a cluster-scoped kind).
+    ///
+    /// The watch is resident until the returned [`Watch`] or the handle is
+    /// dropped, whichever comes first. Dropping the [`Watch`] ends the
+    /// task and closes its apiserver watch at once, even when the resource
+    /// is quiet and no message would ever notice the reader gone.
     ///
     /// The receiver gets each LIST as `Init`, `InitApply`… `InitDone`, then
     /// live changes. A failure, or the watch ending, arrives as an `Err`
-    /// and is followed by a fresh LIST: 1 s later, then twice as long on each
-    /// consecutive failure up to 30 s, starting over after a LIST completes;
-    /// 30 s later after a [`Forbidden`](ClusterErrorKind::Forbidden) one. A
-    /// connect failure
+    /// and is followed by a fresh LIST: 1 s later, then twice as long on
+    /// each consecutive failure up to 30 s, starting over after a LIST
+    /// completes; 30 s later after a
+    /// [`Forbidden`](ClusterErrorKind::Forbidden) one. A connect failure
     /// arrives as the only message.
     pub fn watch_objects(
         &self,
         resource: &ApiResource,
         namespace: Option<&str>,
-    ) -> mpsc::Receiver<WatchMessage<DynamicObject>> {
+    ) -> Watch<DynamicObject> {
         let resource = resource.clone();
         let namespace = namespace.map(str::to_owned);
         self.watch("object", move |client| {
@@ -791,30 +799,22 @@ impl Cluster {
     }
 
     /// Start one relist loop on the handle's runtime.
-    fn watch<K, F, S>(&self, label: &'static str, stream: F) -> mpsc::Receiver<WatchMessage<K>>
+    fn watch<K, F, S>(&self, label: &'static str, stream: F) -> Watch<K>
     where
         K: Send + 'static,
         F: Fn(&Client) -> S + Send + 'static,
         S: futures::Stream<Item = Result<watcher::Event<K>, watcher::Error>> + Send,
     {
-        let (receiver, task) = watch::relist(self.id.clone(), label, self.client(), stream);
-        let task = self.runtime.spawn(task).abort_handle();
-        let mut watches = self.watches.lock().unwrap_or_else(PoisonError::into_inner);
-        watches.retain(|watch| !watch.is_finished());
-        watches.push(task);
-        receiver
-    }
-}
-
-impl Drop for Cluster {
-    fn drop(&mut self) {
-        let watches = self
-            .watches
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner);
-        for watch in watches.drain(..) {
-            watch.abort();
-        }
+        let (messages, task) = watch::relist(self.id.clone(), label, self.client(), stream);
+        let mut dropped = self.watches.subscribe();
+        let task = self.runtime.spawn(async move {
+            // `changed` fails once the Cluster, the only sender, is gone.
+            tokio::select! {
+                () = task => {}
+                _ = dropped.changed() => {}
+            }
+        });
+        Watch::with_work(messages, task.abort_handle())
     }
 }
 
