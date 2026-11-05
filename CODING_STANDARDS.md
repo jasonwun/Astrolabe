@@ -327,6 +327,13 @@ move; a diff that changes the rule itself moves it, or names the #147
 ticket that will. The YAML editor's own rules and the Workspace's launch
 preselection stay in the UI layer for now (#147, Out of Scope).
 
+A rule keyed on what the user has open ("never evict what a detail
+reads") protects a watch only once its input has reached the state. A
+caller that starts the watches first and reports the open detail second
+leaves them unprotected in between: #245's panel did that, and its
+review found it. The reviewer reads the order of a protecting input
+against the calls it protects, and the fix is to send the input first.
+
 Origin: #147 — relist, the 403 backoff, the Discovery debounce, detail
 resolution and the Forward list's states were written inside Session,
 so each was testable only through `gpui_kit::test`, and the relist test

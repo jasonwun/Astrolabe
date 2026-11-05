@@ -57,7 +57,13 @@ fn stopped(commands: &[Command]) -> Vec<WatchKey> {
         .iter()
         .filter_map(|command| match command {
             Command::StopWatch { key } => Some(key.clone()),
-            _ => None,
+            Command::StartNamespacesWatch
+            | Command::StartCrdsWatch
+            | Command::StartWatch { .. }
+            | Command::ScheduleDiscovery { .. }
+            | Command::RunDiscovery { .. }
+            | Command::StartForward { .. }
+            | Command::StopForward { .. } => None,
         })
         .collect()
 }
