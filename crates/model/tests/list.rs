@@ -446,7 +446,7 @@ fn a_builtin_list_denied_after_a_snapshot_keeps_its_rows_stale_by_denial() {
     state.object_message(&key, Ok(pod_init("web")));
     state.object_message(&key, Ok(Event::InitDone));
 
-    assert_eq!(resolved(&state).stale, None);
+    assert_eq!(self::resolved(&state).stale, None);
 }
 
 #[test]
@@ -489,7 +489,7 @@ fn definitions_denied_after_a_snapshot_keep_their_rows_stale_by_denial() {
 
     state.crds_message(Ok(Event::Init));
     state.crds_message(Ok(Event::InitDone));
-    assert_eq!(resolved(&state).stale, None);
+    assert_eq!(self::resolved(&state).stale, None);
 }
 
 #[test]
@@ -524,7 +524,7 @@ fn a_custom_list_denied_after_a_snapshot_keeps_its_rows_stale_by_denial() {
 
     state.object_message(&key, Ok(Event::Init));
     state.object_message(&key, Ok(Event::InitDone));
-    assert_eq!(resolved(&state).stale, None);
+    assert_eq!(self::resolved(&state).stale, None);
 }
 
 #[test]
