@@ -1222,7 +1222,7 @@ fn watches_up_to_the_cap_are_all_kept() {
 
     let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP);
 
-    assert!(stopped(&commands).is_empty());
+    assert_eq!(stopped(&commands), Vec::<WatchKey>::new());
     assert!(state.object_watch(&service_key("ns0")).is_some());
 }
 
@@ -1270,7 +1270,10 @@ fn the_watches_of_an_open_detail_are_never_evicted() {
         key: ObjectKey::new(Some("team-a".to_string()), "web".to_string()),
     };
     let needed = watches(&target);
-    assert!(!needed.is_empty());
+    assert_eq!(
+        needed.first().map(|watch| watch.kind),
+        Some(BuiltinKind::Pods)
+    );
     let keys: Vec<_> = needed
         .iter()
         .map(|watch| {
