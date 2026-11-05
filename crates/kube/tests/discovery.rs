@@ -211,14 +211,44 @@ async fn per_group_discovery_skips_a_group_version_that_404s() {
 }
 
 #[tokio::test]
-async fn per_group_discovery_fails_when_a_group_version_errors_otherwise() {
+async fn per_group_discovery_skips_a_group_version_that_503s() {
+    // An APIService whose Service is gone: `/apis` still lists the group,
+    // its version answers 503.
+    let (client, _) = mock_client(legacy_server_with_new_crd(|| {
+        status(503, "ServiceUnavailable")
+    }));
+
+    let served = discover(&client).await.unwrap();
+
+    assert!(served.resolve("new.example.com", "v1", "Widget").is_none());
+    assert!(
+        served
+            .resolve("stable.example.com", "v1", "CronTab")
+            .is_some()
+    );
+    assert!(served.resolve("", "v1", "Namespace").is_some());
+}
+
+#[tokio::test]
+async fn per_group_discovery_skips_a_group_version_that_500s() {
     let (client, _) = mock_client(legacy_server_with_new_crd(|| status(500, "InternalError")));
+
+    let served = discover(&client).await.unwrap();
+
+    assert!(served.resolve("", "v1", "Namespace").is_some());
+}
+
+#[tokio::test]
+async fn per_group_discovery_fails_when_the_group_list_errors() {
+    let (client, _) = mock_client(|path, aggregated| match path {
+        "/apis" => status(503, "ServiceUnavailable"),
+        _ => legacy_server(path, aggregated),
+    });
 
     let error = discover(&client).await.unwrap_err();
 
-    assert!(!error.is_forbidden(), "{error}");
     assert!(
-        error.to_string().contains("InternalError by the mock"),
+        error.to_string().contains("ServiceUnavailable by the mock"),
         "{error}"
     );
 }

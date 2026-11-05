@@ -69,15 +69,17 @@ impl ServedResources {
 /// `curl` through `kubectl proxy` with that Accept header). Every real
 /// server serves the core group, so its absence is the "unsupported" signal.
 ///
-/// Per-group discovery skips a named group's version whose
-/// `/apis/<group>/<version>` answers 404, as a CRD group mid-registration
-/// does: it is listed under `/apis` before that path serves. Core
-/// versions (`/api/<version>`) are not skipped.
+/// Per-group discovery skips, with a warning, a named group's version whose
+/// `/apis/<group>/<version>` answers 404 (a CRD group mid-registration is
+/// listed under `/apis` before that path serves) or 5xx (an `APIService`
+/// whose Service is gone answers 503), as kubectl does. Core versions
+/// (`/api/<version>`) are not skipped.
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when per-group discovery fails other than by a 404
-/// from `/apis/<group>/<version>`; a failed aggregated request only falls
+/// A [`kube::Error`] when per-group discovery fails other than by a 404 or
+/// 5xx from `/apis/<group>/<version>` (a 403, an unreachable Cluster, a
+/// failed `/apis` or `/api`); a failed aggregated request only falls
 /// back to it.
 pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
@@ -92,8 +94,16 @@ pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     discover_per_group(client).await
 }
 
+/// Whether a named group version answering `code` is skipped: 404 (a CRD
+/// group mid-registration) and 5xx (an unavailable `APIService` answers 503).
+/// 401/403 and other client errors still fail the run, and so does any
+/// non-HTTP failure such as an unreachable Cluster.
+fn skippable(code: u16) -> bool {
+    code == 404 || (500..600).contains(&code)
+}
+
 /// kube-client's `Discovery::run`, except that a named group's version
-/// answering 404 is skipped with a warning instead of failing the whole
+/// answering 404 or 5xx is skipped with a warning instead of failing the whole
 /// run. The request order and every other error match `Discovery::run`
 /// (kube-client 4.2.0): `/apis`, each group version, `/api`, each core
 /// version.
@@ -109,10 +119,12 @@ async fn discover_per_group(client: &Client) -> kube::Result<ServedResources> {
             let group_version = GroupVersion::gv(&group.name, &version.version);
             match pinned_group(client, &group_version).await {
                 Ok(pinned) => group_versions.push(pinned),
-                Err(kube::Error::Api(status)) if status.code == 404 => {
+                Err(kube::Error::Api(status)) if skippable(status.code) => {
                     tracing::warn!(
                         group_version = %group_version.api_version(),
-                        "group version not served yet (404); skipping it in discovery"
+                        code = status.code,
+                        reason = %status.reason,
+                        "group version unavailable; skipping it in discovery"
                     );
                 }
                 Err(error) => return Err(error),

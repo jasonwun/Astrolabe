@@ -55,7 +55,7 @@ _Avoid_: children, sub-resources
 ## Custom resources
 
 **Discovery**:
-Learning which kinds, at which versions, the apiserver serves.
+Learning which kinds, at which versions, the apiserver serves. A run over per-group requests (a Cluster without Aggregated Discovery) skips a group version answering 404 or 5xx, with a warning, and fails on any other error: a 401/403, an unreachable Cluster, or a failed `/api` or `/apis`. The model is not told which group versions were skipped.
 _Avoid_: API scan
 
 **Served**:
