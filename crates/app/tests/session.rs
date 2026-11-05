@@ -201,3 +201,28 @@ fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
         assert!(watch.get(Some("default"), "web").is_some());
     });
 }
+
+/// The Cluster layer stops a watch once its reader is dropped (#274); this
+/// pins that a reconnect drops the reader of the watch it replaces.
+#[gpui_kit::test]
+fn a_reconnect_drops_the_watch_it_replaces(cx: &mut TestAppContext) {
+    let (_namespaces, namespace_events) = mpsc::channel(32);
+    let (pods, pod_events) = mpsc::channel(32);
+    let scripted = ScriptedCluster::new(namespace_events)
+        .watch(support::key(BuiltinKind::Pods, "default"), pod_events);
+    let session = cx.update(|cx| {
+        cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), "default", scripted, cx))
+    });
+    cx.update(|cx| {
+        session.update(cx, |session, cx| {
+            session.open_builtin_list(BuiltinKind::Pods, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert!(!pods.is_closed(), "the watch is being read");
+
+    cx.update(|cx| session.update(cx, |session, cx| session.reconnect(cx)));
+    cx.run_until_parked();
+
+    assert!(pods.is_closed(), "the replaced watch's reader was dropped");
+}
