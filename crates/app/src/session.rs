@@ -7,7 +7,7 @@ use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::{ExecRequest, ExecSession, ForwardRequest, LogRequest, LogStream};
-use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
+use astrolabe_kube::watch::{NamespaceWatchMessage, Watch, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::session::{CustomKindId, WatchKey};
@@ -372,7 +372,7 @@ impl Session {
 /// No receiver (a scripted cluster with no script for the watch) starts
 /// nothing. Dropping the returned task stops the drain.
 fn spawn_drain<K: 'static>(
-    receiver: Option<mpsc::Receiver<WatchMessage<K>>>,
+    receiver: Option<Watch<K>>,
     cx: &mut Context<Session>,
     apply: impl Fn(&mut Session, WatchMessage<K>) -> Vec<Command> + 'static,
     ended: impl Fn(&mut Session) + 'static,

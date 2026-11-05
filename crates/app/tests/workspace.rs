@@ -1,4 +1,4 @@
-use astrolabe::workspace::{STALE_MESSAGE, WorkspaceView};
+use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -66,7 +66,9 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
         window.render_frame(cx);
         assert!(window.try_find_by_label("default").is_some());
         assert!(window.try_find_by_label("kind-a: Stale").is_some());
-        assert!(window.try_find_by_label(STALE_MESSAGE).is_some());
+        // The workspace banner and the Namespaces list (#276) both warn.
+        assert!(window.try_find("namespace-stale").is_some());
+        assert!(window.try_find("list-stale").is_some());
     });
 
     initial_snapshot(&mut sender_a, "default");
@@ -74,6 +76,7 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
     cx.update(|window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("namespace-stale").is_none());
+        assert!(window.try_find("list-stale").is_none());
         assert!(window.try_find_by_label("kind-a: Healthy").is_some());
         window.click("cluster-kind-b", cx);
         assert!(window.try_find_by_label("kind-b: Connecting").is_some());

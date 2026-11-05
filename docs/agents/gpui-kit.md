@@ -58,7 +58,12 @@ Reference: `crates/app/src/resource_list.rs`.
 
 - `try_find_by_label` panics on a label that matches more than one element
   ("ambiguous accessible label"). Scope the query to a container id:
-  `window.within("detail-metadata").try_find_by_label(…)`.
+  `window.within("detail-metadata").try_find_by_label(…)`. A change that
+  adds a second element carrying an existing label breaks the old tests
+  that look it up: #276's Namespaces `list-stale` banner repeated the
+  workspace's `namespace-stale` text, and `workspace.rs` panicked. Only the
+  full-workspace run showed it; find by name (`try_find("list-stale")`) and
+  assert each banner on its own.
 - A label lookup only sees elements that carry both `.aria_label(…)` and
   `.test_support()`, and `.aria_label` needs an element with an `.id(…)`.
 - `.test_support()` wraps the element in `Observed<…>`

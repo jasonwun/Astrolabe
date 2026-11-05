@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
-use astrolabe_kube::cluster::{ClusterError, ClusterId};
+use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_model::builtin::BuiltinKind;
-use astrolabe_model::list::{CRD_DENIED, ListOutcome, Resolved, resolve};
+use astrolabe_model::list::{CRD_DENIED, ListOutcome, Resolved, failed_message, resolve};
 use astrolabe_model::session::CustomKindId;
 use astrolabe_model::session_state::{Command, SessionState};
 use support::{object, served};
@@ -97,14 +97,160 @@ fn denied<T>() -> Result<T, ClusterError> {
     Err(ClusterError::forbidden("forbidden"))
 }
 
+fn live_namespaces(state: &mut SessionState) {
+    state.namespaces_message(Ok(Event::Init));
+    state.namespaces_message(Ok(Event::InitDone));
+}
+
 #[test]
 fn namespaces_resolve_to_rows() {
-    let state = state();
+    let mut state = state();
+    live_namespaces(&mut state);
 
     let resolved = resolved(&state);
 
     assert_eq!(rows(&resolved), 0);
     assert!(!resolved.stale);
+}
+
+#[test]
+fn namespaces_are_loading_before_their_first_snapshot() {
+    let state = state();
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Loading("Loading namespaces…".to_string())
+    );
+}
+
+#[test]
+fn namespaces_are_stale_with_their_watch() {
+    let mut state = state();
+    live_namespaces(&mut state);
+    state.namespaces_ended();
+
+    let resolved = resolved(&state);
+
+    assert!(resolved.stale);
+    assert_eq!(rows(&resolved), 0);
+}
+
+#[test]
+fn namespaces_that_failed_before_a_snapshot_are_failed() {
+    let mut state = state();
+    state.namespaces_message(Err(ClusterError::unreachable("refused")));
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Failed(Some(ClusterError::unreachable("refused")))
+    );
+}
+
+#[test]
+fn definitions_are_loading_before_their_first_snapshot() {
+    let mut state = state();
+    state.open_definitions_list();
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Loading("Loading custom resource definitions…".to_string())
+    );
+}
+
+#[test]
+fn definitions_that_failed_before_a_snapshot_are_failed() {
+    let mut state = state();
+    state.open_definitions_list();
+    state.crds_message(Err(ClusterError::connect("no kubeconfig")));
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Failed(Some(ClusterError::connect("no kubeconfig")))
+    );
+}
+
+/// Pods whose watch failed with `error`, or ended with none.
+fn failed_pods(error: Option<ClusterError>) -> Resolved {
+    let mut state = state();
+    let key = state.open_builtin_list(BuiltinKind::Pods).key;
+    match error {
+        Some(error) => {
+            state.object_message(&key, Err(error));
+        }
+        None => state.object_ended(&key),
+    }
+    resolved(&state)
+}
+
+#[test]
+fn a_builtin_list_that_failed_unreachable_carries_the_error() {
+    let resolved = failed_pods(Some(ClusterError::unreachable("refused")));
+
+    let ListOutcome::Failed(Some(error)) = &resolved.outcome else {
+        panic!("expected failed, got {:?}", resolved.outcome);
+    };
+    assert_eq!(error.kind(), ClusterErrorKind::Unreachable);
+    assert!(!resolved.stale);
+}
+
+#[test]
+fn a_builtin_list_that_failed_to_connect_carries_the_error() {
+    let resolved = failed_pods(Some(ClusterError::connect("no kubeconfig")));
+
+    let ListOutcome::Failed(Some(error)) = &resolved.outcome else {
+        panic!("expected failed, got {:?}", resolved.outcome);
+    };
+    assert_eq!(error.kind(), ClusterErrorKind::Connect);
+}
+
+#[test]
+fn a_builtin_list_whose_watch_ended_with_no_error_is_failed_without_one() {
+    assert_eq!(failed_pods(None).outcome, ListOutcome::Failed(None));
+}
+
+#[test]
+fn a_custom_list_that_failed_before_a_snapshot_is_failed() {
+    let (mut state, run) = crontab_state();
+    state.discovery_finished(run, Ok(crontab_served()));
+    let key = state.open_custom_list(&crontab_id()).unwrap().key;
+    state.object_message(&key, Err(ClusterError::unreachable("refused")));
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Failed(Some(ClusterError::unreachable("refused")))
+    );
+}
+
+#[test]
+fn a_custom_list_before_its_first_snapshot_is_loading() {
+    let (mut state, run) = crontab_state();
+    state.discovery_finished(run, Ok(crontab_served()));
+    state.open_custom_list(&crontab_id());
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Loading("Loading crontabs…".to_string())
+    );
+}
+
+#[test]
+fn failed_messages_name_the_kind_of_failure() {
+    assert_eq!(
+        failed_message(Some(&ClusterError::unreachable("refused"))),
+        "Cannot reach the cluster: refused"
+    );
+    assert_eq!(
+        failed_message(Some(&ClusterError::connect("no kubeconfig"))),
+        "Cannot connect to the cluster: no kubeconfig"
+    );
+    assert_eq!(
+        failed_message(Some(&ClusterError::new("boom"))),
+        "Cannot load the list: boom"
+    );
+    assert_eq!(
+        failed_message(None),
+        "The watch ended before the list loaded"
+    );
 }
 
 #[test]
@@ -119,9 +265,22 @@ fn a_builtin_list_resolves_to_its_rows() {
 }
 
 #[test]
-fn a_builtin_list_before_its_first_snapshot_has_no_rows() {
+fn a_builtin_list_before_its_first_snapshot_is_loading() {
     let mut state = state();
     state.open_builtin_list(BuiltinKind::Pods);
+
+    assert_eq!(
+        resolved(&state).outcome,
+        ListOutcome::Loading("Loading pods…".to_string())
+    );
+}
+
+#[test]
+fn a_live_builtin_list_with_no_objects_is_empty_rows() {
+    let mut state = state();
+    let key = state.open_builtin_list(BuiltinKind::Pods).key;
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(Event::InitDone));
 
     assert_eq!(rows(&resolved(&state)), 0);
 }
@@ -267,13 +426,4 @@ fn definitions_whose_watch_ended_are_stale() {
     state.crds_ended();
 
     assert!(resolved(&state).stale);
-}
-
-#[test]
-fn a_served_custom_kind_before_its_first_snapshot_has_no_rows() {
-    let (mut state, run) = crontab_state();
-    state.discovery_finished(run, Ok(crontab_served()));
-    state.open_custom_list(&crontab_id());
-
-    assert_eq!(rows(&resolved(&state)), 0);
 }

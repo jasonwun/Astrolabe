@@ -222,6 +222,10 @@ impl ResourceListPanel {
             ListOutcome::Loading(text)
             | ListOutcome::Forbidden(text)
             | ListOutcome::Undefined(text) => (ResourceTable::default(), ListState::Message(text)),
+            ListOutcome::Failed(error) => (
+                ResourceTable::default(),
+                ListState::Error(list::failed_message(error.as_ref())),
+            ),
             ListOutcome::NotServed(text) => (ResourceTable::default(), ListState::Error(text)),
         };
         let stale = resolved.stale;

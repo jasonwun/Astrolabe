@@ -52,7 +52,14 @@ unchanged on kind, the same as for #243. Say in the PR that the
 screenshots prove only that, and name the test that drives the new path.
 #245's eviction needs more than 16 watches, so 17 namespaces or kinds: its
 screenshots showed lists and a detail with Related unchanged, and the model
-and Session tests drove the eviction.
+and Session tests drove the eviction. #274 (a dropped reader stops its
+watch) is the same: the screenshots showed Pods and Namespaces listing and a
+`kubectl delete` reaching the view, and the kube tests counted the closed
+apiserver requests. #275 (the detail rule's loading and failed outcomes) is the
+same: a custom kind's version switch is over before a capture, and a dead
+server cannot open a detail. The screenshots showed a Deployment detail with
+Related Pods and the "no longer exists" text after a `kubectl delete`; the
+model tests drove loading, failed and the version switch (#275 retro).
 
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
@@ -84,6 +91,22 @@ kind delete cluster --name legacy-<issue>
 
 Origin: #190 rewrote the per-group path. The `kind-astrolabe-dev`
 screenshots alone would have shown only the aggregated path (#190 retro).
+
+A state the cluster cannot produce on its own, "cannot be reached" (#276),
+needs a kubeconfig copy whose server is a dead port, and no
+`ASTROLABE_NAMESPACE` (the app cannot list namespaces without a server):
+
+```sh
+kubectl config view --raw --minify --context kind-astrolabe-dev \
+    | sed -E 's#(server: https://[^:]+):[0-9]+#\1:1#' > "$SCRATCH/dead.kubeconfig"
+KUBECONFIG="$SCRATCH/dead.kubeconfig" ASTROLABE_CLUSTER=kind-astrolabe-dev cargo run -p astrolabe
+```
+
+Each list then shows its error and the workspace banner appears, which
+pushes the sidebar down about 45pt: capture before the first click and read
+the new coordinates off it. A live list with no objects needs a namespace
+with none of the kind, such as `kube-public`'s Pods; the demo namespace
+has every kind.
 
 Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the

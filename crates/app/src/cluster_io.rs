@@ -10,15 +10,16 @@ use std::collections::HashMap;
 use astrolabe_kube::apply::{ApplyMode, ApplyReport};
 use astrolabe_kube::cluster::{Cluster, ClusterError, ClusterId};
 use astrolabe_kube::discovery::ServedResources;
+use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
+use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::{
     ExecInput, ExecOutput, ExecRequest, ExecSession, ForwardEvent, ForwardRequest, LogChunk,
     LogRequest, LogStream, PortForward,
 };
-use astrolabe_kube::watch::{
-    CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage, WatchMessage,
-};
+use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchMessage, Watch};
 use futures::future::{self, BoxFuture};
 use futures::{FutureExt as _, channel::mpsc};
 
@@ -73,11 +74,11 @@ impl ScriptedCluster {
 
     /// The watch of a failed connect: the error, then the end. `None` when
     /// the connect does not fail.
-    fn failed_watch<K>(&self) -> Option<mpsc::Receiver<WatchMessage<K>>> {
+    fn failed_watch<K>(&self) -> Option<Watch<K>> {
         let error = self.connect_failure.clone()?;
         let (mut sender, receiver) = mpsc::channel(1);
         let _ = sender.try_send(Err(error));
-        Some(receiver)
+        Some(Watch::new(receiver))
     }
 
     /// The first connect fails with `error`, as a live one does when
@@ -200,20 +201,20 @@ impl ClusterIo {
 
     /// The Namespace watch; `None` when a scripted cluster scripts none and
     /// its connect does not fail.
-    pub(crate) fn watch_namespaces(&mut self) -> Option<mpsc::Receiver<NamespaceWatchMessage>> {
+    pub(crate) fn watch_namespaces(&mut self) -> Option<Watch<Namespace>> {
         match self {
             Self::Scripted(cluster) if cluster.connect_failure.is_some() => cluster.failed_watch(),
-            Self::Scripted(cluster) => cluster.namespaces.take(),
+            Self::Scripted(cluster) => cluster.namespaces.take().map(Watch::new),
             Self::Live(cluster) => Some(cluster.watch_namespaces()),
         }
     }
 
     /// The CRD watch; `None` when a scripted cluster scripts none and its
     /// connect does not fail.
-    pub(crate) fn watch_crds(&mut self) -> Option<mpsc::Receiver<CrdWatchMessage>> {
+    pub(crate) fn watch_crds(&mut self) -> Option<Watch<CustomResourceDefinition>> {
         match self {
             Self::Scripted(cluster) if cluster.connect_failure.is_some() => cluster.failed_watch(),
-            Self::Scripted(cluster) => cluster.crds.take(),
+            Self::Scripted(cluster) => cluster.crds.take().map(Watch::new),
             Self::Live(cluster) => Some(cluster.watch_crds()),
         }
     }
@@ -224,10 +225,10 @@ impl ClusterIo {
         &mut self,
         key: &WatchKey,
         resource: &ApiResource,
-    ) -> Option<mpsc::Receiver<ObjectWatchMessage>> {
+    ) -> Option<Watch<DynamicObject>> {
         match self {
             Self::Scripted(cluster) if cluster.connect_failure.is_some() => cluster.failed_watch(),
-            Self::Scripted(cluster) => cluster.watches.remove(key),
+            Self::Scripted(cluster) => cluster.watches.remove(key).map(Watch::new),
             Self::Live(cluster) => Some(cluster.watch_objects(resource, key.namespace.as_deref())),
         }
     }

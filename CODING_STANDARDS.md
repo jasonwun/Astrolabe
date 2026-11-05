@@ -81,6 +81,31 @@ Origin: #42 asked for unchanged test assertions while replacing string
 row keys with `ObjectKey`; the implementer had to guess the line (#42
 retro).
 
+## Tests that pin the bug a ticket fixes
+
+When a ticket splits an outcome that used to be one (#275: `None` meant
+loading, failed, denied and gone), a UI test may assert the old merged
+behaviour: `crd_views` expected `detail-gone` during a version switch and
+`workload_views` expected "No pods" before the Pods snapshot. Those
+assertions are the bug, so changing them is the ticket's work, not a
+"Test assertions in no-behaviour-change refactors" finding. Find them
+before the run, with a grep for the old text and element id across
+`crates/*/tests`, and say in the PR which assertions changed and why.
+
+Origin: #275 hit both failures one at a time, each costing a test run
+(#275 retro).
+
+## Docs that name a return's meaning
+
+A change to what a function returns (#275: `object` still said "`None`
+once it is gone" after `.ok()` made it `None` for loading, failed and
+denied too) leaves its doc comment, its callers' comments and the
+`GLOSSARY.md` entry describing the old meaning. The review sweep reads
+each of them, not only the changed lines.
+
+Origin: #275's standards review found the stale `object` comment and the
+glossary's "Related section" line (#275 retro).
+
 ## Move-only refactors
 
 In a ticket that only moves code between files, review the residue of

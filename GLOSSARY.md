@@ -49,7 +49,7 @@ What a built-in kind plugs into the generic list and detail: its list columns, w
 _Avoid_: custom view, plugin
 
 **Related section**:
-A detail tab's list of other objects tied to the shown one (a Pod's Events, a Deployment's Pods, a Service's EndpointSlices), read from their own watches. Empty, it says so, unless its kind opts to hide it (a Service with no EndpointSlices).
+A detail tab's list of other objects tied to the shown one (a Pod's Events, a Deployment's Pods, a Service's EndpointSlices), read from their own watches. While its watch loads or after it failed, it says so; empty, it says so too, unless its kind opts to hide it (a Service with no EndpointSlices).
 _Avoid_: children, sub-resources
 
 ## Custom resources
