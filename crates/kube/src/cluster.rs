@@ -7,7 +7,7 @@
 //! stream handle that any executor can poll.
 
 use std::future::Future;
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use futures::channel::mpsc;
 use futures::future::{BoxFuture, Shared};
@@ -70,10 +70,13 @@ fn spawn<T: Send + 'static>(
 pub enum ClusterErrorKind {
     /// The client for the Cluster could not be built on first connect: its
     /// kubeconfig is missing or wrong, or a credential plugin's first run
-    /// failed. An apiserver that cannot be reached, or a later token
-    /// refresh that fails, fails each request as
+    /// failed. A later token refresh that fails fails each request as
     /// [`Other`](ClusterErrorKind::Other) instead.
     Connect,
+    /// The apiserver could not be reached after a successful connect: the
+    /// transport failed (connection refused or reset, a timeout), so a
+    /// view can say "cluster unreachable" instead of a generic error.
+    Unreachable,
     /// The apiserver refused the request (HTTP 403), which some views show
     /// as an empty state instead of a connection problem.
     Forbidden,
@@ -84,39 +87,75 @@ pub enum ClusterErrorKind {
 /// Why a request to a Cluster failed.
 ///
 /// Its text is the underlying error's, unchanged: the app shows it as is.
-/// It is `Clone` because every request waiting on one failed connect
-/// receives the same error.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{message}")]
+/// It keeps that error as its [`source`](std::error::Error::source) when
+/// there is one. It is `Clone` because every request waiting on one failed
+/// connect receives the same error; two errors are equal when their kind
+/// and text are.
+#[derive(Clone, Debug)]
 pub struct ClusterError {
     kind: ClusterErrorKind,
     message: String,
+    source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
 impl ClusterError {
     /// An [`Other`](ClusterErrorKind::Other) failure: what a scripted
     /// cluster answers with.
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            kind: ClusterErrorKind::Other,
-            message: message.into(),
-        }
+        Self::message_only(ClusterErrorKind::Other, message)
     }
 
     /// A [`Forbidden`](ClusterErrorKind::Forbidden) failure: what a
     /// scripted cluster answers an RBAC denial with.
     pub fn forbidden(message: impl Into<String>) -> Self {
-        Self {
-            kind: ClusterErrorKind::Forbidden,
-            message: message.into(),
-        }
+        Self::message_only(ClusterErrorKind::Forbidden, message)
     }
 
     fn connect(message: impl Into<String>) -> Self {
+        Self::message_only(ClusterErrorKind::Connect, message)
+    }
+
+    fn message_only(kind: ClusterErrorKind, message: impl Into<String>) -> Self {
         Self {
-            kind: ClusterErrorKind::Connect,
+            kind,
             message: message.into(),
+            source: None,
         }
+    }
+
+    /// A failure of `kind` caused by `source`, whose text is the error's.
+    pub(crate) fn caused_by(
+        kind: ClusterErrorKind,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            kind,
+            message: source.to_string(),
+            source: Some(Arc::new(source)),
+        }
+    }
+
+    /// An [`Other`](ClusterErrorKind::Other) failure caused by `source`.
+    pub(crate) fn other(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::caused_by(ClusterErrorKind::Other, source)
+    }
+
+    /// An [`Other`](ClusterErrorKind::Other) failure caused by `source`,
+    /// whose text is `context: source`.
+    pub(crate) fn other_in(
+        context: &str,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            kind: ClusterErrorKind::Other,
+            message: format!("{context}: {source}"),
+            source: Some(Arc::new(source)),
+        }
+    }
+
+    /// A [`Connect`](ClusterErrorKind::Connect) failure caused by `source`.
+    pub(crate) fn connect_failed(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::caused_by(ClusterErrorKind::Connect, source)
     }
 
     pub fn kind(&self) -> ClusterErrorKind {
@@ -129,42 +168,82 @@ impl ClusterError {
     }
 }
 
-/// A 403 from the apiserver is [`Forbidden`](ClusterErrorKind::Forbidden),
-/// also when it refuses an exec's or a port-forward's WebSocket upgrade,
-/// which kube-rs reports by status alone; anything else is
+impl std::fmt::Display for ClusterError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ClusterError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_deref().map(|source| source as _)
+    }
+}
+
+impl PartialEq for ClusterError {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.message == other.message
+    }
+}
+
+impl Eq for ClusterError {}
+
+/// The kind a failed request to the apiserver is: a 403 is
+/// [`Forbidden`](ClusterErrorKind::Forbidden), also when it refuses an
+/// exec's or a port-forward's WebSocket upgrade, which kube-rs reports by
+/// status alone; a transport failure is
+/// [`Unreachable`](ClusterErrorKind::Unreachable); anything else is
 /// [`Other`](ClusterErrorKind::Other).
+pub(crate) fn kind_of(error: &kube::Error) -> ClusterErrorKind {
+    match error {
+        kube::Error::Api(status) if status.code == 403 => ClusterErrorKind::Forbidden,
+        kube::Error::UpgradeConnection(UpgradeConnectionError::ProtocolSwitch(status))
+            if status.as_u16() == 403 =>
+        {
+            ClusterErrorKind::Forbidden
+        }
+        kube::Error::HyperError(_) => ClusterErrorKind::Unreachable,
+        // The service stack's failure: the transport, unless its auth
+        // layer failed to refresh a token.
+        kube::Error::Service(inner) if !caused_by_auth(inner.as_ref()) => {
+            ClusterErrorKind::Unreachable
+        }
+        _ => ClusterErrorKind::Other,
+    }
+}
+
+/// Whether `error` or anything in its source chain is a client auth error.
+fn caused_by_auth(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut next = Some(error);
+    while let Some(error) = next {
+        if error.is::<kube::client::AuthError>() {
+            return true;
+        }
+        next = error.source();
+    }
+    false
+}
+
 impl From<kube::Error> for ClusterError {
     fn from(error: kube::Error) -> Self {
-        let kind = match &error {
-            kube::Error::Api(status) if status.code == 403 => ClusterErrorKind::Forbidden,
-            kube::Error::UpgradeConnection(UpgradeConnectionError::ProtocolSwitch(status))
-                if status.as_u16() == 403 =>
-            {
-                ClusterErrorKind::Forbidden
-            }
-            _ => ClusterErrorKind::Other,
-        };
-        Self {
-            kind,
-            message: error.to_string(),
-        }
+        Self::caused_by(kind_of(&error), error)
     }
 }
 
 /// A watch refused with HTTP 403 is
-/// [`Forbidden`](ClusterErrorKind::Forbidden); anything else is
-/// [`Other`](ClusterErrorKind::Other).
+/// [`Forbidden`](ClusterErrorKind::Forbidden); one whose request failed on
+/// the transport is [`Unreachable`](ClusterErrorKind::Unreachable);
+/// anything else is [`Other`](ClusterErrorKind::Other).
 impl From<watcher::Error> for ClusterError {
     fn from(error: watcher::Error) -> Self {
-        let kind = if watch::is_forbidden(&error) {
-            ClusterErrorKind::Forbidden
-        } else {
-            ClusterErrorKind::Other
+        let kind = match &error {
+            watcher::Error::InitialListFailed(inner)
+            | watcher::Error::WatchStartFailed(inner)
+            | watcher::Error::WatchFailed(inner) => kind_of(inner),
+            watcher::Error::WatchError(status) if status.code == 403 => ClusterErrorKind::Forbidden,
+            _ => ClusterErrorKind::Other,
         };
-        Self {
-            kind,
-            message: error.to_string(),
-        }
+        Self::caused_by(kind, error)
     }
 }
 
@@ -261,7 +340,7 @@ impl Cluster {
                     async move {
                         crate::client::client_for(&cluster)
                             .await
-                            .map_err(|error| ClusterError::connect(error.to_string()))
+                            .map_err(ClusterError::connect_failed)
                     },
                     ClusterError::connect("cluster connect task panicked"),
                 )
@@ -353,6 +432,9 @@ impl Cluster {
     ///   built, or its connect task panicked;
     /// - [`Forbidden`](ClusterErrorKind::Forbidden) when per-group discovery
     ///   (the fallback after any aggregated failure) gets a 403;
+    /// - [`Unreachable`](ClusterErrorKind::Unreachable) when the apiserver
+    ///   cannot be reached after the connect (every request can fail this
+    ///   way);
     /// - [`Other`](ClusterErrorKind::Other) when it fails any other way
     ///   (a 404 from `/apis/<group>/<version>` aside), or the request's
     ///   task panicked.
@@ -483,9 +565,7 @@ impl Cluster {
             &self.runtime,
             async move {
                 let client = client.await?;
-                request(client, snapshot)
-                    .await
-                    .map_err(|error| ClusterError::new(error.to_string()))
+                request(client, snapshot).await.map_err(ClusterError::other)
             },
             ClusterError::new(panicked),
         )
@@ -529,7 +609,7 @@ impl Cluster {
             // A read failure is the stream's last item, so no check for it.
             futures::pin_mut!(stream);
             while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|error| ClusterError::new(error.to_string()));
+                let chunk = chunk.map_err(ClusterError::other);
                 if sender.unbounded_send(chunk).is_err() {
                     return;
                 }
@@ -619,7 +699,7 @@ impl Cluster {
                 let _ = sender.unbounded_send(ForwardEvent::Failed(error));
             };
             let bind_failed =
-                |error: std::io::Error| ClusterError::new(format!("bind localhost: {error}"));
+                |error: std::io::Error| ClusterError::other_in("bind localhost", error);
             let client = match client.await {
                 Ok(client) => client,
                 Err(error) => return failed(error),
@@ -639,8 +719,7 @@ impl Cluster {
             let on_error = move |error| {
                 let _ = connections.unbounded_send(ForwardEvent::ConnectionFailed(error));
             };
-            let listener_failed =
-                |error: std::io::Error| ClusterError::new(format!("listener: {error}"));
+            let listener_failed = |error: std::io::Error| ClusterError::other_in("listener", error);
             let forward = async {
                 match &request.target {
                     ForwardTarget::Pod(pod) => {

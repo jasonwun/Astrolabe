@@ -237,6 +237,7 @@ pub fn global_report(docs: &[&str]) -> ApplyReport {
             result: Err(DocError {
                 error: astrolabe_kube::apply::ApplyError::Global {
                     message: format!("forbidden: {doc}"),
+                    forbidden: true,
                 },
                 causes: Vec::new(),
             }),

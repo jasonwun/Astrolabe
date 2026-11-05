@@ -83,17 +83,6 @@ pub(crate) fn objects(
     watcher(api, watcher::Config::default())
 }
 
-/// Whether a watch failed because RBAC denies list/watch (HTTP 403).
-pub(crate) fn is_forbidden(error: &watcher::Error) -> bool {
-    match error {
-        watcher::Error::InitialListFailed(kube::Error::Api(status))
-        | watcher::Error::WatchStartFailed(kube::Error::Api(status))
-        | watcher::Error::WatchFailed(kube::Error::Api(status))
-        | watcher::Error::WatchError(status) => status.code == 403,
-        _ => false,
-    }
-}
-
 /// The resident relist loop for one watch, answering through the returned
 /// receiver. Any stream error restarts the watcher from a fresh LIST (#28):
 /// a silent watch resumption would emit no `InitDone`, leaving the reader

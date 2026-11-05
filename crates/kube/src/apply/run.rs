@@ -12,6 +12,7 @@ use kube::core::response::Status;
 use kube::core::{DynamicObject, GroupVersionKind};
 use kube::{Api, Client, ResourceExt as _};
 
+use crate::cluster::{ClusterErrorKind, kind_of};
 use crate::discovery::{self, ServedResource, ServedResources};
 
 use super::error::{ApplyError, FieldCause, parse_status};
@@ -220,6 +221,7 @@ async fn apply_one(
     let object: DynamicObject =
         serde_json::from_value(doc.value.clone()).map_err(|e| ApplyError::Global {
             message: format!("document is not a Kubernetes object: {e}"),
+            forbidden: false,
         })?;
     let (group, version) = match doc.api_version.split_once('/') {
         Some((group, version)) => (group, version),
@@ -228,6 +230,7 @@ async fn apply_one(
     if version.is_empty() {
         return Err(ApplyError::Global {
             message: format!("invalid apiVersion {:?}", doc.api_version),
+            forbidden: false,
         });
     }
     let gvk = GroupVersionKind::gvk(group, version, &doc.kind);
@@ -238,6 +241,7 @@ async fn apply_one(
         .await
         .map_err(|e| ApplyError::Global {
             message: format!("failed to discover {}: {e}", gvk.kind),
+            forbidden: kind_of(&e) == ClusterErrorKind::Forbidden,
         })?;
 
     let api = if namespaced {
@@ -259,6 +263,7 @@ async fn apply_one(
             kube::Error::Api(status) => parse_status(&status),
             other => ApplyError::Global {
                 message: other.to_string(),
+                forbidden: false,
             },
         })
 }
@@ -359,6 +364,7 @@ data:
     fn global_errors_have_no_causes() {
         let error = ApplyError::Global {
             message: "forbidden".into(),
+            forbidden: true,
         };
         assert_eq!(located_causes(&error, DOC, 0), vec![]);
     }
@@ -512,7 +518,7 @@ data:
         .await
         .unwrap_err();
         match err {
-            ApplyError::Global { message } => {
+            ApplyError::Global { message, .. } => {
                 assert!(message.contains("apiVersion"), "unexpected: {message}");
             }
             other => panic!("expected Global, got {other:?}"),

@@ -316,7 +316,7 @@ impl From<ExecError> for ClusterError {
     fn from(error: ExecError) -> Self {
         match error {
             ExecError::Connect(error) => error.into(),
-            error => ClusterError::new(error.to_string()),
+            error => ClusterError::other(error),
         }
     }
 }
@@ -446,18 +446,13 @@ async fn forward(
     let remote_error = forwarder.take_error(port).expect(requested);
     let copied = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
     drop(remote);
-    forwarder
-        .join()
-        .await
-        .map_err(|error| ClusterError::new(error.to_string()))?;
+    forwarder.join().await.map_err(ClusterError::other)?;
     // The server's own report (e.g. nothing listening on the port) says
     // more than the copy's broken pipe.
     if let Some(error) = remote_error.await {
         return Err(ClusterError::new(error));
     }
-    copied
-        .map(|_| ())
-        .map_err(|error| ClusterError::new(error.to_string()))
+    copied.map(|_| ()).map_err(ClusterError::other)
 }
 
 #[cfg(test)]

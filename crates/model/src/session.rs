@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use astrolabe_kube::cluster::ClusterId;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::kube::ResourceExt;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::ObjectKey;
@@ -217,6 +217,9 @@ pub struct Watched<K> {
     /// A relist in progress, swapped in whole on `InitDone`.
     staging: BTreeMap<ObjectKey, K>,
     status: WatchStatus,
+    /// The failure that ended the watch, until a message shows it live
+    /// again.
+    last_error: Option<ClusterError>,
     /// Goes up each time the committed snapshot changes.
     revision: u64,
 }
@@ -230,6 +233,7 @@ impl<K: ResourceExt> Watched<K> {
             committed: BTreeMap::new(),
             staging: BTreeMap::new(),
             status: WatchStatus::Connecting,
+            last_error: None,
             revision: 0,
         }
     }
@@ -243,6 +247,9 @@ impl<K: ResourceExt> Watched<K> {
                 "{} session health changed",
                 self.label
             );
+        }
+        if status == WatchStatus::Live {
+            self.last_error = None;
         }
         self.status = status;
     }
@@ -319,6 +326,7 @@ impl<K: ResourceExt> Watched<K> {
                 } else {
                     self.status.failed()
                 });
+                self.last_error = Some(error);
                 SnapshotChange::Unchanged
             }
         }
@@ -341,6 +349,12 @@ impl<K: ResourceExt> Watched<K> {
         self.status
     }
 
+    /// The latest failure of the watch, kind and source kept; none once it
+    /// is live again.
+    pub fn last_error(&self) -> Option<&ClusterError> {
+        self.last_error.as_ref()
+    }
+
     /// Goes up whenever the committed snapshot changes (`apply` returns
     /// anything but `Unchanged`), so a reader can tell whether it changed
     /// since it last looked. A relist always counts; an `Apply` carrying the
@@ -355,7 +369,7 @@ pub enum ForwardState {
     Starting,
     /// Accepting on this localhost port.
     Listening(u16),
-    Failed(String),
+    Failed(ClusterError),
 }
 
 #[cfg(test)]

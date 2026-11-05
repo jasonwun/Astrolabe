@@ -194,6 +194,10 @@ fn conflicted() -> http::Response<Body> {
     reply(409, CONFLICT)
 }
 
+fn refused() -> http::Response<Body> {
+    status(403, "Forbidden")
+}
+
 fn unknown_field() -> http::Response<Body> {
     reply(422, UNKNOWN_FIELD)
 }
@@ -326,7 +330,7 @@ async fn an_unserved_kind_the_apiserver_does_not_know_is_reported() {
     assert!(!report.ok());
     let error = report.outcomes[0].result.as_ref().unwrap_err();
     assert!(
-        matches!(&error.error, ApplyError::Global { message } if message.contains("failed to discover")),
+        matches!(&error.error, ApplyError::Global { message, .. } if message.contains("failed to discover")),
         "{error:?}"
     );
     assert!(!discovery.lock().unwrap().is_empty());
@@ -354,6 +358,87 @@ async fn a_conflicting_apply_reports_the_conflict() {
         }
         other => panic!("expected a conflict, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn an_apply_the_apiserver_refuses_says_it_was_forbidden() {
+    let (cluster, _) = configmap_cluster(refused);
+
+    let report = cluster
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            ServedResources::default(),
+        )
+        .await
+        .unwrap();
+
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    assert!(
+        matches!(
+            &error.error,
+            ApplyError::Global {
+                forbidden: true,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_apply_that_fails_otherwise_is_not_forbidden() {
+    let (cluster, _) = configmap_cluster(|| status(500, "InternalError"));
+
+    let report = cluster
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            ServedResources::default(),
+        )
+        .await
+        .unwrap();
+
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    assert!(
+        matches!(
+            &error.error,
+            ApplyError::Global {
+                forbidden: false,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+}
+
+/// A Cluster whose apiserver refuses every connection after the client
+/// was built.
+fn unreachable_cluster() -> Cluster {
+    let service = tower::service_fn(|_: http::Request<Body>| {
+        std::future::ready(Err::<http::Response<Body>, _>(std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused,
+        )))
+    });
+    Cluster::from_client(Client::new(service, "default"), ClusterId::named("mock"))
+}
+
+#[tokio::test]
+async fn an_apiserver_that_cannot_be_reached_is_unreachable_not_other() {
+    let cluster = unreachable_cluster();
+
+    let error = cluster.discover().await.unwrap_err();
+
+    assert_eq!(error.kind(), ClusterErrorKind::Unreachable, "{error}");
+    assert!(!error.is_forbidden());
+}
+
+#[tokio::test]
+async fn an_error_keeps_the_error_it_came_from() {
+    let error = unreachable_cluster().discover().await.unwrap_err();
+
+    let source = std::error::Error::source(&error).expect("the kube error is the source");
+    assert_eq!(source.to_string(), error.to_string());
 }
 
 #[tokio::test]

@@ -42,8 +42,7 @@ pub(crate) async fn client_for(cluster: &ClusterId) -> kube::Result<kube::Client
 /// An [`Other`](crate::cluster::ClusterErrorKind::Other) [`ClusterError`]
 /// when the kubeconfig cannot be found, read or parsed.
 pub fn clusters() -> Result<Vec<ClusterId>, ClusterError> {
-    let config =
-        kube::config::Kubeconfig::read().map_err(|error| ClusterError::new(error.to_string()))?;
+    let config = kube::config::Kubeconfig::read().map_err(ClusterError::other)?;
     let mut clusters: Vec<ClusterId> = config
         .contexts
         .iter()
