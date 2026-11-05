@@ -202,7 +202,6 @@ pub(crate) fn kind_of(error: &kube::Error) -> ClusterErrorKind {
         {
             ClusterErrorKind::Forbidden
         }
-        kube::Error::HyperError(_) => ClusterErrorKind::Unreachable,
         // The service stack's failure: the transport, unless its auth
         // layer failed to refresh a token.
         kube::Error::Service(inner) if !caused_by_auth(inner.as_ref()) => {
@@ -830,6 +829,43 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    fn service_error(error: impl std::error::Error + Send + Sync + 'static) -> kube::Error {
+        kube::Error::Service(Box::new(error))
+    }
+
+    /// An error with a source, as a tower layer wraps the one it hit.
+    #[derive(Debug, thiserror::Error)]
+    #[error("layer failed")]
+    struct Layered(#[source] kube::client::AuthError);
+
+    #[test]
+    fn errors_are_equal_by_kind_and_text() {
+        let error = ClusterError::new("boom");
+        assert_eq!(error, ClusterError::new("boom"));
+        assert_ne!(error, ClusterError::new("bang"));
+        assert_ne!(error, ClusterError::forbidden("boom"));
+        assert_eq!(
+            ClusterError::other(std::io::Error::other("boom")),
+            error,
+            "the source is not compared"
+        );
+    }
+
+    #[test]
+    fn a_transport_failure_is_unreachable() {
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let error = ClusterError::from(service_error(refused));
+        assert_eq!(error.kind(), ClusterErrorKind::Unreachable);
+    }
+
+    #[test]
+    fn an_auth_failure_is_not_unreachable_whether_wrapped_or_not() {
+        let auth = || kube::client::AuthError::UnrefreshableTokenResponse;
+        for error in [service_error(auth()), service_error(Layered(auth()))] {
+            assert_eq!(ClusterError::from(error).kind(), ClusterErrorKind::Other);
+        }
+    }
 
     #[test]
     fn a_target_without_a_namespace_is_an_error_not_the_empty_namespace() {

@@ -330,10 +330,36 @@ async fn an_unserved_kind_the_apiserver_does_not_know_is_reported() {
     assert!(!report.ok());
     let error = report.outcomes[0].result.as_ref().unwrap_err();
     assert!(
-        matches!(&error.error, ApplyError::Global { message, .. } if message.contains("failed to discover")),
+        matches!(&error.error, ApplyError::Global { message, forbidden: false } if message.contains("failed to discover")),
         "{error:?}"
     );
     assert!(!discovery.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_unserved_kind_discovery_refuses_is_forbidden() {
+    let (cluster, _) = recording_cluster(|_| status(403, "Forbidden"));
+
+    let report = cluster
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            ServedResources::default(),
+        )
+        .await
+        .unwrap();
+
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    assert!(
+        matches!(
+            &error.error,
+            ApplyError::Global {
+                forbidden: true,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
