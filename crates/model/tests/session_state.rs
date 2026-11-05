@@ -9,10 +9,13 @@ use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::KindResource;
+use astrolabe_model::detail::{DetailTarget, watches};
 use astrolabe_model::session::{
     ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey,
 };
-use astrolabe_model::session_state::{ActiveForward, Command, SessionState, custom_kind};
+use astrolabe_model::session_state::{
+    ActiveForward, Command, RESIDENT_WATCH_CAP, SessionState, custom_kind,
+};
 use support::{object, served};
 
 mod support;
@@ -42,9 +45,40 @@ fn started(commands: &[Command]) -> Vec<WatchKey> {
             | Command::ScheduleDiscovery { .. }
             | Command::RunDiscovery { .. }
             | Command::StartForward { .. }
-            | Command::StopForward { .. } => None,
+            | Command::StopForward { .. }
+            | Command::StopWatch { .. } => None,
         })
         .collect()
+}
+
+/// The keys of the watches `commands` stop.
+fn stopped(commands: &[Command]) -> Vec<WatchKey> {
+    commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::StopWatch { key } => Some(key.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Start `count` Service watches, one per namespace `ns0`, `ns1`, …, and
+/// return every command they answered with.
+fn fill_with_services(state: &mut SessionState, count: usize) -> Vec<Command> {
+    (0..count)
+        .flat_map(|index| {
+            state
+                .watch_builtin(BuiltinKind::Services, Some(&format!("ns{index}")))
+                .commands
+        })
+        .collect()
+}
+
+fn service_key(namespace: &str) -> WatchKey {
+    WatchKey {
+        kind: ResourceKind::Builtin(BuiltinKind::Services),
+        ..pod_key(namespace)
+    }
 }
 
 fn pod_key(namespace: &str) -> WatchKey {
@@ -1180,4 +1214,116 @@ fn a_builtin_detail_starts_nothing_when_the_catalog_changes() {
     let commands = list_crontab_crd(&mut state, "Namespaced");
 
     assert_eq!(started(&commands), []);
+}
+
+#[test]
+fn watches_up_to_the_cap_are_all_kept() {
+    let mut state = state();
+
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP);
+
+    assert!(stopped(&commands).is_empty());
+    assert!(state.object_watch(&service_key("ns0")).is_some());
+}
+
+#[test]
+fn the_least_recently_used_unneeded_watch_is_stopped_over_the_cap() {
+    let mut state = state();
+    fill_with_services(&mut state, RESIDENT_WATCH_CAP);
+
+    let ensured = state.watch_builtin(BuiltinKind::Services, Some("extra"));
+
+    assert_eq!(started(&ensured.commands), [service_key("extra")]);
+    assert_eq!(stopped(&ensured.commands), [service_key("ns0")]);
+    assert!(state.object_watch(&service_key("ns0")).is_none());
+    assert!(state.object_watch(&service_key("ns1")).is_some());
+}
+
+#[test]
+fn asking_for_a_running_watch_again_makes_it_recently_used() {
+    let mut state = state();
+    fill_with_services(&mut state, RESIDENT_WATCH_CAP);
+    state.watch_builtin(BuiltinKind::Services, Some("ns0"));
+
+    let ensured = state.watch_builtin(BuiltinKind::Services, Some("extra"));
+
+    assert_eq!(stopped(&ensured.commands), [service_key("ns1")]);
+    assert!(state.object_watch(&service_key("ns0")).is_some());
+}
+
+#[test]
+fn the_viewed_list_is_never_evicted() {
+    let mut state = state();
+    let viewed = state.open_builtin_list(BuiltinKind::Pods).key;
+
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP * 2);
+
+    assert!(!stopped(&commands).contains(&viewed));
+    assert!(state.object_watch(&viewed).is_some());
+}
+
+#[test]
+fn the_watches_of_an_open_detail_are_never_evicted() {
+    let mut state = state();
+    let target = DetailTarget::Builtin {
+        kind: BuiltinKind::Pods,
+        key: ObjectKey::new(Some("team-a".to_string()), "web".to_string()),
+    };
+    let needed = watches(&target);
+    assert!(!needed.is_empty());
+    let keys: Vec<_> = needed
+        .iter()
+        .map(|watch| {
+            state
+                .watch_builtin(watch.kind, watch.namespace.as_deref())
+                .key
+        })
+        .collect();
+    state.open_detail(target.clone());
+
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP * 2);
+
+    for key in &keys {
+        assert!(!stopped(&commands).contains(key));
+        assert!(state.object_watch(key).is_some());
+    }
+}
+
+#[test]
+fn a_closed_detail_releases_its_watches_to_eviction() {
+    let mut state = state();
+    let target = DetailTarget::Builtin {
+        kind: BuiltinKind::Pods,
+        key: ObjectKey::new(Some("team-a".to_string()), "web".to_string()),
+    };
+    let shown = state.watch_builtin(BuiltinKind::Pods, Some("team-a")).key;
+    state.open_detail(target.clone());
+    state.close_detail(&target);
+
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP);
+
+    assert!(stopped(&commands).contains(&shown));
+}
+
+#[test]
+fn coming_back_to_an_evicted_watch_starts_it_again() {
+    let mut state = state();
+    fill_with_services(&mut state, RESIDENT_WATCH_CAP + 1);
+    assert!(state.object_watch(&service_key("ns0")).is_none());
+
+    let ensured = state.watch_builtin(BuiltinKind::Services, Some("ns0"));
+
+    assert_eq!(started(&ensured.commands), [service_key("ns0")]);
+    assert!(state.object_watch(&service_key("ns0")).is_some());
+}
+
+#[test]
+fn a_reconnect_does_not_restart_an_evicted_watch() {
+    let mut state = state();
+    fill_with_services(&mut state, RESIDENT_WATCH_CAP + 1);
+
+    let commands = state.reconnect();
+
+    assert!(!started(&commands).contains(&service_key("ns0")));
+    assert_eq!(started(&commands).len(), RESIDENT_WATCH_CAP);
 }

@@ -20,6 +20,10 @@ _Avoid_: subscription, poller
 The identity of a watch: cluster, kind, and namespace, where no namespace means a cluster-scoped watch.
 _Avoid_: watcher id
 
+**Eviction**:
+Stopping a resident object watch that nothing needs, once more than `RESIDENT_WATCH_CAP` run: the least recently used goes first, and a watch the viewed list or an open detail reads never does. Coming back to its kind and namespace starts it again.
+_Avoid_: GC, expiry
+
 **Snapshot**:
 The complete set of objects a watch last listed, replaced whole, never patched mid-relist.
 

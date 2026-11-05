@@ -166,6 +166,10 @@ impl Session {
                 }
                 Command::RunDiscovery { run } => self.run_discovery(run, cx),
                 Command::StartForward { request } => self.start_forward(request, cx),
+                Command::StopWatch { key } => {
+                    self.drains.remove(&Drain::Objects(key));
+                    cx.notify();
+                }
                 Command::StopForward { request } => {
                     self.forward_tasks.retain(|task| task.request != request);
                     cx.notify();

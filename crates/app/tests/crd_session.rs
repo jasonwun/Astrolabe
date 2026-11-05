@@ -11,7 +11,9 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::watch::ObjectWatchMessage;
+use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId, ResourceKind, WatchKey};
+use astrolabe_model::session_state::RESIDENT_WATCH_CAP;
 use futures::channel::mpsc;
 use gpui_kit::{AppContext, Entity, TestAppContext};
 
@@ -306,4 +308,53 @@ fn an_object_watch_ignores_the_namespace_selection_and_list(cx: &mut TestAppCont
         session.watch_custom_object(&backup, None, cx)
     });
     assert_eq!(key, Some(custom_key(None, "Backup")));
+}
+
+fn pod_key(namespace: &str) -> WatchKey {
+    WatchKey {
+        cluster: ClusterId::named("kind-a"),
+        kind: ResourceKind::Builtin(BuiltinKind::Pods),
+        namespace: Some(namespace.to_string()),
+    }
+}
+
+/// The policy (which watch goes) is `SessionState`'s, tested in
+/// `astrolabe-model`; this pins that Session carries out the stop: the
+/// drain ends, so its channel closes, and asking again starts a new drain.
+#[gpui_kit::test]
+fn an_evicted_watch_is_stopped_and_starts_again_when_asked(cx: &mut TestAppContext) {
+    let count = RESIDENT_WATCH_CAP + 1;
+    let (senders, scripted): (Vec<_>, Vec<_>) = (0..count)
+        .map(|index| {
+            let (sender, receiver) = mpsc::channel(32);
+            (sender, (pod_key(&format!("ns{index}")), receiver))
+        })
+        .unzip();
+    let mut senders: Vec<mpsc::Sender<ObjectWatchMessage>> = senders;
+    let h = harness(cx, scripted);
+    for index in 0..count {
+        h.session.update(cx, |session, cx| {
+            session.watch_builtin(BuiltinKind::Pods, Some(&format!("ns{index}")), cx)
+        });
+    }
+    cx.run_until_parked();
+
+    cx.read(|cx| {
+        let state = h.session.read(cx).state();
+        assert!(state.object_watch(&pod_key("ns0")).is_none());
+        assert!(state.object_watch(&pod_key("ns1")).is_some());
+    });
+    assert!(senders[0].is_closed(), "the evicted drain ended");
+    assert!(!senders[1].is_closed(), "a kept drain still runs");
+
+    // Back to the evicted namespace: its watch starts, on a script that has
+    // run out, so only the state shows it.
+    h.session.update(cx, |session, cx| {
+        session.watch_builtin(BuiltinKind::Pods, Some("ns0"), cx)
+    });
+    cx.read(|cx| {
+        let state = h.session.read(cx).state();
+        assert!(state.object_watch(&pod_key("ns0")).is_some());
+    });
+    senders.clear();
 }

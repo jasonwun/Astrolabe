@@ -17,7 +17,7 @@ use astrolabe_kube::watch::{CrdWatchMessage, NamespaceWatchMessage, ObjectWatchM
 
 use crate::builtin::BuiltinKind;
 use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
-use crate::detail::DetailTarget;
+use crate::detail::{self, DetailTarget};
 use crate::discovery_cache::DiscoveryCache;
 use crate::session::{
     ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey, Watched,
@@ -49,7 +49,16 @@ pub enum Command {
     StartForward { request: ForwardRequest },
     /// Stop the forward of `request`: drop its I/O.
     StopForward { request: ForwardRequest },
+    /// Stop the object watch `key`: drop its drain, so no further message
+    /// arrives for it.
+    StopWatch { key: WatchKey },
 }
+
+/// How many object watches stay resident before the least recently used
+/// ones that nothing needs are stopped. The Namespaces and Definitions
+/// watches are the state's own and do not count. Watches the viewed list or
+/// an open detail needs are never stopped, so more than this many may run.
+pub const RESIDENT_WATCH_CAP: usize = 16;
 
 /// A port-forward the session keeps until stopped, whether or not its
 /// target's detail tab is open.
@@ -98,6 +107,11 @@ pub struct SessionState {
     /// What each object watch in `objects` was started on, so a reconnect
     /// can start it again.
     resources: BTreeMap<WatchKey, ApiResource>,
+    /// When each object watch was last asked for, as a number from `uses`:
+    /// the eviction order. A counter, not a clock, so the rule reads no time.
+    last_used: BTreeMap<WatchKey, u64>,
+    /// Bumped by every `ensure`.
+    uses: u64,
     namespace: String,
     viewing: Viewing,
     /// The detail targets whose tabs are open, one entry per tab.
@@ -127,6 +141,8 @@ impl SessionState {
             },
             objects: BTreeMap::new(),
             resources: BTreeMap::new(),
+            last_used: BTreeMap::new(),
+            uses: 0,
             namespace: namespace.into(),
             viewing: Viewing::Namespaces,
             details: Vec::new(),
@@ -581,9 +597,13 @@ impl SessionState {
             .unwrap_or_default()
     }
 
-    /// Start the object watch `key` on `resource` unless it runs already.
+    /// Start the object watch `key` on `resource` unless it runs already,
+    /// and mark it recently used. A start over `RESIDENT_WATCH_CAP` stops
+    /// the least recently used watches that nothing needs.
     fn ensure(&mut self, key: WatchKey, resource: &ApiResource) -> Ensured {
         let mut commands = Vec::new();
+        self.uses += 1;
+        self.last_used.insert(key.clone(), self.uses);
         if !self.objects.contains_key(&key) {
             self.objects.insert(
                 key.clone(),
@@ -594,8 +614,63 @@ impl SessionState {
                 key: key.clone(),
                 resource: resource.clone(),
             });
+            commands.extend(self.evict(&key));
         }
         Ensured { key, commands }
+    }
+
+    /// Stop the least recently used object watches that nothing needs, until
+    /// `RESIDENT_WATCH_CAP` remain or only needed ones (and `keep`) are left.
+    fn evict(&mut self, keep: &WatchKey) -> Vec<Command> {
+        let Some(excess) = self.objects.len().checked_sub(RESIDENT_WATCH_CAP) else {
+            return Vec::new();
+        };
+        let needed = self.needed_watches();
+        let mut idle: Vec<(u64, WatchKey)> = self
+            .last_used
+            .iter()
+            .filter(|(key, _)| *key != keep && !needed.contains(key))
+            .map(|(key, used)| (*used, key.clone()))
+            .collect();
+        idle.sort();
+        idle.into_iter()
+            .take(excess)
+            .map(|(_, key)| {
+                self.objects.remove(&key);
+                self.resources.remove(&key);
+                self.last_used.remove(&key);
+                Command::StopWatch { key }
+            })
+            .collect()
+    }
+
+    /// The object watches the viewed list and the open details read.
+    fn needed_watches(&self) -> Vec<WatchKey> {
+        let namespace = Some(self.namespace.as_str());
+        let mut needed = Vec::new();
+        match &self.viewing {
+            Viewing::Builtin(kind) => needed.push(self.builtin_watch_key(*kind, namespace)),
+            Viewing::Custom(id) => needed.extend(
+                self.custom_kind(id)
+                    .map(|kind| self.custom_object_watch_key(kind, namespace)),
+            ),
+            Viewing::Namespaces | Viewing::Definitions => {}
+        }
+        for target in &self.details {
+            match target {
+                DetailTarget::Builtin { .. } => {
+                    needed.extend(detail::watches(target).iter().map(|watch| {
+                        self.builtin_watch_key(watch.kind, watch.namespace.as_deref())
+                    }))
+                }
+                DetailTarget::Custom { id, key } => needed.extend(
+                    self.custom_kind(id)
+                        .map(|kind| self.custom_object_watch_key(kind, key.namespace.as_deref())),
+                ),
+                DetailTarget::Namespace { .. } | DetailTarget::Definition { .. } => {}
+            }
+        }
+        needed
     }
 
     fn follow_viewed_list(&mut self) -> Vec<Command> {
