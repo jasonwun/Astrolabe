@@ -1331,3 +1331,31 @@ fn a_reconnect_does_not_restart_an_evicted_watch() {
     assert!(!started(&commands).contains(&service_key("ns0")));
     assert_eq!(started(&commands).len(), RESIDENT_WATCH_CAP);
 }
+
+#[test]
+fn a_viewed_custom_list_is_never_evicted() {
+    let mut state = crontab_state("Namespaced", true);
+    let viewed = state.open_custom_list(&crontab_id()).unwrap().key;
+
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP * 2);
+
+    assert!(!stopped(&commands).contains(&viewed));
+    assert!(state.object_watch(&viewed).is_some());
+}
+
+#[test]
+fn the_watch_of_an_open_custom_detail_is_never_evicted() {
+    let mut state = crontab_state("Namespaced", true);
+    let target = crontab_detail("team-a");
+    let commands = state.open_detail(target.clone());
+    let watched = started(&commands);
+    assert_eq!(watched.len(), 1);
+
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP * 2);
+
+    assert!(!stopped(&commands).contains(&watched[0]));
+    assert!(state.object_watch(&watched[0]).is_some());
+    state.close_detail(&target);
+    let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP);
+    assert!(stopped(&commands).contains(&watched[0]));
+}
