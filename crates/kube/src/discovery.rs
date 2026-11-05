@@ -79,7 +79,8 @@ impl ServedResources {
 ///
 /// A [`kube::Error`] when per-group discovery fails other than by a 404 or
 /// 5xx from `/apis/<group>/<version>` (a 403, an unreachable Cluster, a
-/// failed `/apis` or `/api`); a failed aggregated request only falls
+/// failed `/apis` or `/api`, an empty group or core version list, a failed
+/// core `/api/<version>`); a failed aggregated request only falls
 /// back to it.
 pub(crate) async fn discover(client: &Client) -> kube::Result<ServedResources> {
     match Discovery::new(client.clone()).run_aggregated().await {
