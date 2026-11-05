@@ -367,6 +367,14 @@ The Spec reviewer found both. `cargo clippy --fix` backticked
 `ConfigMaps` and `CronJob` while other comments kept them as prose, and
 the Standards reviewer flagged the mix (#149 retro).
 
+A new `ClusterErrorKind` (or a new way an existing kind arises) edits
+every `# Errors` section of the `Cluster` requests it can reach, not only
+the first method written: `grep -n 'ClusterErrorKind::Other)'
+crates/kube/src/cluster.rs` and read each hit. #235 added `Unreachable`
+to `discover` alone; `operate`, `logs`, `exec` and `port_forward` kept an
+"`Other` otherwise" that was now wrong, and the Standards reviewer found it
+(#235 retro).
+
 ## API shape
 
 A `pub` item the diff adds or changes follows the Rust API Guidelines

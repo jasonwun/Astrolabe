@@ -444,3 +444,13 @@ A kube-layer test of a value read from the kubeconfig goes through
 reviewer found that the helper's tests left the handle's wiring unproven.
 Put the extra context in `tests/client.rs`'s existing `KUBECONFIG` test,
 since tests in that binary share the environment (#236 retro).
+
+A `match` arm over a third-party error that a test cannot build has no
+test, and its mutant goes MISSED. #235's `kube::Error::HyperError(_) =>
+Unreachable` was one: `hyper::Error` has no public constructor. Drop the
+arm and let the type fall to `Other`, and say so in the doc comment.
+To build a transport failure in a kube-layer test, give `Client::new` a
+`tower::service_fn` that returns `Err(std::io::Error::from(
+ErrorKind::ConnectionRefused))`: kube-client turns it into
+`kube::Error::Service`, which is what a real connect failure is
+(#235 retro).
