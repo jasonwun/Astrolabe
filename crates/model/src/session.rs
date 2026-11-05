@@ -185,7 +185,8 @@ impl<'a> std::borrow::Borrow<dyn KeyView + 'a> for ObjectKey {
     }
 }
 
-// Same order as `ObjectKey`'s derived `Ord`: namespace (`None` first), then name.
+// Same order as `ObjectKey`'s derived `Ord`: namespace (`None` first), then
+// name.
 impl PartialEq for dyn KeyView + '_ {
     fn eq(&self, other: &Self) -> bool {
         self.namespace() == other.namespace() && self.name() == other.name()
