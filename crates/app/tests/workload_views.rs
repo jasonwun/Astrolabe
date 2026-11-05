@@ -431,7 +431,7 @@ fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
         assert!(
             window
                 .within("detail-related")
-                .try_find_by_label("No pods")
+                .try_find_by_label("Loading pods…")
                 .is_some()
         );
     });
