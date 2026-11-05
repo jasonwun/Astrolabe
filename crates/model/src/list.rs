@@ -15,7 +15,7 @@ use crate::detail::forbidden_message;
 use crate::projection::{
     ResourceTable, project_custom_resources, project_definitions, project_namespaces,
 };
-use crate::session::{WatchReading, Watched};
+use crate::session::{StaleCause, WatchReading, Watched};
 use crate::session_state::{SessionState, Viewing};
 
 /// The text shown where listing Definitions is denied.
@@ -57,8 +57,9 @@ pub fn failed_message(error: Option<&ClusterError>) -> String {
 #[derive(Debug, PartialEq)]
 pub struct Resolved {
     pub outcome: ListOutcome,
-    /// The list's watch lost its connection and shows its old snapshot.
-    pub stale: bool,
+    /// Why the list shows an old snapshot: its watch lost its connection, or
+    /// RBAC denies it. None when the rows are current.
+    pub stale: Option<StaleCause>,
 }
 
 /// The list `state` views as of `now`. `groups` narrows Definitions to
@@ -110,14 +111,14 @@ fn from_watch<K: ResourceExt>(
     };
     Resolved {
         outcome,
-        stale: watch.is_some_and(|watch| watch.status().is_stale()),
+        stale: watch.and_then(|watch| watch.status().stale_cause()),
     }
 }
 
 fn custom(state: &SessionState, id: &crate::session::CustomKindId, now: Timestamp) -> Resolved {
     let unresolved = |outcome| Resolved {
         outcome,
-        stale: false,
+        stale: None,
     };
     let Some(kind) = state.custom_kind(id) else {
         return unresolved(ListOutcome::Undefined(format!(

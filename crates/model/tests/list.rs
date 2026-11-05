@@ -6,7 +6,7 @@ use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensio
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::list::{CRD_DENIED, ListOutcome, Resolved, failed_message, resolve};
-use astrolabe_model::session::CustomKindId;
+use astrolabe_model::session::{CustomKindId, StaleCause};
 use astrolabe_model::session_state::{Command, SessionState};
 use support::{object, served};
 
@@ -110,7 +110,7 @@ fn namespaces_resolve_to_rows() {
     let resolved = resolved(&state);
 
     assert_eq!(rows(&resolved), 0);
-    assert!(!resolved.stale);
+    assert_eq!(resolved.stale, None);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn namespaces_are_stale_with_their_watch() {
 
     let resolved = resolved(&state);
 
-    assert!(resolved.stale);
+    assert_eq!(resolved.stale, Some(StaleCause::ConnectionLost));
     assert_eq!(rows(&resolved), 0);
 }
 
@@ -190,7 +190,7 @@ fn a_builtin_list_that_failed_unreachable_carries_the_error() {
         panic!("expected failed, got {:?}", resolved.outcome);
     };
     assert_eq!(error.kind(), ClusterErrorKind::Unreachable);
-    assert!(!resolved.stale);
+    assert_eq!(resolved.stale, None);
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn a_builtin_list_whose_watch_ended_is_stale_with_its_old_rows() {
 
     let resolved = resolved(&state);
 
-    assert!(resolved.stale);
+    assert_eq!(resolved.stale, Some(StaleCause::ConnectionLost));
     assert_eq!(rows(&resolved), 1);
 }
 
@@ -397,11 +397,11 @@ fn a_served_custom_kind_resolves_to_rows_and_goes_stale_with_its_watch() {
     );
     state.object_message(&key, Ok(Event::InitDone));
     assert_eq!(rows(&resolved(&state)), 1);
-    assert!(!resolved(&state).stale);
+    assert_eq!(resolved(&state).stale, None);
 
     state.object_ended(&key);
 
-    assert!(resolved(&state).stale);
+    assert_eq!(resolved(&state).stale, Some(StaleCause::ConnectionLost));
 }
 
 #[test]
@@ -421,9 +421,130 @@ fn a_denied_custom_list_is_forbidden() {
 fn definitions_whose_watch_ended_are_stale() {
     let (mut state, _) = crontab_state();
     state.open_definitions_list();
-    assert!(!resolved(&state).stale);
+    assert_eq!(resolved(&state).stale, None);
 
     state.crds_ended();
 
-    assert!(resolved(&state).stale);
+    assert_eq!(resolved(&state).stale, Some(StaleCause::ConnectionLost));
+}
+
+#[test]
+fn a_builtin_list_denied_after_a_snapshot_keeps_its_rows_stale_by_denial() {
+    let mut state = state();
+    let key = state.open_builtin_list(BuiltinKind::Pods).key;
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(pod_init("web")));
+    state.object_message(&key, Ok(Event::InitDone));
+    state.object_message(&key, denied());
+
+    let resolved = resolved(&state);
+
+    assert_eq!(resolved.stale, Some(StaleCause::Denied));
+    assert_eq!(rows(&resolved), 1);
+
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(pod_init("web")));
+    state.object_message(&key, Ok(Event::InitDone));
+
+    assert_eq!(self::resolved(&state).stale, None);
+}
+
+#[test]
+fn a_builtin_list_that_lost_its_connection_after_a_snapshot_is_stale_by_connection() {
+    let mut state = state();
+    let key = state.open_builtin_list(BuiltinKind::Pods).key;
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(pod_init("web")));
+    state.object_message(&key, Ok(Event::InitDone));
+    state.object_message(&key, Err(ClusterError::unreachable("refused")));
+
+    let resolved = resolved(&state);
+
+    assert_eq!(resolved.stale, Some(StaleCause::ConnectionLost));
+    assert_eq!(rows(&resolved), 1);
+}
+
+#[test]
+fn a_builtin_list_denied_before_a_snapshot_is_forbidden_and_not_stale() {
+    let mut state = state();
+    let key = state.open_builtin_list(BuiltinKind::Pods).key;
+    state.object_message(&key, denied());
+
+    let resolved = resolved(&state);
+
+    assert_eq!(resolved.stale, None);
+    assert!(matches!(resolved.outcome, ListOutcome::Forbidden(_)));
+}
+
+#[test]
+fn definitions_denied_after_a_snapshot_keep_their_rows_stale_by_denial() {
+    let (mut state, _) = crontab_state();
+    state.open_definitions_list();
+    state.crds_message(denied());
+
+    let resolved = resolved(&state);
+
+    assert_eq!(resolved.stale, Some(StaleCause::Denied));
+    assert_eq!(rows(&resolved), 1);
+
+    state.crds_message(Ok(Event::Init));
+    state.crds_message(Ok(Event::InitDone));
+    assert_eq!(self::resolved(&state).stale, None);
+}
+
+#[test]
+fn definitions_that_lost_their_connection_are_stale_by_connection() {
+    let (mut state, _) = crontab_state();
+    state.open_definitions_list();
+    state.crds_message(Err(ClusterError::unreachable("refused")));
+
+    assert_eq!(resolved(&state).stale, Some(StaleCause::ConnectionLost));
+}
+
+#[test]
+fn a_custom_list_denied_after_a_snapshot_keeps_its_rows_stale_by_denial() {
+    let (mut state, run) = crontab_state();
+    state.discovery_finished(run, Ok(crontab_served()));
+    let key = state.open_custom_list(&crontab_id()).unwrap().key;
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(
+        &key,
+        Ok(Event::InitApply(object(serde_json::json!({
+            "apiVersion": "stable.example.com/v1", "kind": "CronTab",
+            "metadata": {"name": "nightly", "namespace": "default"},
+        })))),
+    );
+    state.object_message(&key, Ok(Event::InitDone));
+    state.object_message(&key, denied());
+
+    let resolved = resolved(&state);
+
+    assert_eq!(resolved.stale, Some(StaleCause::Denied));
+    assert_eq!(rows(&resolved), 1);
+
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(Event::InitDone));
+    assert_eq!(self::resolved(&state).stale, None);
+}
+
+#[test]
+fn a_custom_list_that_lost_its_connection_is_stale_by_connection() {
+    let (mut state, run) = crontab_state();
+    state.discovery_finished(run, Ok(crontab_served()));
+    let key = state.open_custom_list(&crontab_id()).unwrap().key;
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(Event::InitDone));
+    state.object_message(&key, Err(ClusterError::unreachable("refused")));
+
+    assert_eq!(resolved(&state).stale, Some(StaleCause::ConnectionLost));
+}
+
+#[test]
+fn a_custom_list_denied_before_a_snapshot_is_forbidden() {
+    let (mut state, run) = crontab_state();
+    state.discovery_finished(run, Ok(crontab_served()));
+    let key = state.open_custom_list(&crontab_id()).unwrap().key;
+    state.object_message(&key, denied());
+
+    assert_eq!(resolved(&state).stale, None);
 }

@@ -20,10 +20,10 @@ use gpui_kit::*;
 use crate::clock;
 use crate::perf;
 use crate::session::Session;
-use crate::workspace::STALE_MESSAGE;
+use crate::workspace::{DENIED_STALE_MESSAGE, STALE_MESSAGE};
 use astrolabe_model::detail::{DetailTarget, ReferenceError};
 use astrolabe_model::list::{self, ListOutcome};
-use astrolabe_model::session::CustomKindId;
+use astrolabe_model::session::{CustomKindId, StaleCause};
 
 /// Why a row cannot be opened; shown as the list's notice.
 #[derive(Debug, PartialEq, Eq)]
@@ -96,7 +96,7 @@ pub struct ResourceListPanel {
     view: ListView,
     table: Entity<TableState<RowsTable>>,
     state: ListState,
-    stale: bool,
+    stale: Option<StaleCause>,
     group_filter: BTreeSet<String>,
     notice: Option<String>,
     /// Re-projects when the youngest shown age next changes (#70);
@@ -116,7 +116,7 @@ impl ResourceListPanel {
             view: ListView::Namespaces,
             table,
             state: ListState::Table,
-            stale: false,
+            stale: None,
             group_filter: BTreeSet::new(),
             notice: None,
             tick: Task::ready(()),
@@ -335,19 +335,18 @@ impl Render for ResourceListPanel {
             // here.
             .track_focus(&self.focus_handle)
             .size_full()
-            .when(self.stale, |this| {
+            .when_some(self.stale, |this, cause| {
+                // Distinct ids and texts per cause keep `try_find`
+                // unambiguous; the alert takes `(id, 0)`: a tuple id needs a
+                // number.
+                let (id, text) = match cause {
+                    StaleCause::ConnectionLost => ("list-stale", STALE_MESSAGE),
+                    StaleCause::Denied => ("list-denied", DENIED_STALE_MESSAGE),
+                };
                 this.child(
-                    div()
-                        .id("list-stale")
-                        .aria_label(STALE_MESSAGE)
-                        .test_support()
-                        .child(
-                            gpui_kit::component::alert::Alert::warning(
-                                "list-stale-alert",
-                                STALE_MESSAGE,
-                            )
-                            .banner(),
-                        ),
+                    div().id(id).aria_label(text).test_support().child(
+                        gpui_kit::component::alert::Alert::warning((id, 0usize), text).banner(),
+                    ),
                 )
             })
             .when_some(self.notice.clone(), |this, text| {

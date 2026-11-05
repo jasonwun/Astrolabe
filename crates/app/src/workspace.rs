@@ -14,6 +14,9 @@ use astrolabe_kube::watch::NamespaceWatchMessage;
 use astrolabe_model::session::ConnectionHealth;
 
 pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
+/// The banner of a list whose watch is denied after it had a Snapshot: the
+/// connection is fine, the permission is gone (#282).
+pub const DENIED_STALE_MESSAGE: &str = "No permission to refresh this list, data may be stale";
 
 /// What the launch opens instead of the first cluster in `default`; empty
 /// leaves the launch as it is. Debug builds fill it from
