@@ -16,6 +16,8 @@ use astrolabe_model::session::{
 use astrolabe_model::session_state::{
     ActiveForward, Command, RESIDENT_WATCH_CAP, SessionState, custom_kind,
 };
+use std::time::Duration;
+
 use support::{object, served};
 
 mod support;
@@ -43,6 +45,7 @@ fn started(commands: &[Command]) -> Vec<WatchKey> {
             Command::StartNamespacesWatch
             | Command::StartCrdsWatch
             | Command::ScheduleDiscovery { .. }
+            | Command::RetryDiscovery { .. }
             | Command::RunDiscovery { .. }
             | Command::StartForward { .. }
             | Command::StopForward { .. }
@@ -61,6 +64,7 @@ fn stopped(commands: &[Command]) -> Vec<WatchKey> {
             | Command::StartCrdsWatch
             | Command::StartWatch { .. }
             | Command::ScheduleDiscovery { .. }
+            | Command::RetryDiscovery { .. }
             | Command::RunDiscovery { .. }
             | Command::StartForward { .. }
             | Command::StopForward { .. } => None,
@@ -141,6 +145,20 @@ fn scheduled(commands: &[Command]) -> Option<u64> {
         Command::ScheduleDiscovery { generation } => Some(*generation),
         _ => None,
     })
+}
+
+/// The generation and wait of a `RetryDiscovery` among `commands`.
+fn retried(commands: &[Command]) -> Option<(u64, Duration)> {
+    commands.iter().find_map(|command| match command {
+        Command::RetryDiscovery { generation, delay } => Some((*generation, *delay)),
+        _ => None,
+    })
+}
+
+/// Fails the run `commands` ask for, and returns the retry it schedules.
+fn fail_discovery(state: &mut SessionState, commands: &[Command]) -> (u64, Duration) {
+    let failed = state.discovery_finished(run_of(commands), Err(ClusterError::new("blip")));
+    retried(&failed).expect("a RetryDiscovery command")
 }
 
 /// A Discovery result that serves `CronTab`.
@@ -437,7 +455,7 @@ fn namespaces_arrive_with_the_first_snapshot() {
 
     state.namespaces_message(Ok(Event::Init));
     state.namespaces_message(Ok(Event::InitApply(namespace("default"))));
-    let change = state.namespaces_message(Ok(Event::InitDone));
+    let (change, _) = state.namespaces_message(Ok(Event::InitDone));
 
     assert_eq!(change, SnapshotChange::FirstSnapshot);
     assert_eq!(state.health(), ConnectionHealth::Healthy);
@@ -1473,4 +1491,178 @@ fn init_crontab(namespace: &str, name: &str) -> Event<DynamicObject> {
         Event::Apply(object) => Event::InitApply(object),
         other => other,
     }
+}
+
+#[test]
+fn a_failed_discovery_run_is_retried_with_a_growing_backoff_up_to_a_cap() {
+    let mut state = state();
+    let mut commands = state.connected();
+    let mut delays = Vec::new();
+    let mut generations = Vec::new();
+    for _ in 0..8 {
+        let (generation, delay) = fail_discovery(&mut state, &commands);
+        delays.push(delay.as_secs());
+        generations.push(generation);
+        commands = state.debounce_elapsed(generation);
+    }
+
+    assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30]);
+    assert!(
+        generations.windows(2).all(|pair| pair[0] < pair[1]),
+        "each retry's timer supersedes the last: {generations:?}"
+    );
+}
+
+#[test]
+fn a_successful_run_starts_the_backoff_over() {
+    let mut state = state();
+    let mut commands = state.connected();
+    for _ in 0..3 {
+        let (generation, _) = fail_discovery(&mut state, &commands);
+        commands = state.debounce_elapsed(generation);
+    }
+    state.discovery_finished(run_of(&commands), Ok(ServedResources::default()));
+
+    let commands = state.reconnect();
+
+    assert_eq!(
+        fail_discovery(&mut state, &commands).1,
+        Duration::from_secs(1)
+    );
+}
+
+#[test]
+fn a_failure_while_connected_is_retried_and_keeps_the_last_result() {
+    let mut state = crontab_state("Namespaced", true);
+    state.namespaces_message(Ok(Event::InitDone));
+    let generation =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    let commands = state.debounce_elapsed(generation);
+
+    let (retry, delay) = fail_discovery(&mut state, &commands);
+
+    assert_eq!(delay, Duration::from_secs(1));
+    assert!(state.show_stale_warning());
+    let run = run_of(&state.debounce_elapsed(retry));
+    state.discovery_finished(run, Ok(crontab_served("Namespaced")));
+    assert!(!state.show_stale_warning());
+    assert!(matches!(
+        state.catalog()[0].kinds[0].resource,
+        KindResource::Served(_)
+    ));
+}
+
+#[test]
+fn a_definition_change_supersedes_a_pending_retry() {
+    let mut state = crontab_state("Namespaced", true);
+    let first =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    let commands = state.debounce_elapsed(first);
+    let (retry, _) = fail_discovery(&mut state, &commands);
+    let change =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+
+    assert!(state.debounce_elapsed(retry).is_empty());
+    let run = run_of(&state.debounce_elapsed(change));
+    state.discovery_finished(run, Ok(crontab_served("Namespaced")));
+    assert!(!state.show_stale_warning());
+}
+
+#[test]
+fn an_older_runs_failure_schedules_no_retry() {
+    let mut state = state();
+    let older = run_of(&state.connected());
+    list_crontab_crd(&mut state, "Namespaced");
+    let generation =
+        scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
+    state.debounce_elapsed(generation);
+
+    let commands = state.discovery_finished(older, Err(ClusterError::new("late")));
+
+    assert_eq!(retried(&commands), None);
+}
+
+#[test]
+fn discovery_runs_again_at_once_when_the_first_connect_recovers() {
+    let mut state = state();
+    let commands = state.connected();
+    let connect = ClusterError::connect("kubelogin is not ready");
+    let (retry, _) = {
+        let failed = state.discovery_finished(run_of(&commands), Err(connect.clone()));
+        retried(&failed).unwrap()
+    };
+    state.crds_message(Err(connect));
+
+    // The Definitions watch's first events arrive: the Cluster is reachable.
+    let commands = state.crds_message(Ok(Event::Init));
+
+    let run = run_of(&commands);
+    assert!(
+        state.debounce_elapsed(retry).is_empty(),
+        "the timer is spent"
+    );
+    state.crds_message(Ok(Event::InitDone));
+    state.discovery_finished(run, Ok(crontab_served("Namespaced")));
+    assert!(!state.show_stale_warning());
+}
+
+#[test]
+fn the_definitions_watch_does_not_restart_discovery_already_in_flight() {
+    let mut state = state();
+    let commands = state.connected();
+    state.discovery_finished(
+        run_of(&commands),
+        Err(ClusterError::connect("kubelogin is not ready")),
+    );
+    assert!(!state.crds_message(Ok(Event::Init)).is_empty());
+
+    let commands = state.crds_message(Ok(Event::InitDone));
+
+    assert!(commands.is_empty(), "{commands:?}");
+}
+
+#[test]
+fn a_failure_that_is_not_a_connect_failure_waits_for_its_retry() {
+    let mut state = state();
+    let commands = state.connected();
+    state.discovery_finished(run_of(&commands), Err(ClusterError::unreachable("refused")));
+
+    let commands = state.crds_message(Ok(Event::Init));
+
+    assert!(commands.is_empty());
+}
+
+#[test]
+fn recovery_supersedes_the_pending_retry_timer_for_good() {
+    let mut state = state();
+    let connect = || ClusterError::connect("kubelogin is not ready");
+    let commands = state.connected();
+    let failed = state.discovery_finished(run_of(&commands), Err(connect()));
+    let (old_retry, _) = retried(&failed).unwrap();
+
+    // The recovery run fails the same way, and schedules its own retry.
+    let recovery = state.crds_message(Ok(Event::Init));
+    let failed = state.discovery_finished(run_of(&recovery), Err(connect()));
+    let (new_retry, _) = retried(&failed).unwrap();
+
+    assert!(new_retry > old_retry);
+    assert!(state.debounce_elapsed(old_retry).is_empty());
+    assert!(!state.debounce_elapsed(new_retry).is_empty());
+}
+
+#[test]
+fn the_namespaces_watch_also_restarts_discovery_when_the_connect_recovers() {
+    // The Definitions list may be forbidden and never deliver.
+    let mut state = state();
+    let commands = state.connected();
+    state.discovery_finished(
+        run_of(&commands),
+        Err(ClusterError::connect("kubelogin is not ready")),
+    );
+    state.crds_message(Err(ClusterError::forbidden("crds forbidden")));
+
+    let (_, commands) = state.namespaces_message(Ok(Event::Init));
+
+    assert!(run_of(&commands) > 1);
+    assert!(state.namespaces_message(Ok(Event::InitDone)).1.is_empty());
 }

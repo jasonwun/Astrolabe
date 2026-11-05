@@ -117,14 +117,17 @@ fn no_such_cluster() -> ClusterId {
 }
 
 #[tokio::test]
-async fn a_connect_failure_is_the_watch_only_message() {
+async fn a_connect_failure_is_reported_and_the_watch_stays_open_to_retry() {
     let cluster = Cluster::connect(&no_such_cluster());
     let mut watch = cluster.watch_crds();
 
     let error = watch.next().await.unwrap().unwrap_err();
 
     assert_eq!(error.kind(), ClusterErrorKind::Connect);
-    assert!(watch.next().await.is_none());
+    // The watch is not over: after the first wait it connects again, and
+    // this context still does not exist.
+    let again = watch.next().await.unwrap().unwrap_err();
+    assert_eq!(again.kind(), ClusterErrorKind::Connect);
 }
 
 fn status_box(code: u16) -> Box<Status> {

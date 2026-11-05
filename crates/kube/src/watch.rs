@@ -1,6 +1,7 @@
 //! Resident watches (#28, #147): one watch's messages, and the relist loop
 //! behind [`Cluster`](crate::cluster::Cluster)'s `watch_*` methods.
 
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -26,6 +27,8 @@ pub type ObjectWatchMessage = WatchMessage<DynamicObject>;
 /// stops the relist task and closes its apiserver watch, even when the
 /// watch is quiet and would never send a message to notice.
 pub struct Watch<K> {
+    /// Messages delivered before anything in `messages`.
+    prelude: VecDeque<WatchMessage<K>>,
     messages: mpsc::Receiver<WatchMessage<K>>,
     work: Option<AbortHandle>,
 }
@@ -33,7 +36,18 @@ pub struct Watch<K> {
 impl<K> Watch<K> {
     /// A watch reading `messages`, with no task behind it.
     pub fn new(messages: mpsc::Receiver<WatchMessage<K>>) -> Self {
+        Self::with_prelude([], messages)
+    }
+
+    /// A watch reading `prelude` first, then `messages`, with no task
+    /// behind it: what a scripted cluster hands out when its connect
+    /// fails and later recovers.
+    pub fn with_prelude(
+        prelude: impl IntoIterator<Item = WatchMessage<K>>,
+        messages: mpsc::Receiver<WatchMessage<K>>,
+    ) -> Self {
         Self {
+            prelude: prelude.into_iter().collect(),
             messages,
             work: None,
         }
@@ -42,6 +56,7 @@ impl<K> Watch<K> {
     /// The watch reading `messages`, owning the task that feeds them.
     pub(crate) fn with_work(messages: mpsc::Receiver<WatchMessage<K>>, work: AbortHandle) -> Self {
         Self {
+            prelude: VecDeque::new(),
             messages,
             work: Some(work),
         }
@@ -54,14 +69,23 @@ impl<K> Watch<K> {
     /// [`mpsc::TryRecvError`]: `is_closed` once the watch has ended and its
     /// queue is empty, otherwise nothing is queued yet.
     pub fn try_recv(&mut self) -> Result<WatchMessage<K>, mpsc::TryRecvError> {
-        self.messages.try_recv()
+        match self.prelude.pop_front() {
+            Some(message) => Ok(message),
+            None => self.messages.try_recv(),
+        }
     }
 }
+
+// The queued messages are never pinned: a `Watch` moves freely whatever `K`.
+impl<K> Unpin for Watch<K> {}
 
 impl<K> Stream for Watch<K> {
     type Item = WatchMessage<K>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(message) = self.prelude.pop_front() {
+            return Poll::Ready(Some(message));
+        }
         Pin::new(&mut self.messages).poll_next(cx)
     }
 }
@@ -75,11 +99,11 @@ impl<K> Drop for Watch<K> {
 }
 
 /// Wait before the first relist after a failed or ended watch.
-const RETRY: Duration = Duration::from_secs(1);
+pub const RETRY: Duration = Duration::from_secs(1);
 /// The longest wait before a relist: the wait doubles from [`RETRY`] on each
 /// consecutive failure up to this, and a 403 waits this long at once (RBAC
 /// denials do not clear by retrying fast).
-const RETRY_CAP: Duration = Duration::from_secs(30);
+pub const RETRY_CAP: Duration = Duration::from_secs(30);
 /// How long the relist loop waits before its next LIST.
 struct Retry {
     next: Duration,
@@ -142,12 +166,16 @@ pub(crate) fn objects(
 /// The resident relist loop for one watch, answering through the returned
 /// receiver. Any stream error restarts the watcher from a fresh LIST (#28):
 /// a silent watch resumption would emit no `InitDone`, leaving the reader
-/// stale. The loop ends once the receiver is dropped and the loop next
-/// sends; [`Watch`] stops it sooner, when its reader goes.
-pub(crate) fn relist<K, F, S>(
+/// stale. A failed connect is one more such failure (#277): it is sent,
+/// and the loop asks `client` for the client again after the same growing
+/// wait. `client` is called before every LIST, so it must hand out the
+/// Cluster's shared connect attempt, never build a client of its own. The
+/// loop ends once the receiver is dropped and the loop next sends;
+/// [`Watch`] stops it sooner, when its reader goes.
+pub(crate) fn relist<K, F, S, C, Connect>(
     cluster: ClusterId,
     label: &'static str,
-    client: impl Future<Output = Result<Client, ClusterError>> + Send + 'static,
+    client: C,
     stream: F,
 ) -> (
     mpsc::Receiver<WatchMessage<K>>,
@@ -157,19 +185,24 @@ where
     K: Send + 'static,
     F: Fn(&Client) -> S + Send + 'static,
     S: Stream<Item = Result<watcher::Event<K>, watcher::Error>> + Send,
+    C: Fn() -> Connect + Send + 'static,
+    Connect: Future<Output = Result<Client, ClusterError>> + Send,
 {
     let (mut sender, receiver) = mpsc::channel(CAPACITY);
     let task = async move {
-        let client = match client.await {
-            Ok(client) => client,
-            Err(error) => {
-                tracing::warn!(cluster = %cluster, error = %error, "{label} watch client setup failed");
-                let _ = sender.send(Err(error)).await;
-                return;
-            }
-        };
         let mut retry = Retry::new();
         loop {
+            let client = match client().await {
+                Ok(client) => client,
+                Err(error) => {
+                    tracing::warn!(cluster = %cluster, error = %error, "{label} watch client setup failed");
+                    if sender.send(Err(error)).await.is_err() {
+                        return;
+                    }
+                    tokio::time::sleep(retry.next_delay()).await;
+                    continue;
+                }
+            };
             let events = stream(&client);
             futures::pin_mut!(events);
             let mut forbidden = false;

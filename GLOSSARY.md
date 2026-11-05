@@ -32,7 +32,7 @@ A fresh complete LIST after a watch fails, ending in a new snapshot.
 _Avoid_: resync, reconnect (a reconnect is not a relist)
 
 **Reconnect**:
-A Session trying its Cluster again after a connect failed: every resident watch starts again and Discovery runs again. Not a relist, which one running watch does by itself.
+A Session trying its Cluster again after a connect failed, on request: every resident watch starts again and Discovery runs again. Not a relist, which one running watch does by itself. A watch whose connect failed, and a failed Discovery run, also try again by themselves, with a growing wait; a reconnect only skips that wait.
 
 **Stale**:
 Showing the previous snapshot while its watch is down or relisting.
