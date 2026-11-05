@@ -799,7 +799,7 @@ fn a_connection_failure_keeps_listening_and_records_the_error() {
 
     let forward = nth_forward_to_pod(&state, "web", 0);
     assert_eq!(forward.state, ForwardState::Listening(8080));
-    assert_eq!(forward.last_error.as_deref(), Some("refused"));
+    assert_eq!(forward.last_error, Some(ClusterError::new("refused")));
 }
 
 #[test]
@@ -811,7 +811,28 @@ fn a_failed_report_fails_the_forward() {
     state.forward_reported(&request, ForwardEvent::Failed(ClusterError::new("gone")));
 
     let forward = nth_forward_to_pod(&state, "web", 0);
-    assert_eq!(forward.state, ForwardState::Failed("gone".to_string()));
+    assert_eq!(
+        forward.state,
+        ForwardState::Failed(ClusterError::new("gone"))
+    );
+}
+
+#[test]
+fn a_failed_forward_keeps_the_kind_of_its_error() {
+    let mut state = state();
+    let request = forward_request("web", 80);
+    state.forward_port(request.clone());
+
+    state.forward_reported(
+        &request,
+        ForwardEvent::Failed(ClusterError::forbidden("pods/portforward is forbidden")),
+    );
+
+    let forward = nth_forward_to_pod(&state, "web", 0);
+    let ForwardState::Failed(error) = &forward.state else {
+        panic!("expected Failed, got {:?}", forward.state);
+    };
+    assert!(error.is_forbidden());
 }
 
 #[test]

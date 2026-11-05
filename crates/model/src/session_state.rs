@@ -58,7 +58,7 @@ pub struct ActiveForward {
     pub request: ForwardRequest,
     pub state: ForwardState,
     /// The latest connection's failure, while the listener goes on.
-    pub last_error: Option<String>,
+    pub last_error: Option<ClusterError>,
 }
 
 /// A watch an input asked for, and the commands that bring it up.
@@ -379,9 +379,9 @@ impl SessionState {
         match event {
             ForwardEvent::Listening(port) => forward.state = ForwardState::Listening(port),
             ForwardEvent::ConnectionFailed(error) => {
-                forward.last_error = Some(error.to_string());
+                forward.last_error = Some(error);
             }
-            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error.to_string()),
+            ForwardEvent::Failed(error) => forward.state = ForwardState::Failed(error),
         }
     }
 

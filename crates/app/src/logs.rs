@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::pod::LogStream;
 use astrolabe_terminal::backend::display_only;
 use astrolabe_terminal::{TerminalBackend, TerminalView};
@@ -35,7 +36,7 @@ pub fn terminal_bytes(chunk: &[u8]) -> Vec<u8> {
 enum StreamState {
     Streaming,
     Ended,
-    Failed(String),
+    Failed(ClusterError),
 }
 
 pub struct LogsPanel {
@@ -62,7 +63,7 @@ impl LogsPanel {
             let state = loop {
                 match stream.next().await {
                     Some(Ok(chunk)) => backend.feed_output(&terminal_bytes(&chunk)),
-                    Some(Err(error)) => break StreamState::Failed(error.to_string()),
+                    Some(Err(error)) => break StreamState::Failed(error),
                     None => break StreamState::Ended,
                 }
             };

@@ -205,6 +205,27 @@ fn a_403_before_any_snapshot_is_not_stale_data() {
 }
 
 #[test]
+fn a_watch_keeps_its_last_error_until_it_is_live_again() {
+    let mut watched = namespace_watch();
+    assert_eq!(watched.last_error(), None);
+
+    watched.apply(Err(ClusterError::forbidden("403")));
+    assert!(watched.last_error().is_some_and(ClusterError::is_forbidden));
+
+    watched.apply(Err(ClusterError::new("connection reset")));
+    assert_eq!(
+        watched.last_error(),
+        Some(&ClusterError::new("connection reset"))
+    );
+
+    watched.mark_stale();
+    assert!(watched.last_error().is_some());
+
+    relist(&mut watched, &["default"]);
+    assert_eq!(watched.last_error(), None);
+}
+
+#[test]
 fn a_failure_before_any_snapshot_is_unreachable() {
     let mut watched = namespace_watch();
 

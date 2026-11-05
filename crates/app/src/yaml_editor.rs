@@ -320,7 +320,7 @@ impl YamlEditorView {
                 continue;
             };
             match &error.error {
-                ApplyError::Global { message } => {
+                ApplyError::Global { message, .. } => {
                     self.global_notices
                         .push(format!("{}: {message}", outcome.doc));
                 }
@@ -441,7 +441,7 @@ impl YamlEditorView {
             let Err(error) = &outcome.result else {
                 continue;
             };
-            if let ApplyError::Global { message } = &error.error {
+            if let ApplyError::Global { message, .. } = &error.error {
                 unavailable.push(format!("{}: {message}", outcome.doc));
                 continue;
             }
