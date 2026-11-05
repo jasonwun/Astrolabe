@@ -39,6 +39,15 @@ Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
 `comment-width.sh` caught it and cost a CI round (#149 retro).
 
+`dev/pre-push.sh`'s mutants step reads the committed diff: an edit left
+uncommitted fails it with `Diff content doesn't match source file`.
+Commit the fix, then re-run. A hand-written `PartialEq`/`PartialOrd` for a
+type used as a `BTreeMap` probe (#244's `dyn KeyView`) is never called by
+`BTreeMap::get`, which uses only `Ord::cmp`: its mutants go MISSED. Write
+`eq` and `partial_cmp` through `cmp`, and cover them with a unit test next
+to the type. A test that binds `a`, `b`, `x`, `y` trips clippy's
+`many_single_char_names`: name the bindings (#244 retro).
+
 Run the lint job's steps and `dev/test-evidence.sh` on the rebased tree,
 right before the push that opens the PR and again after every later
 rebase, and fetch `origin/main` first. CI lints the merge with main:

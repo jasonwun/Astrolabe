@@ -274,6 +274,7 @@ of context.
    # $SCRATCH/actions.sh
    set -euo pipefail
    D=$1
+   dev/shot.sh "$D" start >/dev/null   # a click before any capture can fail
    dev/shot.sh "$D" pods click --x 263 --y 204 >/dev/null; sleep 1
    dev/shot.sh "$D" pods --crop 240,120,640,300 >/dev/null
    ```
@@ -310,7 +311,13 @@ of context.
    reads `DIFF` for that alone. On the dev window, `dev/shot.sh` clicks at
    Namespaces (278,138), Pods (252,204), Definitions (270,825) and the
    first custom kind (280,913); crops that skip the Age columns are
-   `440,85,900,320` (Pods) and `440,85,900,360` (Definitions). #223's
+   `440,85,900,320` (Pods) and `440,85,900,360` (Definitions). Those
+   coordinates need a window of `dev/resize.sh 1000 1000` (capped at the
+   screen, about 950 tall), not the 900x800 above: at 800 tall the
+   Definitions click lands outside the window and `dev/shot.sh` fails with
+   `cannot identify the background click target`. In a 1000-wide window the
+   Pods crop reaches the Age column (`3m18s` against `4m7s` read `DIFF`):
+   crop Pods to `440,85,470,320` instead (#244). #223's
    refactor of Session's queries read `same` on five views this way
    (#223).
 
