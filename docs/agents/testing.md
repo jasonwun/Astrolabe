@@ -468,5 +468,13 @@ ErrorKind::ConnectionRefused))`: kube-client turns it into
 `kube::Error::Service`, which is what a real connect failure is
 (#235 retro).
 
+A `Client::new(service, ns)` mock skips every layer `ClientBuilder` adds:
+kube-client's retry (429/503/504, 15 attempts by default) and its auth
+layer. A kube test over such a mock shows what the code does with the
+first answer, never how long a real node takes to give it. To test a retry
+bound, wrap the mock in the layer itself (`client.rs`'s `retry_tests`, with
+`#[tokio::test(start_paused = true)]`), and see the real node for the
+duration (#279 retro; `docs/adr/0003-bounded-client-retry.md`).
+
 `grep -rn pattern crates --include=*.rs` fails in zsh with `no matches
 found`: quote the glob (`--include='*.rs'`) (#275 retro).
