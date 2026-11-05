@@ -252,7 +252,6 @@ impl ResourceListPanel {
             .state()
             .crds()
             .objects()
-            .iter()
             .map(|crd| crd.spec.group.clone())
             .collect();
         h_flex()

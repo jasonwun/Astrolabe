@@ -149,6 +149,63 @@ impl WatchStatus {
     }
 }
 
+/// What `ObjectKey` and a borrowed lookup key have in common, so a
+/// `BTreeMap<ObjectKey, _>` can be searched without building an owned key.
+trait KeyView {
+    fn namespace(&self) -> Option<&str>;
+    fn name(&self) -> &str;
+}
+
+impl KeyView for ObjectKey {
+    fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+struct KeyRef<'a> {
+    namespace: Option<&'a str>,
+    name: &'a str,
+}
+
+impl KeyView for KeyRef<'_> {
+    fn namespace(&self) -> Option<&str> {
+        self.namespace
+    }
+    fn name(&self) -> &str {
+        self.name
+    }
+}
+
+impl<'a> std::borrow::Borrow<dyn KeyView + 'a> for ObjectKey {
+    fn borrow(&self) -> &(dyn KeyView + 'a) {
+        self
+    }
+}
+
+// Same order as `ObjectKey`'s derived `Ord`: namespace (`None` first), then name.
+impl PartialEq for dyn KeyView + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.namespace() == other.namespace() && self.name() == other.name()
+    }
+}
+
+impl Eq for dyn KeyView + '_ {}
+
+impl PartialOrd for dyn KeyView + '_ {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for dyn KeyView + '_ {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.namespace(), self.name()).cmp(&(other.namespace(), other.name()))
+    }
+}
+
 /// One watcher's snapshot plus its connection state: old data stays visible
 /// (stale) through a relist until the complete replacement arrives.
 pub struct Watched<K> {
@@ -266,13 +323,17 @@ impl<K: ResourceExt> Watched<K> {
         }
     }
 
-    pub fn objects(&self) -> Vec<&K> {
-        self.committed.values().collect()
+    /// The committed objects in key order (namespace, then name). Allocates
+    /// nothing; callers that need a `Vec` collect it themselves.
+    pub fn objects(&self) -> impl ExactSizeIterator<Item = &K> {
+        self.committed.values()
     }
 
+    /// Looks an object up by identity. Allocates nothing: the lookup borrows
+    /// `namespace` and `name` instead of building an owned `ObjectKey`.
     pub fn get(&self, namespace: Option<&str>, name: &str) -> Option<&K> {
-        self.committed
-            .get(&ObjectKey::new(namespace.map(str::to_string), name))
+        let probe = KeyRef { namespace, name };
+        self.committed.get(&probe as &dyn KeyView)
     }
 
     pub fn status(&self) -> WatchStatus {

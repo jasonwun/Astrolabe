@@ -259,7 +259,9 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> O
             let namespace = object.key.namespace.as_deref();
             let related = registration.related.as_ref().and_then(|related| {
                 let watch = state.builtin_watch(related.kind, namespace);
-                let candidates = watch.map(|watch| watch.objects()).unwrap_or_default();
+                let candidates = watch
+                    .map(|watch| watch.objects().collect::<Vec<_>>())
+                    .unwrap_or_default();
                 let selected = (related.select)(shown, &candidates);
                 let outcome = if watch.is_some_and(|watch| watch.status().is_forbidden()) {
                     RelatedOutcome::Forbidden(forbidden_message(related.title))
