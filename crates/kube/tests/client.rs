@@ -66,7 +66,7 @@ fn names(clusters: &[ClusterId]) -> Vec<String> {
     clusters.iter().map(ToString::to_string).collect()
 }
 
-/// One test, as both steps point `KUBECONFIG` at a file: tests in one
+/// One test, as all steps point `KUBECONFIG` at a file: tests in one
 /// binary run in parallel and share the environment.
 #[tokio::test]
 async fn clusters_are_the_kubeconfig_contexts_current_first() {
@@ -91,5 +91,19 @@ async fn clusters_are_the_kubeconfig_contexts_current_first() {
         .unwrap();
     assert_eq!(Cluster::connect(beta).default_namespace(), "team-a");
     let error = Cluster::connect(alpha).discover().await.unwrap_err();
+    assert_ne!(error.kind(), ClusterErrorKind::Connect, "{error}");
+
+    // A later attempt reads the kubeconfig afresh, so a retry sees a
+    // context added since the first attempt failed (#278, for #277).
+    let ghost = ClusterId::named("ghost");
+    let cluster = Cluster::connect(&ghost);
+    let error = cluster.discover().await.unwrap_err();
+    assert_eq!(error.kind(), ClusterErrorKind::Connect, "{error}");
+    kubeconfig.replace(&config("zeta").replace(
+        "contexts:\n",
+        "contexts:\n- name: ghost\n  context:\n    cluster: cluster\n    user: user\n",
+    ));
+    cluster.reconnect();
+    let error = cluster.discover().await.unwrap_err();
     assert_ne!(error.kind(), ClusterErrorKind::Connect, "{error}");
 }

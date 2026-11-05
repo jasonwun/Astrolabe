@@ -97,7 +97,7 @@ impl SessionView {
     }
 
     pub fn health(&self, cx: &App) -> ConnectionHealth {
-        self.session.read(cx).state().health()
+        self.session.read(cx).state().status().health
     }
 
     /// Show the launch's tabs (#106): a list in the list tab, a detail in
@@ -220,7 +220,7 @@ impl SessionView {
         let names: Vec<String> = session
             .state()
             .namespaces()
-            .iter()
+            .objects()
             .filter_map(|namespace| namespace.metadata.name.clone())
             .collect();
         let label = format!("Namespace: {current}");
@@ -382,7 +382,7 @@ impl SessionView {
                 ),
             );
 
-        if session.state().crd_access_denied() {
+        if session.state().status().crd_access_denied {
             return nav.child(
                 div()
                     .id("nav-crd-denied")
@@ -440,14 +440,14 @@ impl SessionView {
 impl Render for SessionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = self.session.read(cx).state();
-        let stale = data.show_stale_warning();
+        let status = data.status();
+        let stale = status.show_stale_warning();
         // Same banner, but say what failed: the watch may be healthy.
-        let message =
-            if data.discovery_failure().is_some() && data.health() != ConnectionHealth::Stale {
-                DISCOVERY_STALE_MESSAGE
-            } else {
-                STALE_MESSAGE
-            };
+        let message = if status.discovery_failed && status.health != ConnectionHealth::Stale {
+            DISCOVERY_STALE_MESSAGE
+        } else {
+            STALE_MESSAGE
+        };
         let border = cx.theme().border;
         v_flex()
             .size_full()

@@ -97,7 +97,7 @@ pub enum WatchStatus {
     /// The watch failed or ended; the old snapshot stays visible, stale.
     Stale,
     /// The watch failed or ended before any snapshot arrived.
-    Unreachable,
+    Failed,
     /// The latest failure was an RBAC denial. `has_snapshot` says whether an
     /// older snapshot is still shown (stale).
     Forbidden { has_snapshot: bool },
@@ -109,7 +109,7 @@ impl WatchStatus {
         match self {
             Self::Connecting | Self::Relisting => ConnectionHealth::Connecting,
             Self::Live => ConnectionHealth::Healthy,
-            Self::Stale | Self::Unreachable | Self::Forbidden { .. } => ConnectionHealth::Stale,
+            Self::Stale | Self::Failed | Self::Forbidden { .. } => ConnectionHealth::Stale,
         }
     }
 
@@ -118,7 +118,7 @@ impl WatchStatus {
         match self {
             Self::Relisting | Self::Stale => true,
             Self::Forbidden { has_snapshot } => has_snapshot,
-            Self::Connecting | Self::Live | Self::Unreachable => false,
+            Self::Connecting | Self::Live | Self::Failed => false,
         }
     }
 
@@ -131,14 +131,14 @@ impl WatchStatus {
         match self {
             Self::Live | Self::Relisting | Self::Stale => true,
             Self::Forbidden { has_snapshot } => has_snapshot,
-            Self::Connecting | Self::Unreachable => false,
+            Self::Connecting | Self::Failed => false,
         }
     }
 
     /// A list starts. An RBAC denial stays until a snapshot lifts it.
     fn listing(self) -> Self {
         match self {
-            Self::Connecting | Self::Unreachable => Self::Connecting,
+            Self::Connecting | Self::Failed => Self::Connecting,
             Self::Live | Self::Relisting | Self::Stale => Self::Relisting,
             Self::Forbidden { .. } => self,
         }
@@ -149,7 +149,7 @@ impl WatchStatus {
         if self.has_snapshot() {
             Self::Stale
         } else {
-            Self::Unreachable
+            Self::Failed
         }
     }
 
@@ -380,7 +380,7 @@ impl<K: ResourceExt> Watched<K> {
         };
         match watch.status {
             WatchStatus::Connecting => WatchReading::Loading,
-            WatchStatus::Unreachable => WatchReading::Failed(watch.last_error.as_ref()),
+            WatchStatus::Failed => WatchReading::Failed(watch.last_error.as_ref()),
             WatchStatus::Forbidden { .. } => WatchReading::Forbidden,
             WatchStatus::Live | WatchStatus::Relisting | WatchStatus::Stale => WatchReading::Rows,
         }

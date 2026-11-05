@@ -451,15 +451,18 @@ fn a_message_for_a_watch_nobody_started_changes_nothing() {
 #[test]
 fn namespaces_arrive_with_the_first_snapshot() {
     let mut state = state();
-    assert_eq!(state.health(), ConnectionHealth::Connecting);
+    assert_eq!(state.status().health, ConnectionHealth::Connecting);
 
     state.namespaces_message(Ok(Event::Init));
     state.namespaces_message(Ok(Event::InitApply(namespace("default"))));
     let (change, _) = state.namespaces_message(Ok(Event::InitDone));
 
     assert_eq!(change, SnapshotChange::FirstSnapshot);
-    assert_eq!(state.health(), ConnectionHealth::Healthy);
-    assert_eq!(state.namespaces(), [&namespace("default")]);
+    assert_eq!(state.status().health, ConnectionHealth::Healthy);
+    assert_eq!(
+        state.namespaces().objects().collect::<Vec<_>>(),
+        [&namespace("default")]
+    );
     assert!(state.namespace_object("default").is_some());
     assert!(state.namespace_object("other").is_none());
 }
@@ -468,12 +471,12 @@ fn namespaces_arrive_with_the_first_snapshot() {
 fn the_namespaces_watch_ending_marks_a_loaded_snapshot_stale() {
     let mut state = state();
     state.namespaces_message(Ok(Event::InitDone));
-    assert!(!state.namespaces_stale());
+    assert!(!state.status().namespaces_stale);
 
     state.namespaces_ended();
 
-    assert!(state.namespaces_stale());
-    assert_eq!(state.health(), ConnectionHealth::Stale);
+    assert!(state.status().namespaces_stale);
+    assert_eq!(state.status().health, ConnectionHealth::Stale);
 }
 
 #[test]
@@ -482,8 +485,8 @@ fn the_namespaces_watch_ending_before_any_snapshot_is_not_stale() {
 
     state.namespaces_ended();
 
-    assert!(!state.namespaces_stale());
-    assert_eq!(state.health(), ConnectionHealth::Stale);
+    assert!(!state.status().namespaces_stale);
+    assert_eq!(state.status().health, ConnectionHealth::Stale);
 }
 
 #[test]
@@ -492,12 +495,12 @@ fn a_namespaces_error_marks_the_snapshot_stale_and_the_next_one_clears_it() {
     state.namespaces_message(Ok(Event::InitDone));
 
     state.namespaces_message(Err(ClusterError::new("connection reset")));
-    assert!(state.namespaces_stale());
+    assert!(state.status().namespaces_stale);
 
     state.namespaces_message(Ok(Event::Init));
-    assert!(state.namespaces_stale());
+    assert!(state.status().namespaces_stale);
     state.namespaces_message(Ok(Event::InitDone));
-    assert!(!state.namespaces_stale());
+    assert!(!state.status().namespaces_stale);
 }
 
 #[test]
@@ -520,7 +523,7 @@ fn an_object_watch_ending_marks_only_that_watch_stale() {
             .status()
             .is_stale()
     );
-    assert!(!state.namespaces_stale());
+    assert!(!state.status().namespaces_stale);
 }
 
 #[test]
@@ -535,13 +538,13 @@ fn an_ended_watch_nobody_started_is_ignored() {
 #[test]
 fn a_forbidden_crd_watch_denies_access_and_a_snapshot_lifts_it() {
     let mut state = state();
-    assert!(!state.crd_access_denied());
+    assert!(!state.status().crd_access_denied);
 
     state.crds_message(Err(ClusterError::forbidden("crds forbidden")));
-    assert!(state.crd_access_denied());
+    assert!(state.status().crd_access_denied);
 
     state.crds_message(Ok(Event::InitDone));
-    assert!(!state.crd_access_denied());
+    assert!(!state.status().crd_access_denied);
 }
 
 #[test]
@@ -552,7 +555,7 @@ fn the_crd_watch_ending_marks_its_snapshot_stale() {
     state.crds_ended();
 
     assert!(state.crds().status().is_stale());
-    assert!(!state.namespaces_stale());
+    assert!(!state.status().namespaces_stale);
 }
 
 #[test]
@@ -731,16 +734,16 @@ fn the_catalog_follows_the_definitions_before_discovery_catches_up() {
 fn a_failed_discovery_keeps_the_kinds_served_behind_the_stale_warning() {
     let mut state = crontab_state("Namespaced", true);
     state.namespaces_message(Ok(Event::InitDone));
-    assert!(!state.show_stale_warning());
+    assert!(!state.status().show_stale_warning());
     let generation =
         scheduled(&state.crds_message(Ok(Event::Apply(crontab_crd("Namespaced"))))).unwrap();
     let run = run_of(&state.debounce_elapsed(generation));
 
     state.discovery_finished(run, Err(ClusterError::new("connection refused")));
 
-    assert!(state.show_stale_warning());
+    assert!(state.status().show_stale_warning());
     assert!(state.discovery_failure().is_some());
-    assert_eq!(state.health(), ConnectionHealth::Healthy);
+    assert_eq!(state.status().health, ConnectionHealth::Healthy);
     assert!(matches!(
         state.catalog()[0].kinds[0].resource,
         KindResource::Served(_)
@@ -754,9 +757,9 @@ fn a_forbidden_definition_list_leaves_the_catalog_empty() {
     let commands = state.crds_message(Err(ClusterError::forbidden("crds forbidden")));
 
     assert!(state.catalog().is_empty());
-    assert!(state.crd_access_denied());
+    assert!(state.status().crd_access_denied);
     assert_eq!(scheduled(&commands), None);
-    assert!(!state.show_stale_warning());
+    assert!(!state.status().show_stale_warning());
 }
 
 #[test]
@@ -1542,10 +1545,10 @@ fn a_failure_while_connected_is_retried_and_keeps_the_last_result() {
     let (retry, delay) = fail_discovery(&mut state, &commands);
 
     assert_eq!(delay, Duration::from_secs(1));
-    assert!(state.show_stale_warning());
+    assert!(state.status().show_stale_warning());
     let run = run_of(&state.debounce_elapsed(retry));
     state.discovery_finished(run, Ok(crontab_served("Namespaced")));
-    assert!(!state.show_stale_warning());
+    assert!(!state.status().show_stale_warning());
     assert!(matches!(
         state.catalog()[0].kinds[0].resource,
         KindResource::Served(_)
@@ -1565,7 +1568,7 @@ fn a_definition_change_supersedes_a_pending_retry() {
     assert!(state.debounce_elapsed(retry).is_empty());
     let run = run_of(&state.debounce_elapsed(change));
     state.discovery_finished(run, Ok(crontab_served("Namespaced")));
-    assert!(!state.show_stale_warning());
+    assert!(!state.status().show_stale_warning());
 }
 
 #[test]
@@ -1603,7 +1606,7 @@ fn discovery_runs_again_at_once_when_the_first_connect_recovers() {
     );
     state.crds_message(Ok(Event::InitDone));
     state.discovery_finished(run, Ok(crontab_served("Namespaced")));
-    assert!(!state.show_stale_warning());
+    assert!(!state.status().show_stale_warning());
 }
 
 #[test]

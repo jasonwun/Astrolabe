@@ -131,6 +131,9 @@ pub struct Registration {
     /// Navigation entry and list tab name.
     pub label: &'static str,
     pub resource: fn() -> ApiResource,
+    /// Whether the kind's objects live in a namespace; a cluster-scoped
+    /// kind's watch ignores the namespace selection.
+    pub namespaced: bool,
     pub list: fn(&[&DynamicObject], Timestamp) -> ResourceTable,
     pub detail: fn(&DynamicObject, Timestamp) -> Option<DetailModel>,
     pub actions: &'static [Action],
@@ -142,6 +145,14 @@ pub struct Registration {
     pub row_target: Option<fn(&DynamicObject) -> Option<ObjectReference>>,
     /// Every cell of a row opens it, not only the first.
     pub open_all_cells: bool,
+}
+
+impl Registration {
+    /// The namespace a watch of this kind is keyed by, given the one
+    /// asked for: none for a cluster-scoped kind.
+    pub fn watch_namespace<'a>(&self, namespace: Option<&'a str>) -> Option<&'a str> {
+        namespace.filter(|_| self.namespaced)
+    }
 }
 
 /// A detail's related section: `kind`'s objects in the same namespace that
@@ -205,6 +216,7 @@ impl BuiltinKind {
 static PODS: Registration = Registration {
     label: "Pods",
     resource: || ApiResource::erase::<Pod>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_pods),
     detail: |object, now| Some(pod_detail(&parse::<Pod>(object)?, now)),
     actions: &[
@@ -228,6 +240,7 @@ static PODS: Registration = Registration {
 static DEPLOYMENTS: Registration = Registration {
     label: "Deployments",
     resource: || ApiResource::erase::<Deployment>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_deployments),
     detail: |object, now| Some(deployment_detail(&parse::<Deployment>(object)?, now)),
     actions: &[
@@ -250,6 +263,7 @@ static DEPLOYMENTS: Registration = Registration {
 static STATEFULSETS: Registration = Registration {
     label: "StatefulSets",
     resource: || ApiResource::erase::<StatefulSet>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_statefulsets),
     detail: |object, now| Some(statefulset_detail(&parse::<StatefulSet>(object)?, now)),
     actions: &[
@@ -272,6 +286,7 @@ static STATEFULSETS: Registration = Registration {
 static REPLICASETS: Registration = Registration {
     label: "ReplicaSets",
     resource: || ApiResource::erase::<ReplicaSet>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_replicasets),
     detail: |object, now| Some(replicaset_detail(&parse::<ReplicaSet>(object)?, now)),
     actions: &[Action::Scale, Action::Edit, Action::Delete],
@@ -289,6 +304,7 @@ static REPLICASETS: Registration = Registration {
 static DAEMONSETS: Registration = Registration {
     label: "DaemonSets",
     resource: || ApiResource::erase::<DaemonSet>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_daemonsets),
     detail: |object, now| Some(daemonset_detail(&parse::<DaemonSet>(object)?, now)),
     actions: &[Action::RolloutRestart, Action::Edit, Action::Delete],
@@ -306,6 +322,7 @@ static DAEMONSETS: Registration = Registration {
 static JOBS: Registration = Registration {
     label: "Jobs",
     resource: || ApiResource::erase::<Job>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_jobs),
     detail: |object, now| Some(job_detail(&parse::<Job>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -323,6 +340,7 @@ static JOBS: Registration = Registration {
 static CRONJOBS: Registration = Registration {
     label: "CronJobs",
     resource: || ApiResource::erase::<CronJob>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_cronjobs),
     detail: |object, now| Some(cronjob_detail(&parse::<CronJob>(object)?, now)),
     actions: &[Action::Suspend, Action::Trigger, Action::Delete],
@@ -340,6 +358,7 @@ static CRONJOBS: Registration = Registration {
 static EVENTS: Registration = Registration {
     label: "Events",
     resource: || ApiResource::erase::<Event>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_events),
     detail: |object, now| Some(event_detail(&parse::<Event>(object)?, now)),
     actions: &[],
@@ -352,6 +371,7 @@ static EVENTS: Registration = Registration {
 static SERVICES: Registration = Registration {
     label: "Services",
     resource: || ApiResource::erase::<Service>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_services),
     detail: |object, now| {
         Some(service_detail(
@@ -375,6 +395,7 @@ static SERVICES: Registration = Registration {
 static INGRESSES: Registration = Registration {
     label: "Ingresses",
     resource: || ApiResource::erase::<Ingress>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_ingresses),
     detail: |object, now| Some(ingress_detail(&parse::<Ingress>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -387,6 +408,7 @@ static INGRESSES: Registration = Registration {
 static CONFIG_MAPS: Registration = Registration {
     label: "ConfigMaps",
     resource: || ApiResource::erase::<ConfigMap>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_config_maps),
     detail: |object, now| Some(config_map_detail(&parse::<ConfigMap>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -399,6 +421,7 @@ static CONFIG_MAPS: Registration = Registration {
 static SECRETS: Registration = Registration {
     label: "Secrets",
     resource: || ApiResource::erase::<Secret>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_secrets),
     detail: |object, now| Some(secret_detail(&parse::<Secret>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -411,6 +434,7 @@ static SECRETS: Registration = Registration {
 static RESOURCE_QUOTAS: Registration = Registration {
     label: "ResourceQuotas",
     resource: || ApiResource::erase::<ResourceQuota>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_resource_quotas),
     detail: |object, now| Some(resource_quota_detail(&parse::<ResourceQuota>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -423,6 +447,7 @@ static RESOURCE_QUOTAS: Registration = Registration {
 static LIMIT_RANGES: Registration = Registration {
     label: "LimitRanges",
     resource: || ApiResource::erase::<LimitRange>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_limit_ranges),
     detail: |object, now| Some(limit_range_detail(&parse::<LimitRange>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -435,6 +460,7 @@ static LIMIT_RANGES: Registration = Registration {
 static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
     label: "HorizontalPodAutoscalers",
     resource: || ApiResource::erase::<HorizontalPodAutoscaler>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_hpas),
     detail: |object, now| Some(hpa_detail(&parse::<HorizontalPodAutoscaler>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -447,6 +473,7 @@ static HORIZONTAL_POD_AUTOSCALERS: Registration = Registration {
 static ENDPOINT_SLICES: Registration = Registration {
     label: "EndpointSlices",
     resource: || ApiResource::erase::<EndpointSlice>(&()),
+    namespaced: true,
     list: |objects, now| typed_list(objects, now, project_endpoint_slices),
     detail: |object, now| Some(endpoint_slice_detail(&parse::<EndpointSlice>(object)?, now)),
     actions: DEFAULT_ACTIONS,
@@ -570,4 +597,38 @@ fn typed_list<K: Resource + DeserializeOwned>(
 ) -> ResourceTable {
     let typed: Vec<K> = objects.iter().filter_map(|object| parse(object)).collect();
     project(&typed.iter().collect::<Vec<_>>(), now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cluster-scoped registration: every real kind is namespaced.
+    fn cluster_scoped() -> Registration {
+        Registration {
+            label: "Nodes",
+            resource: || ApiResource::erase::<Pod>(&()),
+            namespaced: false,
+            list: |_, _| unreachable!("not listed"),
+            detail: |_, _| None,
+            actions: DEFAULT_ACTIONS,
+            cascade: |_| "",
+            related: None,
+            row_target: None,
+            open_all_cells: false,
+        }
+    }
+
+    #[test]
+    fn a_cluster_scoped_kind_ignores_the_namespace() {
+        assert_eq!(cluster_scoped().watch_namespace(Some("default")), None);
+        assert_eq!(cluster_scoped().watch_namespace(None), None);
+    }
+
+    #[test]
+    fn a_namespaced_kind_keeps_the_namespace() {
+        let pods = BuiltinKind::Pods.registration();
+        assert_eq!(pods.watch_namespace(Some("default")), Some("default"));
+        assert_eq!(pods.watch_namespace(None), None);
+    }
 }

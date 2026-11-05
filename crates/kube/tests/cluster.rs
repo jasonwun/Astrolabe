@@ -330,7 +330,7 @@ async fn an_unserved_kind_the_apiserver_does_not_know_is_reported() {
     assert!(!report.ok());
     let error = report.outcomes[0].result.as_ref().unwrap_err();
     assert!(
-        matches!(&error.error, ApplyError::Global { message, forbidden: false } if message.contains("failed to discover")),
+        matches!(&error.error, ApplyError::Global { message, kind: ClusterErrorKind::Other } if message.contains("failed to discover")),
         "{error:?}"
     );
     assert!(!discovery.lock().unwrap().is_empty());
@@ -354,7 +354,7 @@ async fn an_unserved_kind_discovery_refuses_is_forbidden() {
         matches!(
             &error.error,
             ApplyError::Global {
-                forbidden: true,
+                kind: ClusterErrorKind::Forbidden,
                 ..
             }
         ),
@@ -404,7 +404,7 @@ async fn an_apply_the_apiserver_refuses_says_it_was_forbidden() {
         matches!(
             &error.error,
             ApplyError::Global {
-                forbidden: true,
+                kind: ClusterErrorKind::Forbidden,
                 ..
             }
         ),
@@ -430,7 +430,7 @@ async fn an_apply_that_fails_otherwise_is_not_forbidden() {
         matches!(
             &error.error,
             ApplyError::Global {
-                forbidden: false,
+                kind: ClusterErrorKind::Other,
                 ..
             }
         ),
@@ -457,6 +457,30 @@ async fn an_apiserver_that_cannot_be_reached_is_unreachable_not_other() {
 
     assert_eq!(error.kind(), ClusterErrorKind::Unreachable, "{error}");
     assert!(!error.is_forbidden());
+}
+
+#[tokio::test]
+async fn an_apply_that_cannot_reach_the_apiserver_says_unreachable() {
+    let report = unreachable_cluster()
+        .apply(
+            CONFIGMAP_YAML,
+            ApplyMode::Normal,
+            ServedResources::default(),
+        )
+        .await
+        .unwrap();
+
+    let error = report.outcomes[0].result.as_ref().unwrap_err();
+    assert!(
+        matches!(
+            &error.error,
+            ApplyError::Global {
+                kind: ClusterErrorKind::Unreachable,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

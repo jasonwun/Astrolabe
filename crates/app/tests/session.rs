@@ -25,7 +25,7 @@ fn names(session: &Session) -> Vec<String> {
     session
         .state()
         .namespaces()
-        .into_iter()
+        .objects()
         .map(|namespace| namespace.metadata.name.clone().unwrap())
         .collect()
 }
@@ -43,8 +43,11 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
         assert_eq!(session.state().watch_key().cluster.name(), "kind-a");
         assert_eq!(session.state().watch_key().kind, ResourceKind::Namespaces);
         assert_eq!(session.state().watch_key().namespace, None);
-        assert_eq!(session.state().health(), ConnectionHealth::Connecting);
-        assert!(!session.state().show_stale_warning());
+        assert_eq!(
+            session.state().status().health,
+            ConnectionHealth::Connecting
+        );
+        assert!(!session.state().status().show_stale_warning());
     });
 
     sender.try_send(Ok(Event::Init)).unwrap();
@@ -56,8 +59,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.state().health(), ConnectionHealth::Healthy);
-        assert!(!session.state().show_stale_warning());
+        assert_eq!(session.state().status().health, ConnectionHealth::Healthy);
+        assert!(!session.state().status().show_stale_warning());
     });
 
     sender
@@ -67,8 +70,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.state().health(), ConnectionHealth::Stale);
-        assert!(session.state().show_stale_warning());
+        assert_eq!(session.state().status().health, ConnectionHealth::Stale);
+        assert!(session.state().status().show_stale_warning());
     });
 
     sender.try_send(Ok(Event::Init)).unwrap();
@@ -79,8 +82,11 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.state().health(), ConnectionHealth::Connecting);
-        assert!(session.state().show_stale_warning());
+        assert_eq!(
+            session.state().status().health,
+            ConnectionHealth::Connecting
+        );
+        assert!(session.state().status().show_stale_warning());
     });
 
     sender.try_send(Ok(Event::InitDone)).unwrap();
@@ -94,8 +100,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.state().health(), ConnectionHealth::Healthy);
-        assert!(!session.state().show_stale_warning());
+        assert_eq!(session.state().status().health, ConnectionHealth::Healthy);
+        assert!(!session.state().status().show_stale_warning());
     });
 
     drop(sender);
@@ -103,8 +109,8 @@ fn session_drains_namespace_events_and_tracks_stale_recovery(cx: &mut TestAppCon
     cx.read(|cx| {
         let session = session.read(cx);
         assert_eq!(names(session), ["default"]);
-        assert_eq!(session.state().health(), ConnectionHealth::Stale);
-        assert!(session.state().show_stale_warning());
+        assert_eq!(session.state().status().health, ConnectionHealth::Stale);
+        assert!(session.state().status().show_stale_warning());
     });
 
     // The RUST_LOG-driven event trail covers the health transitions and the
@@ -168,7 +174,7 @@ fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let state = session.read(cx).state();
-        assert_eq!(state.health(), ConnectionHealth::Stale);
+        assert_eq!(state.status().health, ConnectionHealth::Stale);
         assert!(state.discovery_failure().is_some());
         assert!(
             state
@@ -192,7 +198,7 @@ fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let state = session.read(cx).state();
         assert_eq!(names(session.read(cx)), ["default"]);
-        assert_eq!(state.health(), ConnectionHealth::Healthy);
+        assert_eq!(state.status().health, ConnectionHealth::Healthy);
         assert!(state.discovery_failure().is_none());
         let watch = state
             .builtin_watch(BuiltinKind::Pods, Some("default"))

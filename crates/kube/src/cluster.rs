@@ -365,8 +365,9 @@ pub struct Cluster {
 
 impl Cluster {
     /// Start connecting to `cluster` and return at once, after one read of
-    /// the small kubeconfig file for the context's namespace; the client
-    /// itself connects off the caller's thread.
+    /// the small kubeconfig file, which gives the context's namespace and
+    /// the first connect attempt; the client itself connects off the
+    /// caller's thread. Each later attempt reads the file again.
     ///
     /// # Panics
     ///
@@ -374,19 +375,28 @@ impl Cluster {
     pub fn connect(cluster: &ClusterId) -> Self {
         let id = cluster.clone();
         let runtime = runtime().handle().clone();
-        let default_namespace = crate::client::default_namespace_for(&id);
+        let first_read = crate::client::read_kubeconfig();
+        let default_namespace = crate::client::default_namespace_for(&first_read, &id);
         let connector = {
             let cluster = cluster.clone();
             let runtime = runtime.clone();
+            // The first attempt takes the read above, every later one
+            // reads for itself: a kubeconfig is never kept across attempts.
+            let first_read = Mutex::new(Some(first_read));
             move || {
                 let cluster = cluster.clone();
+                let kubeconfig = first_read
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take();
                 // A credential plugin's first run blocks inside config
                 // loading, so the connect runs on the cluster runtime,
                 // never the caller's thread.
                 spawn(
                     &runtime,
                     async move {
-                        crate::client::client_for(&cluster)
+                        let kubeconfig = kubeconfig.unwrap_or_else(crate::client::read_kubeconfig);
+                        crate::client::client_for(&cluster, kubeconfig)
                             .await
                             .map_err(ClusterError::connect_failed)
                     },

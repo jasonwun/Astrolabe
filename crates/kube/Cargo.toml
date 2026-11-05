@@ -19,6 +19,12 @@ tower.workspace = true
 # loop's retry timers (#156), and the Cluster's watch stop signal (#274).
 tokio = { workspace = true, features = ["io-util", "macros", "net", "sync", "time"] }
 
+[features]
+# Helpers for dependents' tests, such as `ApplyReport::failed` (#278). A
+# dependent enables it under its own `[dev-dependencies]`, never for its
+# release build.
+test-support = []
+
 [dev-dependencies]
 # The e2e CRD test builds a Catalog from a live Discovery result (#154).
 # Integration tests only: the library never depends on the model layer.

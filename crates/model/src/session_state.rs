@@ -26,6 +26,29 @@ use crate::session::{
     ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey, Watched,
 };
 
+/// What a Session shows about its connection, read in one place by the
+/// views.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SessionStatus {
+    /// The cluster indicator: the Namespaces watch's health.
+    pub health: ConnectionHealth,
+    /// The Namespaces watch lost its connection and shows its old snapshot.
+    pub namespaces_stale: bool,
+    /// The latest Discovery refresh failed; the old result stays in use.
+    pub discovery_failed: bool,
+    /// RBAC denies listing CRDs: Custom Resources shows an empty-state hint
+    /// (no heuristic reconstruction of kinds, #11).
+    pub crd_access_denied: bool,
+}
+
+impl SessionStatus {
+    /// The disconnect banner: the Namespaces watch lost its connection, or
+    /// the latest Discovery refresh failed.
+    pub fn show_stale_warning(self) -> bool {
+        self.namespaces_stale || self.discovery_failed
+    }
+}
+
 /// What Session must do after an input.
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -470,12 +493,8 @@ impl SessionState {
         &self.namespace
     }
 
-    pub fn namespaces(&self) -> Vec<&Namespace> {
-        self.namespaces.objects().collect()
-    }
-
     /// The Namespaces watch.
-    pub fn namespaces_watch(&self) -> &Watched<Namespace> {
+    pub fn namespaces(&self) -> &Watched<Namespace> {
         &self.namespaces
     }
 
@@ -483,14 +502,9 @@ impl SessionState {
         self.namespaces.get(None, name)
     }
 
+    /// The Definitions watch.
     pub fn crds(&self) -> &Watched<CustomResourceDefinition> {
         &self.crds
-    }
-
-    /// RBAC denies listing CRDs: Custom Resources shows an empty-state hint
-    /// (no heuristic reconstruction of kinds, #11).
-    pub fn crd_access_denied(&self) -> bool {
-        self.crds.status().is_forbidden()
     }
 
     /// The custom kinds by API group, as Custom Resources navigation shows
@@ -516,32 +530,30 @@ impl SessionState {
         self.discovery.failure()
     }
 
-    /// The disconnect banner: the Namespaces watch lost its connection, or
-    /// the latest Discovery refresh failed.
-    pub fn show_stale_warning(&self) -> bool {
-        self.namespaces.status().is_stale() || self.discovery.failure().is_some()
-    }
-
-    pub fn health(&self) -> ConnectionHealth {
-        self.namespaces.status().health()
-    }
-
-    /// The Namespaces watch lost its connection and shows its old snapshot.
-    pub fn namespaces_stale(&self) -> bool {
-        self.namespaces.status().is_stale()
+    /// What the cluster indicator and the disconnect banner show.
+    pub fn status(&self) -> SessionStatus {
+        SessionStatus {
+            health: self.namespaces.status().health(),
+            namespaces_stale: self.namespaces.status().is_stale(),
+            discovery_failed: self.discovery.failure().is_some(),
+            crd_access_denied: self.crds.status().is_forbidden(),
+        }
     }
 
     pub fn object_watch(&self, key: &WatchKey) -> Option<&Watched<DynamicObject>> {
         self.objects.get(key)
     }
 
-    /// The key of the watch holding `kind`'s objects in `namespace` (`None`
-    /// when the kind is cluster-scoped).
+    /// The key of the watch holding `kind`'s objects in `namespace`; a
+    /// cluster-scoped kind ignores `namespace`.
     fn builtin_watch_key(&self, kind: BuiltinKind, namespace: Option<&str>) -> WatchKey {
         WatchKey {
             cluster: self.key.cluster.clone(),
             kind: ResourceKind::Builtin(kind),
-            namespace: namespace.map(str::to_string),
+            namespace: kind
+                .registration()
+                .watch_namespace(namespace)
+                .map(str::to_string),
         }
     }
 
@@ -563,6 +575,7 @@ impl SessionState {
         namespace: Option<&str>,
         name: &str,
     ) -> Option<&DynamicObject> {
+        let namespace = kind.registration().watch_namespace(namespace);
         self.builtin_watch(kind, namespace)?.get(namespace, name)
     }
 
