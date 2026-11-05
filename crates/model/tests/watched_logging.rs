@@ -1,25 +1,15 @@
 //! Lives in its own test binary on purpose: a thread-scoped subscriber races
 //! other threads over tracing's per-callsite interest cache, so no other test
-//! in this binary may reach the callsites asserted here (see #285).
+//! in this binary may reach the callsites asserted here (see #285). The same
+//! rule is documented on `Logs` in `crates/kube/tests/support/mod.rs`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use astrolabe_kube::cluster::ClusterId;
-use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
-use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
-use astrolabe_model::session::Watched;
 
-fn namespace(name: &str) -> Namespace {
-    Namespace {
-        metadata: ObjectMeta {
-            name: Some(name.to_string()),
-            ..ObjectMeta::default()
-        },
-        ..Namespace::default()
-    }
-}
+mod support;
+use support::{namespace, namespace_watch, relist};
 
 /// Counts the events logged while it is the thread's subscriber.
 struct EventCount(Arc<AtomicUsize>);
@@ -48,10 +38,8 @@ fn events_logged_by(f: impl FnOnce()) -> usize {
 
 #[test]
 fn only_a_health_change_is_logged() {
-    let mut watched = Watched::new(ClusterId::named("kind-test"), "namespace");
-    watched.apply(Ok(Event::Init));
-    watched.apply(Ok(Event::InitApply(namespace("default"))));
-    watched.apply(Ok(Event::InitDone));
+    let mut watched = namespace_watch();
+    relist(&mut watched, &["default"]);
 
     // Live stays Live: nothing to log.
     let same = events_logged_by(|| {

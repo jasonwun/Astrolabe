@@ -2,12 +2,17 @@
 //! the app does, for the projection tests; and builds Discovery results.
 #![allow(dead_code)]
 
+use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::discovery::ServedResource;
+use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
+use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::projection::{DetailModel, ResourceTable};
+use astrolabe_model::session::{SnapshotChange, Watched};
 
 pub fn object(value: serde_json::Value) -> DynamicObject {
     serde_json::from_value(value).unwrap()
@@ -36,4 +41,26 @@ pub fn served(group: &str, version: &str, kind: &str, namespaced: bool) -> Serve
         },
         namespaced,
     }
+}
+
+pub fn namespace(name: &str) -> Namespace {
+    Namespace {
+        metadata: ObjectMeta {
+            name: Some(name.to_string()),
+            ..ObjectMeta::default()
+        },
+        ..Namespace::default()
+    }
+}
+
+pub fn namespace_watch() -> Watched<Namespace> {
+    Watched::new(ClusterId::named("kind-test"), "namespace")
+}
+
+pub fn relist(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {
+    watched.apply(Ok(Event::Init));
+    for name in names {
+        watched.apply(Ok(Event::InitApply(namespace(name))));
+    }
+    watched.apply(Ok(Event::InitDone))
 }

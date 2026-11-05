@@ -2,35 +2,16 @@ use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::kube::runtime::watcher::Event;
-use astrolabe_model::session::{ConnectionHealth, SnapshotChange, WatchStatus, Watched};
+mod support;
+use support::{namespace, namespace_watch, relist};
 
-fn namespace(name: &str) -> Namespace {
-    Namespace {
-        metadata: ObjectMeta {
-            name: Some(name.to_string()),
-            ..ObjectMeta::default()
-        },
-        ..Namespace::default()
-    }
-}
+use astrolabe_model::session::{ConnectionHealth, SnapshotChange, WatchStatus, Watched};
 
 fn names(watched: &Watched<Namespace>) -> Vec<String> {
     watched
         .objects()
         .map(|namespace| namespace.metadata.name.clone().unwrap())
         .collect()
-}
-
-fn namespace_watch() -> Watched<Namespace> {
-    Watched::new(ClusterId::named("kind-test"), "namespace")
-}
-
-fn relist(watched: &mut Watched<Namespace>, names: &[&str]) -> SnapshotChange {
-    watched.apply(Ok(Event::Init));
-    for name in names {
-        watched.apply(Ok(Event::InitApply(namespace(name))));
-    }
-    watched.apply(Ok(Event::InitDone))
 }
 
 #[test]
