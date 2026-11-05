@@ -339,14 +339,17 @@ impl ResourceDetailPanel {
     fn render_related(&self, related: RelatedRows, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let content = match related.outcome {
-            RelatedOutcome::Failed(error) => div()
-                .id("related-failed")
-                .aria_label(detail::failed_message(error.as_ref()))
-                .test_support()
-                .text_sm()
-                .text_color(muted)
-                .child(detail::failed_message(error.as_ref()))
-                .into_any_element(),
+            RelatedOutcome::Failed(error) => {
+                let failed = detail::failed_message(error.as_ref());
+                div()
+                    .id("related-failed")
+                    .aria_label(failed.clone())
+                    .test_support()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(failed)
+                    .into_any_element()
+            }
             RelatedOutcome::Forbidden(text)
             | RelatedOutcome::Empty(text)
             | RelatedOutcome::Loading(text) => div()
@@ -694,30 +697,9 @@ impl Render for ResourceDetailPanel {
         let resolved = match resolved {
             DetailOutcome::Shown(resolved) => *resolved,
             absent => {
-                let name = self.display_name();
-                let (id, text) = match absent {
-                    DetailOutcome::Loading => ("detail-loading", format!("Loading {name}…")),
-                    DetailOutcome::Failed(error) => {
-                        ("detail-failed", detail::failed_message(error.as_ref()))
-                    }
-                    DetailOutcome::Forbidden => (
-                        "detail-forbidden",
-                        format!("No permission to read {name} here"),
-                    ),
-                    DetailOutcome::Undefined => {
-                        ("detail-undefined", format!("{name} is no longer defined"))
-                    }
-                    DetailOutcome::NotServed => (
-                        "detail-not-served",
-                        format!("{name}'s kind is not served by the API server"),
-                    ),
-                    DetailOutcome::Unreadable => {
-                        ("detail-unreadable", format!("Cannot read {name}"))
-                    }
-                    DetailOutcome::Gone | DetailOutcome::Shown(_) => {
-                        ("detail-gone", format!("{name} no longer exists"))
-                    }
-                };
+                let (id, text) = absent
+                    .notice(&self.display_name())
+                    .expect("an outcome that is not shown has a notice");
                 return v_flex()
                     .track_focus(&self.focus_handle)
                     .size_full()

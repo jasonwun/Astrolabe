@@ -120,7 +120,8 @@ impl DetailTarget {
 
 impl DetailTarget {
     /// The object an operation on this target addresses, while it is still
-    /// in its watch; `None` once it is gone. Looks the object up without
+    /// in its watch; `None` while there is none (loading, failed, denied, gone
+    /// and the rest: see `resolve`). Looks the object up without
     /// projecting it.
     pub fn object(&self, state: &SessionState) -> Option<ObjectRef> {
         self.lookup(state).ok().map(|(object, _)| object)
@@ -226,6 +227,29 @@ impl DetailOutcome {
     }
 }
 
+impl DetailOutcome {
+    /// What the panel shows for `name` when there is no object: an element
+    /// id and the text. `None` for a shown object.
+    pub fn notice(&self, name: &str) -> Option<(&'static str, String)> {
+        Some(match self {
+            Self::Shown(_) => return None,
+            Self::Loading => ("detail-loading", format!("Loading {name}…")),
+            Self::Failed(error) => ("detail-failed", failed_message(error.as_ref())),
+            Self::Forbidden => (
+                "detail-forbidden",
+                format!("No permission to read {name} here"),
+            ),
+            Self::Undefined => ("detail-undefined", format!("{name} is no longer defined")),
+            Self::NotServed => (
+                "detail-not-served",
+                format!("{name}'s kind is not served by the API server"),
+            ),
+            Self::Unreadable => ("detail-unreadable", format!("Cannot read {name}")),
+            Self::Gone => ("detail-gone", format!("{name} no longer exists")),
+        })
+    }
+}
+
 /// The text shown where a detail's watch failed before its first snapshot.
 pub fn failed_message(error: Option<&ClusterError>) -> String {
     match error {
@@ -312,15 +336,15 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> D
         Ok(found) => found,
         Err(outcome) => return outcome,
     };
-    match shown {
-        Shown::Namespace(namespace) => shown_outcome(Resolved {
+    let resolved = match shown {
+        Shown::Namespace(namespace) => Resolved {
             model: namespace_detail(namespace, now),
             object,
             cascade: "Deleting a Namespace deletes every object in it.".to_string(),
             actions: DEFAULT_ACTIONS,
             related: None,
-        }),
-        Shown::Definition(crd) => shown_outcome(Resolved {
+        },
+        Shown::Definition(crd) => Resolved {
             model: definition_detail(crd, now),
             object,
             cascade: format!(
@@ -329,7 +353,7 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> D
             ),
             actions: DEFAULT_ACTIONS,
             related: None,
-        }),
+        },
         Shown::Builtin(kind, shown) => {
             let registration = kind.registration();
             let namespace = object.key.namespace.as_deref();
@@ -339,20 +363,25 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> D
                     .map(|watch| watch.objects().collect::<Vec<_>>())
                     .unwrap_or_default();
                 let selected = (related.select)(shown, &candidates);
-                let outcome = if let WatchReading::Loading = Watched::reading(watch) {
-                    RelatedOutcome::Loading(format!("Loading {}…", related.title.to_lowercase()))
-                } else if let WatchReading::Failed(error) = Watched::reading(watch) {
-                    RelatedOutcome::Failed(error.cloned())
-                } else if let WatchReading::Forbidden = Watched::reading(watch) {
-                    RelatedOutcome::Forbidden(forbidden_message(related.title))
-                } else if related.hide_when_empty && selected.is_empty() {
-                    return None;
-                } else {
-                    let table = (related.kind.registration().list)(&selected, now);
-                    if table.rows.is_empty() {
-                        RelatedOutcome::Empty(format!("No {}", related.title.to_lowercase()))
-                    } else {
-                        RelatedOutcome::Rows(table)
+                let outcome = match Watched::reading(watch) {
+                    WatchReading::Loading => RelatedOutcome::Loading(format!(
+                        "Loading {}…",
+                        related.title.to_lowercase()
+                    )),
+                    WatchReading::Failed(error) => RelatedOutcome::Failed(error.cloned()),
+                    WatchReading::Forbidden => {
+                        RelatedOutcome::Forbidden(forbidden_message(related.title))
+                    }
+                    WatchReading::Rows if related.hide_when_empty && selected.is_empty() => {
+                        return None;
+                    }
+                    WatchReading::Rows => {
+                        let table = (related.kind.registration().list)(&selected, now);
+                        if table.rows.is_empty() {
+                            RelatedOutcome::Empty(format!("No {}", related.title.to_lowercase()))
+                        } else {
+                            RelatedOutcome::Rows(table)
+                        }
                     }
                 };
                 Some(RelatedRows {
@@ -363,25 +392,22 @@ pub fn resolve(target: &DetailTarget, state: &SessionState, now: Timestamp) -> D
             let Some(model) = (registration.detail)(shown, now) else {
                 return DetailOutcome::Unreadable;
             };
-            shown_outcome(Resolved {
+            Resolved {
                 model,
                 object,
                 cascade: (registration.cascade)(shown).to_string(),
                 actions: registration.actions,
                 related,
-            })
+            }
         }
-        Shown::Custom(kind, shown) => shown_outcome(Resolved {
+        Shown::Custom(kind, shown) => Resolved {
             model: custom_resource_detail(kind, shown, now),
             object,
             cascade: "Objects that list it in ownerReferences will be garbage-collected."
                 .to_string(),
             actions: DEFAULT_ACTIONS,
             related: None,
-        }),
-    }
-}
-
-fn shown_outcome(resolved: Resolved) -> DetailOutcome {
+        },
+    };
     DetailOutcome::Shown(Box::new(resolved))
 }

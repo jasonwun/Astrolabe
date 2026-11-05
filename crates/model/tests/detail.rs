@@ -468,3 +468,21 @@ fn failed_messages_name_the_kind_of_failure() {
         "The watch ended before the object loaded"
     );
 }
+
+#[test]
+fn only_gone_says_no_longer_exists() {
+    let texts = [
+        DetailOutcome::Loading,
+        DetailOutcome::Failed(None),
+        DetailOutcome::Forbidden,
+        DetailOutcome::Undefined,
+        DetailOutcome::NotServed,
+        DetailOutcome::Unreadable,
+    ]
+    .map(|outcome| outcome.notice("Pod web").unwrap().1);
+    assert!(texts.iter().all(|text| !text.contains("no longer exists")));
+    assert_eq!(
+        DetailOutcome::Gone.notice("Pod web"),
+        Some(("detail-gone", "Pod web no longer exists".to_string()))
+    );
+}
