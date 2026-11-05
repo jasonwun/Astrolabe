@@ -28,7 +28,9 @@ use crate::clock;
 use crate::perf;
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
-use astrolabe_model::detail::{self, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches};
+use astrolabe_model::detail::{
+    self, DetailOutcome, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches,
+};
 
 mod editor_panel;
 mod pod_actions;
@@ -132,7 +134,7 @@ impl ResourceDetailPanel {
     }
 
     fn resolve(&self, cx: &App) -> Option<Resolved> {
-        detail::resolve(&self.target, self.state(cx), clock::now(cx))
+        detail::resolve(&self.target, self.state(cx), clock::now(cx)).shown()
     }
 
     fn display_name(&self) -> String {
@@ -337,7 +339,17 @@ impl ResourceDetailPanel {
     fn render_related(&self, related: RelatedRows, cx: &mut Context<Self>) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let content = match related.outcome {
-            RelatedOutcome::Forbidden(text) | RelatedOutcome::Empty(text) => div()
+            RelatedOutcome::Failed(error) => div()
+                .id("related-failed")
+                .aria_label(detail::failed_message(error.as_ref()))
+                .test_support()
+                .text_sm()
+                .text_color(muted)
+                .child(detail::failed_message(error.as_ref()))
+                .into_any_element(),
+            RelatedOutcome::Forbidden(text)
+            | RelatedOutcome::Empty(text)
+            | RelatedOutcome::Loading(text) => div()
                 .id("related-empty")
                 .aria_label(text.clone())
                 .test_support()
@@ -679,21 +691,47 @@ impl Render for ResourceDetailPanel {
             cx.background_executor().timer(next_tick).await;
             panel.update(cx, |_, cx| cx.notify()).ok();
         });
-        let Some(resolved) = resolved else {
-            let text = format!("{} no longer exists", self.display_name());
-            return v_flex()
-                .track_focus(&self.focus_handle)
-                .size_full()
-                .child(
-                    div()
-                        .id("detail-gone")
-                        .aria_label(text.clone())
-                        .test_support()
-                        .p_4()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(text),
-                )
-                .into_any_element();
+        let resolved = match resolved {
+            DetailOutcome::Shown(resolved) => *resolved,
+            absent => {
+                let name = self.display_name();
+                let (id, text) = match absent {
+                    DetailOutcome::Loading => ("detail-loading", format!("Loading {name}…")),
+                    DetailOutcome::Failed(error) => {
+                        ("detail-failed", detail::failed_message(error.as_ref()))
+                    }
+                    DetailOutcome::Forbidden => (
+                        "detail-forbidden",
+                        format!("No permission to read {name} here"),
+                    ),
+                    DetailOutcome::Undefined => {
+                        ("detail-undefined", format!("{name} is no longer defined"))
+                    }
+                    DetailOutcome::NotServed => (
+                        "detail-not-served",
+                        format!("{name}'s kind is not served by the API server"),
+                    ),
+                    DetailOutcome::Unreadable => {
+                        ("detail-unreadable", format!("Cannot read {name}"))
+                    }
+                    DetailOutcome::Gone | DetailOutcome::Shown(_) => {
+                        ("detail-gone", format!("{name} no longer exists"))
+                    }
+                };
+                return v_flex()
+                    .track_focus(&self.focus_handle)
+                    .size_full()
+                    .child(
+                        div()
+                            .id(id)
+                            .aria_label(text.clone())
+                            .test_support()
+                            .p_4()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(text),
+                    )
+                    .into_any_element();
+            }
         };
         let model = resolved.model;
         let replicas = model.replicas;

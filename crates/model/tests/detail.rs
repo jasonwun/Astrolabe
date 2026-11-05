@@ -14,7 +14,8 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::detail::{
-    DetailTarget, NeededWatch, ReferenceError, RelatedOutcome, Resolved, resolve, watches,
+    DetailOutcome, DetailTarget, NeededWatch, ReferenceError, RelatedOutcome, Resolved,
+    failed_message, resolve, watches,
 };
 use astrolabe_model::session_state::SessionState;
 use support::object;
@@ -58,7 +59,7 @@ fn forbid(state: &mut SessionState, kind: BuiltinKind, message: &str) {
 }
 
 fn resolved(target: &DetailTarget, state: &SessionState) -> Resolved {
-    resolve(target, state, now()).unwrap()
+    resolve(target, state, now()).shown().unwrap()
 }
 
 fn web_service() -> DynamicObject {
@@ -334,4 +335,136 @@ fn a_cluster_scoped_builtin_is_watched_and_found_without_a_namespace() {
     );
     assert_eq!(target.object(&state).unwrap().key.name, "node-a");
     assert_eq!(resolved(&target, &state).object.key.namespace, None);
+}
+
+fn outcome(target: &DetailTarget, state: &SessionState) -> DetailOutcome {
+    resolve(target, state, now())
+}
+
+#[test]
+fn a_builtin_detail_is_loading_before_its_watchs_first_snapshot() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let state = state(&target);
+
+    assert!(matches!(outcome(&target, &state), DetailOutcome::Loading));
+}
+
+#[test]
+fn a_builtin_detail_with_no_watch_is_loading() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+
+    assert!(matches!(outcome(&target, &state), DetailOutcome::Loading));
+}
+
+#[test]
+fn a_builtin_detail_whose_watch_failed_before_a_snapshot_carries_the_error() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    let key = state
+        .watch_builtin(BuiltinKind::Deployments, Some("default"))
+        .key;
+    state.object_message(&key, Err(ClusterError::unreachable("refused")));
+
+    let DetailOutcome::Failed(Some(error)) = outcome(&target, &state) else {
+        panic!("expected Failed with an error");
+    };
+    assert!(error.to_string().contains("refused"));
+}
+
+#[test]
+fn a_builtin_detail_whose_watch_is_denied_is_forbidden() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    forbid(
+        &mut state,
+        BuiltinKind::Deployments,
+        "deployments is forbidden",
+    );
+
+    assert!(matches!(outcome(&target, &state), DetailOutcome::Forbidden));
+}
+
+#[test]
+fn a_builtin_detail_absent_from_its_snapshot_is_gone() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    snapshot(&mut state, BuiltinKind::Deployments, vec![]);
+
+    assert!(matches!(outcome(&target, &state), DetailOutcome::Gone));
+}
+
+#[test]
+fn a_builtin_detail_absent_from_a_stale_snapshot_is_gone() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    snapshot(&mut state, BuiltinKind::Deployments, vec![]);
+    let key = state
+        .watch_builtin(BuiltinKind::Deployments, Some("default"))
+        .key;
+    state.object_ended(&key);
+
+    assert!(matches!(outcome(&target, &state), DetailOutcome::Gone));
+}
+
+#[test]
+fn a_projection_that_cannot_parse_the_object_is_unreadable_not_gone() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    let broken = object(serde_json::json!({
+        "apiVersion": "apps/v1", "kind": "Deployment",
+        "metadata": {"name": "web", "namespace": "default", "uid": "uid-deploy"},
+        "spec": "not an object"
+    }));
+    snapshot(&mut state, BuiltinKind::Deployments, vec![broken]);
+
+    assert!(matches!(
+        outcome(&target, &state),
+        DetailOutcome::Unreadable
+    ));
+}
+
+#[test]
+fn a_related_section_is_loading_while_its_watch_has_no_snapshot() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    snapshot(&mut state, BuiltinKind::Deployments, vec![web_deployment()]);
+
+    let related = resolved(&target, &state).related.unwrap();
+    assert_eq!(
+        related.outcome,
+        RelatedOutcome::Loading("Loading pods…".to_string())
+    );
+}
+
+#[test]
+fn a_related_section_whose_watch_failed_before_a_snapshot_is_failed() {
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    snapshot(&mut state, BuiltinKind::Deployments, vec![web_deployment()]);
+    let key = state.watch_builtin(BuiltinKind::Pods, Some("default")).key;
+    state.object_message(&key, Err(ClusterError::unreachable("refused")));
+
+    let related = resolved(&target, &state).related.unwrap();
+    let RelatedOutcome::Failed(Some(error)) = related.outcome else {
+        panic!("expected Failed with an error");
+    };
+    assert!(error.to_string().contains("refused"));
+}
+
+#[test]
+fn failed_messages_name_the_kind_of_failure() {
+    assert_eq!(
+        failed_message(Some(&ClusterError::unreachable("refused"))),
+        format!(
+            "Cannot reach the cluster: {}",
+            ClusterError::unreachable("refused")
+        )
+    );
+    assert!(failed_message(Some(&ClusterError::connect("x"))).starts_with("Cannot connect"));
+    assert!(failed_message(Some(&ClusterError::new("boom"))).starts_with("Cannot load the object"));
+    assert_eq!(
+        failed_message(None),
+        "The watch ended before the object loaded"
+    );
 }

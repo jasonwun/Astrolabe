@@ -494,8 +494,11 @@ fn detail_tab_follows_a_preferred_version_change(cx: &mut TestAppContext) {
     ui.frame(|window, _| assert!(window.try_find("detail-status").is_some()));
 
     ui.prefer("v2");
-    // The v2 store has not listed the object yet: same as a missing object.
-    ui.frame(|window, _| assert!(window.try_find("detail-gone").is_some()));
+    // The v2 store has not listed the object yet: loading, never gone.
+    ui.frame(|window, _| {
+        assert!(window.try_find("detail-loading").is_some());
+        assert!(window.try_find("detail-gone").is_none());
+    });
     snapshot(
         &mut v2,
         vec![crontab_at(

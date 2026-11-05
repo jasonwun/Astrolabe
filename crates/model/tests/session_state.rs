@@ -9,7 +9,7 @@ use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::KindResource;
-use astrolabe_model::detail::{DetailTarget, watches};
+use astrolabe_model::detail::{DetailOutcome, DetailTarget, resolve, watches};
 use astrolabe_model::session::{
     ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey,
 };
@@ -1083,7 +1083,6 @@ fn the_viewed_custom_list_reads_the_watch_of_the_selected_namespace() {
 
 #[test]
 fn a_custom_detail_resolves_from_its_namespaces_watch() {
-    use astrolabe_model::detail::{DetailTarget, resolve};
     let mut state = crontab_state("Namespaced", true);
     let key = state.open_custom_list(&crontab_id()).unwrap().key;
     state.object_message(&key, Ok(crontab("default", "nightly")));
@@ -1093,8 +1092,11 @@ fn a_custom_detail_resolves_from_its_namespaces_watch() {
     };
     let now = "2026-10-22T12:00:00Z".parse().unwrap();
 
-    assert!(resolve(&target("default"), &state, now).is_some());
-    assert!(resolve(&target("team-b"), &state, now).is_none());
+    assert!(resolve(&target("default"), &state, now).shown().is_some());
+    assert!(matches!(
+        resolve(&target("team-b"), &state, now),
+        DetailOutcome::Loading
+    ));
 }
 
 #[test]
@@ -1364,4 +1366,111 @@ fn the_watch_of_an_open_custom_detail_is_never_evicted() {
     state.close_detail(&target);
     let commands = fill_with_services(&mut state, RESIDENT_WATCH_CAP);
     assert!(stopped(&commands).contains(&watched[0]));
+}
+
+fn custom_outcome(state: &SessionState) -> DetailOutcome {
+    resolve(
+        &crontab_detail("team-a"),
+        state,
+        "2026-10-22T12:00:00Z".parse().unwrap(),
+    )
+}
+
+#[test]
+fn a_custom_detail_is_loading_until_its_kind_is_discovered() {
+    let mut state = state();
+    list_crontab_crd(&mut state, "Namespaced");
+
+    assert!(matches!(custom_outcome(&state), DetailOutcome::Loading));
+}
+
+#[test]
+fn a_custom_detail_of_a_kind_that_left_the_catalog_is_undefined() {
+    let state = state();
+
+    assert!(matches!(custom_outcome(&state), DetailOutcome::Undefined));
+}
+
+#[test]
+fn a_custom_detail_of_a_kind_the_server_does_not_serve_is_not_served() {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    list_crontab_crd(&mut state, "Namespaced");
+    state.discovery_finished(run, Ok(ServedResources::new([])));
+
+    assert!(matches!(custom_outcome(&state), DetailOutcome::NotServed));
+}
+
+#[test]
+fn a_custom_detail_is_loading_then_gone_then_shown_by_its_watch() {
+    let mut state = versioned_state();
+    let commands = state.open_detail(crontab_detail("team-a"));
+    let key = started(&commands).remove(0);
+    assert!(matches!(custom_outcome(&state), DetailOutcome::Loading));
+
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(&key, Ok(Event::InitDone));
+    assert!(matches!(custom_outcome(&state), DetailOutcome::Gone));
+
+    state.object_message(&key, Ok(crontab("team-a", "nightly")));
+    assert!(custom_outcome(&state).shown().is_some());
+}
+
+#[test]
+fn a_custom_detail_whose_watch_ended_with_a_snapshot_still_reads_the_snapshot() {
+    let mut state = versioned_state();
+    let key = started(&state.open_detail(crontab_detail("team-a"))).remove(0);
+    state.object_message(&key, Ok(Event::Init));
+    state.object_message(
+        &key,
+        Ok(Event::InitApply(object(serde_json::json!({
+            "apiVersion": "stable.example.com/v1", "kind": "CronTab",
+            "metadata": {"name": "nightly", "namespace": "team-a"},
+        })))),
+    );
+    state.object_message(&key, Ok(Event::InitDone));
+    state.object_ended(&key);
+
+    assert!(custom_outcome(&state).shown().is_some());
+}
+
+#[test]
+fn a_custom_detail_is_failed_or_forbidden_by_its_watch_before_a_snapshot() {
+    let mut state = versioned_state();
+    let key = started(&state.open_detail(crontab_detail("team-a"))).remove(0);
+
+    state.object_message(&key, Err(ClusterError::unreachable("refused")));
+    assert!(matches!(
+        custom_outcome(&state),
+        DetailOutcome::Failed(Some(error)) if error.to_string().contains("refused")
+    ));
+
+    state.object_message(&key, Err(ClusterError::forbidden("denied")));
+    assert!(matches!(custom_outcome(&state), DetailOutcome::Forbidden));
+}
+
+#[test]
+fn a_preferred_version_switch_is_loading_until_the_new_watchs_first_list() {
+    let mut state = versioned_state();
+    let old = started(&state.open_detail(crontab_detail("team-a"))).remove(0);
+    state.object_message(&old, Ok(Event::Init));
+    state.object_message(&old, Ok(init_crontab("team-a", "nightly")));
+    state.object_message(&old, Ok(Event::InitDone));
+    assert!(custom_outcome(&state).shown().is_some());
+
+    let commands = state.crds_message(Ok(Event::Apply(crontab_crd_stored_at("v2"))));
+    let new = started(&commands).remove(0);
+
+    assert!(matches!(custom_outcome(&state), DetailOutcome::Loading));
+    state.object_message(&new, Ok(Event::Init));
+    state.object_message(&new, Ok(init_crontab("team-a", "nightly")));
+    state.object_message(&new, Ok(Event::InitDone));
+    assert!(custom_outcome(&state).shown().is_some());
+}
+
+fn init_crontab(namespace: &str, name: &str) -> Event<DynamicObject> {
+    match crontab(namespace, name) {
+        Event::Apply(object) => Event::InitApply(object),
+        other => other,
+    }
 }
