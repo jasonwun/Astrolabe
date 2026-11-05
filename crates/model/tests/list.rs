@@ -446,7 +446,7 @@ fn a_builtin_list_denied_after_a_snapshot_keeps_its_rows_stale_by_denial() {
     state.object_message(&key, Ok(pod_init("web")));
     state.object_message(&key, Ok(Event::InitDone));
 
-    assert_eq!(resolved_stale(&state), None);
+    assert_eq!(resolved(&state).stale, None);
 }
 
 #[test]
@@ -489,7 +489,7 @@ fn definitions_denied_after_a_snapshot_keep_their_rows_stale_by_denial() {
 
     state.crds_message(Ok(Event::Init));
     state.crds_message(Ok(Event::InitDone));
-    assert_eq!(resolved_stale(&state), None);
+    assert_eq!(resolved(&state).stale, None);
 }
 
 #[test]
@@ -507,17 +507,24 @@ fn a_custom_list_denied_after_a_snapshot_keeps_its_rows_stale_by_denial() {
     state.discovery_finished(run, Ok(crontab_served()));
     let key = state.open_custom_list(&crontab_id()).unwrap().key;
     state.object_message(&key, Ok(Event::Init));
+    state.object_message(
+        &key,
+        Ok(Event::InitApply(object(serde_json::json!({
+            "apiVersion": "stable.example.com/v1", "kind": "CronTab",
+            "metadata": {"name": "nightly", "namespace": "default"},
+        })))),
+    );
     state.object_message(&key, Ok(Event::InitDone));
     state.object_message(&key, denied());
 
     let resolved = resolved(&state);
 
     assert_eq!(resolved.stale, Some(StaleCause::Denied));
-    assert_eq!(rows(&resolved), 0);
+    assert_eq!(rows(&resolved), 1);
 
     state.object_message(&key, Ok(Event::Init));
     state.object_message(&key, Ok(Event::InitDone));
-    assert_eq!(resolved_stale(&state), None);
+    assert_eq!(resolved(&state).stale, None);
 }
 
 #[test]
@@ -540,8 +547,4 @@ fn a_custom_list_denied_before_a_snapshot_is_forbidden() {
     state.object_message(&key, denied());
 
     assert_eq!(resolved(&state).stale, None);
-}
-
-fn resolved_stale(state: &SessionState) -> Option<StaleCause> {
-    resolved(state).stale
 }

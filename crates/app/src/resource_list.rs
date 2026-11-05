@@ -23,8 +23,7 @@ use crate::session::Session;
 use crate::workspace::{DENIED_STALE_MESSAGE, STALE_MESSAGE};
 use astrolabe_model::detail::{DetailTarget, ReferenceError};
 use astrolabe_model::list::{self, ListOutcome};
-use astrolabe_model::session::CustomKindId;
-use astrolabe_model::session::StaleCause;
+use astrolabe_model::session::{CustomKindId, StaleCause};
 
 /// Why a row cannot be opened; shown as the list's notice.
 #[derive(Debug, PartialEq, Eq)]
@@ -337,7 +336,8 @@ impl Render for ResourceListPanel {
             .track_focus(&self.focus_handle)
             .size_full()
             .when_some(self.stale, |this, cause| {
-                // Distinct ids and texts per cause keep `try_find` unambiguous.
+                // Distinct ids and texts per cause keep `try_find` unambiguous; the
+                // alert inside takes `(id, 0)` because an id tuple needs a number.
                 let (id, text) = match cause {
                     StaleCause::ConnectionLost => ("list-stale", STALE_MESSAGE),
                     StaleCause::Denied => ("list-denied", DENIED_STALE_MESSAGE),

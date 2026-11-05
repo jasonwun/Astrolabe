@@ -125,11 +125,7 @@ impl WatchStatus {
 
     /// The watch shows an old snapshot that may no longer be true.
     pub fn is_stale(self) -> bool {
-        match self {
-            Self::Relisting | Self::Stale => true,
-            Self::Forbidden { has_snapshot } => has_snapshot,
-            Self::Connecting | Self::Live | Self::Failed => false,
-        }
+        self.stale_cause().is_some()
     }
 
     /// Why the old snapshot is stale; none when it is not.
