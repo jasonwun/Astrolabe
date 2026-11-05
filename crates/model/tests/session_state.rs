@@ -196,7 +196,7 @@ fn changing_back_to_a_visited_namespace_starts_nothing() {
 fn selecting_the_selected_namespace_starts_nothing() {
     let mut state = state();
     state.open_builtin_list(BuiltinKind::Pods);
-    state.close_list();
+    state.open_namespaces_list();
 
     assert!(state.set_namespace("default".to_string()).is_empty());
 }
@@ -215,7 +215,7 @@ fn changing_the_namespace_with_no_list_viewed_starts_nothing() {
 fn a_closed_list_no_longer_follows_the_namespace() {
     let mut state = state();
     state.open_builtin_list(BuiltinKind::Pods);
-    state.close_list();
+    state.open_namespaces_list();
 
     assert!(state.set_namespace("team-a".to_string()).is_empty());
 }
@@ -307,7 +307,7 @@ fn a_custom_list_already_watched_starts_nothing_when_the_catalog_changes() {
 fn a_catalog_change_leaves_a_builtin_list_alone() {
     let mut state = state();
     state.open_builtin_list(BuiltinKind::Pods);
-    state.close_list();
+    state.open_namespaces_list();
     state.open_builtin_list(BuiltinKind::Deployments);
     state.set_namespace("team-a".to_string());
 
@@ -1027,4 +1027,136 @@ fn a_custom_detail_resolves_from_its_namespaces_watch() {
 
     assert!(resolve(&target("default"), &state, now).is_some());
     assert!(resolve(&target("team-b"), &state, now).is_none());
+}
+
+#[test]
+fn the_viewed_list_is_readable_for_every_list() {
+    use astrolabe_model::session_state::Viewing;
+    let mut state = crontab_state("Namespaced", true);
+    assert_eq!(state.viewing(), &Viewing::Namespaces);
+
+    state.open_builtin_list(BuiltinKind::Pods);
+    assert_eq!(state.viewing(), &Viewing::Builtin(BuiltinKind::Pods));
+
+    state.open_definitions_list();
+    assert_eq!(state.viewing(), &Viewing::Definitions);
+
+    state.open_custom_list(&crontab_id()).unwrap();
+    assert_eq!(state.viewing(), &Viewing::Custom(crontab_id()));
+
+    state.open_namespaces_list();
+    assert_eq!(state.viewing(), &Viewing::Namespaces);
+}
+
+/// A `CronTab` Definition whose storage version is `storage` of v1 and v2.
+fn crontab_crd_stored_at(storage: &str) -> CustomResourceDefinition {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "metadata": {"name": "crontabs.stable.example.com"},
+        "spec": {
+            "group": "stable.example.com",
+            "scope": "Namespaced",
+            "names": {"kind": "CronTab", "plural": "crontabs"},
+            "versions": [
+                {"name": "v1", "served": true, "storage": storage == "v1"},
+                {"name": "v2", "served": true, "storage": storage == "v2"},
+            ]
+        }
+    }))
+    .unwrap()
+}
+
+fn versions_served() -> ServedResources {
+    ServedResources::new([
+        served("stable.example.com", "v1", "CronTab", true),
+        served("stable.example.com", "v2", "CronTab", true),
+    ])
+}
+
+fn crontab_detail(namespace: &str) -> astrolabe_model::detail::DetailTarget {
+    astrolabe_model::detail::DetailTarget::Custom {
+        id: crontab_id(),
+        key: ObjectKey::new(Some(namespace.to_string()), "nightly"),
+    }
+}
+
+/// A state whose `CronTab` is stored at v1, with Discovery serving both.
+fn versioned_state() -> SessionState {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    state.crds_message(Ok(Event::Init));
+    state.crds_message(Ok(Event::InitApply(crontab_crd_stored_at("v1"))));
+    state.crds_message(Ok(Event::InitDone));
+    state.discovery_finished(run, Ok(versions_served()));
+    state
+}
+
+#[test]
+fn a_preferred_version_change_moves_open_custom_details_to_the_new_version() {
+    let mut state = versioned_state();
+    let commands = state.open_detail(crontab_detail("team-a"));
+    let old = started(&commands);
+    assert_eq!(old.len(), 1);
+    assert!(matches!(&old[0].kind, ResourceKind::Custom { version, .. } if version == "v1"));
+
+    let commands = state.crds_message(Ok(Event::Apply(crontab_crd_stored_at("v2"))));
+
+    let moved = started(&commands);
+    assert_eq!(moved.len(), 1);
+    assert!(matches!(&moved[0].kind, ResourceKind::Custom { version, .. } if version == "v2"));
+    assert_eq!(moved[0].namespace.as_deref(), Some("team-a"));
+}
+
+#[test]
+fn a_closed_custom_detail_is_not_followed() {
+    let mut state = versioned_state();
+    let target = crontab_detail("team-a");
+    state.open_detail(target.clone());
+    state.close_detail(&target);
+
+    let commands = state.crds_message(Ok(Event::Apply(crontab_crd_stored_at("v2"))));
+
+    assert_eq!(started(&commands), []);
+}
+
+#[test]
+fn a_detail_open_twice_is_followed_until_both_close() {
+    let mut state = versioned_state();
+    let target = crontab_detail("team-a");
+    state.open_detail(target.clone());
+    state.open_detail(target.clone());
+    state.close_detail(&target);
+
+    let commands = state.crds_message(Ok(Event::Apply(crontab_crd_stored_at("v2"))));
+
+    let moved = started(&commands);
+    assert_eq!(moved.len(), 1);
+    assert!(matches!(&moved[0].kind, ResourceKind::Custom { version, .. } if version == "v2"));
+}
+
+#[test]
+fn a_custom_detail_of_a_kind_not_yet_served_starts_when_it_is() {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    list_crontab_crd(&mut state, "Namespaced");
+    assert_eq!(started(&state.open_detail(crontab_detail("team-a"))), []);
+
+    let commands = state.discovery_finished(run, Ok(crontab_served("Namespaced")));
+
+    assert_eq!(started(&commands).len(), 1);
+}
+
+#[test]
+fn a_builtin_detail_starts_nothing_when_the_catalog_changes() {
+    use astrolabe_model::detail::DetailTarget;
+    let mut state = state();
+    let commands = state.open_detail(DetailTarget::Namespace {
+        name: "default".to_string(),
+    });
+    assert_eq!(started(&commands), []);
+
+    let commands = list_crontab_crd(&mut state, "Namespaced");
+
+    assert_eq!(started(&commands), []);
 }

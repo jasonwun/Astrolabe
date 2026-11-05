@@ -7,11 +7,7 @@ use std::rc::Rc;
 
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_model::builtin::{BuiltinKind, Registration};
-use astrolabe_model::catalog::KindResource;
-use astrolabe_model::projection::{
-    ResourceRow, ResourceTable, column_widths, project_custom_resources, project_definitions,
-    project_namespaces, track_ages,
-};
+use astrolabe_model::projection::{ResourceRow, ResourceTable, column_widths, track_ages};
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
@@ -25,7 +21,8 @@ use crate::clock;
 use crate::perf;
 use crate::session::Session;
 use crate::workspace::STALE_MESSAGE;
-use astrolabe_model::detail::{DetailTarget, ReferenceError, forbidden_message};
+use astrolabe_model::detail::{DetailTarget, ReferenceError};
+use astrolabe_model::list::{self, ListOutcome};
 use astrolabe_model::session::CustomKindId;
 
 /// Why a row cannot be opened; shown as the list's notice.
@@ -141,7 +138,8 @@ impl ResourceListPanel {
             ListView::Custom(id) => {
                 session.open_custom_list(id, cx);
             }
-            ListView::Namespaces | ListView::Definitions => session.close_list(),
+            ListView::Namespaces => session.open_namespaces_list(),
+            ListView::Definitions => session.open_definitions_list(),
         });
         self.view = view;
         self.notice = None;
@@ -217,82 +215,16 @@ impl ResourceListPanel {
         let _cost = perf::time(perf::Work::ListRefresh);
         let now = clock::now(cx);
         let data = self.session.read(cx).state();
-        let ((table, state, stale), next_tick) = track_ages(now, || match &self.view {
-            ListView::Namespaces => (
-                project_namespaces(&data.namespaces(), now),
-                ListState::Table,
-                false,
-            ),
-            ListView::Builtin(kind) => {
-                let registration = kind.registration();
-                let watch = data.builtin_watch(*kind, Some(data.namespace()));
-                let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
-                let state = match watch {
-                    Some(watch) if watch.status().is_forbidden() => {
-                        ListState::Message(forbidden_message(registration.label))
-                    }
-                    _ => ListState::Table,
-                };
-                (
-                    (registration.list)(&objects, now),
-                    state,
-                    watch.is_some_and(|watch| watch.status().is_stale()),
-                )
-            }
-            ListView::Definitions => {
-                let crds = data.crds();
-                let state = if data.crd_access_denied() {
-                    ListState::Message(CRD_DENIED.to_string())
-                } else {
-                    ListState::Table
-                };
-                (
-                    project_definitions(&crds.objects(), &self.group_filter, now),
-                    state,
-                    crds.status().is_stale(),
-                )
-            }
-            ListView::Custom(id) => match data.custom_kind(id) {
-                None => (
-                    ResourceTable::default(),
-                    ListState::Message(format!("{} is no longer defined", id.kind)),
-                    false,
-                ),
-                Some(kind) => match &kind.resource {
-                    KindResource::Undiscovered => (
-                        ResourceTable::default(),
-                        ListState::Message(match data.discovery_failure() {
-                            Some(error) => format!("API discovery failed: {error}"),
-                            None => "Discovering API resources…".to_string(),
-                        }),
-                        false,
-                    ),
-                    KindResource::NotServed => (
-                        ResourceTable::default(),
-                        ListState::Error(format!(
-                            "{} {} is not served by the API server",
-                            kind.kind, kind.version
-                        )),
-                        false,
-                    ),
-                    KindResource::Served(_) => {
-                        let watch = data.custom_watch(kind);
-                        let objects = watch.map(|watch| watch.objects()).unwrap_or_default();
-                        let state = match watch {
-                            Some(watch) if watch.status().is_forbidden() => {
-                                ListState::Message(forbidden_message(&kind.plural))
-                            }
-                            _ => ListState::Table,
-                        };
-                        (
-                            project_custom_resources(kind, &objects, now),
-                            state,
-                            watch.is_some_and(|watch| watch.status().is_stale()),
-                        )
-                    }
-                },
-            },
-        });
+        let (resolved, next_tick) =
+            track_ages(now, || list::resolve(data, &self.group_filter, now));
+        let (table, state) = match resolved.outcome {
+            ListOutcome::Rows(table) => (table, ListState::Table),
+            ListOutcome::Loading(text)
+            | ListOutcome::Forbidden(text)
+            | ListOutcome::Undefined(text) => (ResourceTable::default(), ListState::Message(text)),
+            ListOutcome::NotServed(text) => (ResourceTable::default(), ListState::Error(text)),
+        };
+        let stale = resolved.stale;
         self.state = state;
         self.stale = stale;
         self.tick = cx.spawn(async move |panel, cx| {
@@ -350,8 +282,6 @@ impl ResourceListPanel {
             }))
     }
 }
-
-pub const CRD_DENIED: &str = "No permission to list CustomResourceDefinitions";
 
 impl EventEmitter<OpenDetail> for ResourceListPanel {}
 impl EventEmitter<PanelEvent> for ResourceListPanel {}

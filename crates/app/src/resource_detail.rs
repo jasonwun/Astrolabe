@@ -89,15 +89,11 @@ impl ResourceDetailPanel {
                 session.watch_builtin(watch.kind, watch.namespace.as_deref(), cx);
             }
         });
-        cx.observe(&session, |panel, session, cx| {
-            // A preferred version change needs the new version's watch, even
-            // with the kind's list closed.
-            if let DetailTarget::Custom { id, key } = &panel.target {
-                session.update(cx, |session, cx| {
-                    session.watch_custom_object(id, key.namespace.clone(), cx)
-                });
-            }
-            cx.notify();
+        session.update(cx, |session, cx| session.open_detail(target.clone(), cx));
+        cx.observe(&session, |_, _, cx| cx.notify()).detach();
+        let closing = session.clone();
+        cx.on_release(move |panel, cx| {
+            closing.update(cx, |session, _| session.close_detail(&panel.target));
         })
         .detach();
         let open_row = open_row_with(cx, Self::open_related);

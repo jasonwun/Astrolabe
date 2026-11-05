@@ -9,6 +9,7 @@ use astrolabe_kube::object::Operation;
 use astrolabe_kube::pod::{ExecRequest, ExecSession, ForwardRequest, LogRequest, LogStream};
 use astrolabe_kube::watch::{NamespaceWatchMessage, WatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::session::{CustomKindId, WatchKey};
 use astrolabe_model::session_state::{Command, SessionState};
 use futures::future::BoxFuture;
@@ -259,10 +260,28 @@ impl Session {
         Some(ensured.key)
     }
 
-    /// Leave the watched lists (Namespaces or Definitions is shown). A
-    /// mutation `state()` cannot expose, and it needs no Cluster command.
-    pub fn close_list(&mut self) {
-        self.state.close_list();
+    /// Enter the Namespaces list. A mutation `state()` cannot expose, and
+    /// it needs no Cluster command.
+    pub fn open_namespaces_list(&mut self) {
+        self.state.open_namespaces_list();
+    }
+
+    /// Enter the Definitions list. A mutation `state()` cannot expose, and
+    /// it needs no Cluster command.
+    pub fn open_definitions_list(&mut self) {
+        self.state.open_definitions_list();
+    }
+
+    /// A detail tab for `target` opened: the state follows it from now on
+    /// (a custom target's watch moves with its kind's preferred version).
+    pub fn open_detail(&mut self, target: DetailTarget, cx: &mut Context<Self>) {
+        let commands = self.state.open_detail(target);
+        self.carry_out(commands, cx);
+    }
+
+    /// The detail tab for `target` closed.
+    pub fn close_detail(&mut self, target: &DetailTarget) {
+        self.state.close_detail(target);
     }
 
     pub fn set_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
