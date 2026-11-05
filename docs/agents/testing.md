@@ -467,3 +467,6 @@ To build a transport failure in a kube-layer test, give `Client::new` a
 ErrorKind::ConnectionRefused))`: kube-client turns it into
 `kube::Error::Service`, which is what a real connect failure is
 (#235 retro).
+
+`grep -rn pattern crates --include=*.rs` fails in zsh with `no matches
+found`: quote the glob (`--include='*.rs'`) (#275 retro).
