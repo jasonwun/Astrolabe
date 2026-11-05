@@ -41,7 +41,8 @@ pub(crate) async fn client_for(cluster: &ClusterId) -> kube::Result<kube::Client
 /// kube-client's own retry (`Config::default_retry`) makes 15 attempts that
 /// back off to minutes, so a Discovery request to an unavailable
 /// `APIService` (503) took about ten minutes to fail (#279). Its policy is
-/// not configurable, so the default is turned off and this replaces it.
+/// not configurable, so the default is turned off and this replaces it. See
+/// `docs/adr/0003-bounded-client-retry.md` for the costs and when to revisit.
 #[derive(Clone, Copy)]
 struct BoundedRetryLayer;
 
