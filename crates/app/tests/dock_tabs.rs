@@ -9,7 +9,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Pixels, TestAppContext};
-use support::{Ui, key, mouse_click, object, open, open_detail, reopen_detail};
+use support::{Ui, key, mouse_click, object, open, open_detail, open_streaming, reopen_detail};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
@@ -328,4 +328,63 @@ fn a_closed_logs_tab_reopens_as_a_fresh_tab(cx: &mut TestAppContext) {
                 .is_some()
         )
     });
+}
+
+#[gpui_kit::test]
+fn opening_logs_again_while_the_stream_is_live_selects_the_tab_and_keeps_the_stream(
+    cx: &mut TestAppContext,
+) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open_streaming(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, "dock-tab-3").is_none(), "one Logs tab");
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (app)")
+                .is_some(),
+            "the Logs tab is selected"
+        );
+        assert!(window.try_find_by_label("Streaming…").is_some());
+    });
+    assert_eq!(ui.logged.borrow().len(), 1, "no second stream");
+
+    // The stream is the live one: it ends when the test closes it.
+    ui.open_streams.close();
+    ui.settle();
+    ui.frame(|window, _| assert!(window.try_find_by_label("Stream ended").is_some()));
+}
+
+#[gpui_kit::test]
+fn opening_exec_again_while_the_shell_is_live_selects_the_tab_and_keeps_the_shell(
+    cx: &mut TestAppContext,
+) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open_streaming(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.frame(|window, cx| window.click("pick-shell-sh", cx));
+    ui.settle();
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.frame(|window, cx| window.click("pick-shell-bash", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, "dock-tab-3").is_none(), "one Exec tab");
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Exec default/web-1 (app)")
+                .is_some(),
+            "the Exec tab is selected"
+        );
+        assert!(window.try_find_by_label("Session running").is_some());
+    });
+    assert_eq!(ui.execed.borrow().len(), 1, "no second shell");
 }
