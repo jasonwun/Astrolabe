@@ -443,7 +443,7 @@ fn sidecar_pod() -> DynamicObject {
             "initContainers": [{"name": "migrate", "image": "busybox"}],
             "containers": [{"name": "app", "image": "nginx"}, {"name": "sidecar", "image": "envoy"}]
         },
-        "status": {"phase": "Running"}
+        "status": {"phase": "Running", "containerStatuses": [{"name": "app", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}},{"name": "sidecar", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}}]}
     }))
 }
 
@@ -563,7 +563,7 @@ fn serving_pod() -> DynamicObject {
             {"name": "app", "image": "nginx", "ports": [{"name": "http", "containerPort": 8080}]},
             {"name": "sidecar", "image": "envoy", "ports": [{"name": "admin", "containerPort": 9901}]}
         ]},
-        "status": {"phase": "Running"}
+        "status": {"phase": "Running", "containerStatuses": [{"name": "app", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}},{"name": "sidecar", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}}]}
     }))
 }
 
@@ -657,7 +657,7 @@ fn long_error_pod() -> DynamicObject {
                 {"containerPort": LONG_ERROR_PORT}, {"containerPort": FAILED_PORT}
             ]}
         ]},
-        "status": {"phase": "Running"}
+        "status": {"phase": "Running", "containerStatuses": [{"name": "app", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}}]}
     }))
 }
 
@@ -726,6 +726,35 @@ fn a_long_forward_error_stays_readable(cx: &mut TestAppContext) {
                 .is_some()
         );
     });
+}
+
+#[gpui_kit::test]
+fn exec_on_a_crash_looping_pod_says_there_is_no_running_container(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(
+        &mut ui,
+        BuiltinKind::Pods,
+        &mut pods,
+        vec![crashing_pod("default")],
+        "web-1",
+    );
+
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.settle();
+
+    ui.frame(|window, _| {
+        let picker = window.within("container-picker");
+        assert!(picker.try_find_by_label("No running container").is_some());
+        assert!(picker.try_find("pick-container-app").is_none());
+        // No shell tab was opened.
+        assert!(
+            window
+                .try_find_by_label("Exec default/web-1 (app)")
+                .is_none()
+        );
+    });
+    assert!(ui.execed.borrow().is_empty());
 }
 
 #[gpui_kit::test]

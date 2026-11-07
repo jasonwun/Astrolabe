@@ -256,7 +256,11 @@ pub fn pod_detail(pod: &Pod, now: Timestamp) -> DetailModel {
     model.forward = Some(Forward {
         to: ForwardTo::Pod,
         ports: pod_ports(pod),
-        empty: "No declared ports",
+        empty: if ports_declared(pod) {
+            "No running container with a declared port"
+        } else {
+            "No declared ports"
+        },
     });
     model
 }
@@ -380,16 +384,57 @@ pub struct ForwardPort {
     pub label: String,
 }
 
-/// The containers that keep running, so Exec and Port Forward can reach
-/// them: native sidecars (init containers with `restartPolicy: Always`)
-/// first, then the app containers. Run-once init containers have exited.
+/// The containers that are running now, so Exec and Port Forward can
+/// reach them: native sidecars (init containers with `restartPolicy:
+/// Always`) first, then the app containers. A container counts only when
+/// its status, matched by name, has `state.running`: waiting, terminated
+/// and not-yet-reported containers do not (Freelens `getRunningContainers`).
+/// Run-once init containers have exited.
 fn long_running(pod: &Pod) -> impl Iterator<Item = &Container> {
-    pod.spec.iter().flat_map(|spec| {
-        spec.init_containers
+    let pod_status = pod.status.as_ref();
+    let init_statuses = pod_status.and_then(|status| status.init_container_statuses.as_deref());
+    let app_statuses = pod_status.and_then(|status| status.container_statuses.as_deref());
+    pod.spec.iter().flat_map(move |spec| {
+        let sidecars = spec
+            .init_containers
             .iter()
             .flatten()
             .filter(|init| init.restart_policy.as_deref() == Some("Always"))
-            .chain(&spec.containers)
+            .filter(move |init| is_running(init_statuses, &init.name));
+        let apps = spec
+            .containers
+            .iter()
+            .filter(move |app| is_running(app_statuses, &app.name));
+        sidecars.chain(apps)
+    })
+}
+
+/// Whether `statuses` report the container `name` in `state.running`.
+fn is_running(statuses: Option<&[ContainerStatus]>, name: &str) -> bool {
+    statuses.into_iter().flatten().any(|status| {
+        status.name == name
+            && status
+                .state
+                .as_ref()
+                .is_some_and(|state| state.running.is_some())
+    })
+}
+
+/// Whether any long-running container in the spec declares a port, running
+/// or not: tells "nothing declared" from "nothing running".
+fn ports_declared(pod: &Pod) -> bool {
+    pod.spec.iter().any(|spec| {
+        let init = spec
+            .init_containers
+            .iter()
+            .flatten()
+            .filter(|init| init.restart_policy.as_deref() == Some("Always"));
+        init.chain(&spec.containers).any(|container| {
+            container
+                .ports
+                .as_ref()
+                .is_some_and(|ports| !ports.is_empty())
+        })
     })
 }
 
