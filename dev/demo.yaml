@@ -47,6 +47,18 @@ spec:
     command: [sleep, "3600"]
     ports: [{name: admin, containerPort: 9901}]
 ---
+# Crash-looping: Exec says "No running container" and Port Forward lists
+# no port, though the spec declares one (#313).
+apiVersion: v1
+kind: Pod
+metadata: {name: crashy, namespace: astrolabe-demo}
+spec:
+  containers:
+  - name: app
+    image: busybox:1.36
+    command: [sh, -c, "exit 1"]
+    ports: [{containerPort: 8080}]
+---
 apiVersion: v1
 kind: Service
 metadata: {name: web, namespace: astrolabe-demo}
