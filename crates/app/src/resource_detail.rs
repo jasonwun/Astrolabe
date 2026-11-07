@@ -333,9 +333,14 @@ impl ResourceDetailPanel {
                     .h(height)
                     .into_any_element()
             }
-            _ => notice_view(notice.expect("an outcome without rows has a notice"), cx)
-                .text_sm()
-                .into_any_element(),
+            RelatedOutcome::Failed(_)
+            | RelatedOutcome::Forbidden(_)
+            | RelatedOutcome::Empty(_)
+            | RelatedOutcome::Loading(_) => {
+                notice_view(notice.expect("an outcome without rows has a notice"), cx)
+                    .text_sm()
+                    .into_any_element()
+            }
         };
         let muted = cx.theme().muted_foreground;
         v_flex()
