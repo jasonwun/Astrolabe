@@ -5,18 +5,14 @@ use std::sync::Arc;
 
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::pod::{ExecInput, ExecOutput, ExecSession};
+use astrolabe_model::terminal_status::ExecState;
 use astrolabe_terminal::backend::{AlacrittyBackend, ExitStatus, RemoteSink, remote};
 use astrolabe_terminal::{TerminalBackend, TerminalView};
 use futures::channel::mpsc;
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
-use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
-/// Initial grid; the view resizes it to the tab.
-const COLS: usize = 160;
-const ROWS: usize = 40;
-const SCROLLBACK: usize = 10_000;
+use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_tab};
 
 /// The terminal's far end: the exec session's input.
 struct SessionSink(mpsc::UnboundedSender<ExecInput>);
@@ -35,17 +31,10 @@ impl RemoteSink for SessionSink {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum SessionState {
-    Running,
-    Exited(u8),
-    Failed(ClusterError),
-}
-
 pub struct ExecPanel {
     title: String,
     terminal: Entity<TerminalView>,
-    state: SessionState,
+    state: ExecState,
     _session: Task<()>,
 }
 
@@ -76,12 +65,12 @@ impl ExecPanel {
                             code: Some(code.into()),
                             signal: None,
                         });
-                        break SessionState::Exited(code);
+                        break ExecState::Exited(code);
                     }
                     Some(ExecOutput::Exited(Err(error))) => {
-                        break SessionState::Failed(error);
+                        break ExecState::Failed(error);
                     }
-                    None => break SessionState::Failed(ClusterError::new("session dropped")),
+                    None => break ExecState::Failed(ClusterError::new("session dropped")),
                 }
             };
             panel
@@ -94,7 +83,7 @@ impl ExecPanel {
         Self {
             title,
             terminal,
-            state: SessionState::Running,
+            state: ExecState::Running,
             _session: task,
         }
     }
@@ -126,30 +115,12 @@ impl Panel for ExecPanel {
 
 impl Render for ExecPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (status, color) = match &self.state {
-            SessionState::Running => ("Session running".to_string(), theme.muted_foreground),
-            SessionState::Exited(code) => {
-                (format!("Exited with code {code}"), theme.muted_foreground)
-            }
-            SessionState::Failed(error) => (format!("Session failed: {error}"), theme.danger),
-        };
-        v_flex()
-            .id("exec-tab")
-            .aria_label(self.title.clone())
-            .test_support()
-            .size_full()
-            .child(
-                div()
-                    .id("exec-status")
-                    .aria_label(status.clone())
-                    .test_support()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(color)
-                    .child(status),
-            )
-            .child(div().flex_1().min_h_0().child(self.terminal.clone()))
+        terminal_tab(
+            "exec-tab",
+            &self.title,
+            self.state.notice(),
+            &self.terminal,
+            cx,
+        )
     }
 }

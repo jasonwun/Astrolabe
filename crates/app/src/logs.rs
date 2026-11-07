@@ -3,19 +3,14 @@
 
 use std::sync::Arc;
 
-use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::pod::LogStream;
+use astrolabe_model::terminal_status::LogState;
 use astrolabe_terminal::backend::display_only;
 use astrolabe_terminal::{TerminalBackend, TerminalView};
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
-use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
-/// Initial grid; the view resizes it to the tab.
-const COLS: usize = 160;
-const ROWS: usize = 40;
-const SCROLLBACK: usize = 10_000;
+use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_tab};
 
 /// Log bytes as a terminal must receive them: a bare `\n` only moves the
 /// cursor down, so each gets the carriage return a TTY would add. A `\r`
@@ -32,17 +27,10 @@ pub fn terminal_bytes(chunk: &[u8]) -> Vec<u8> {
     bytes
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum StreamState {
-    Streaming,
-    Ended,
-    Failed(ClusterError),
-}
-
 pub struct LogsPanel {
     title: String,
     terminal: Entity<TerminalView>,
-    state: StreamState,
+    state: LogState,
     _stream: Task<()>,
 }
 
@@ -63,8 +51,8 @@ impl LogsPanel {
             let state = loop {
                 match stream.next().await {
                     Some(Ok(chunk)) => backend.feed_output(&terminal_bytes(&chunk)),
-                    Some(Err(error)) => break StreamState::Failed(error),
-                    None => break StreamState::Ended,
+                    Some(Err(error)) => break LogState::Failed(error),
+                    None => break LogState::Ended,
                 }
             };
             panel
@@ -77,7 +65,7 @@ impl LogsPanel {
         Self {
             title,
             terminal,
-            state: StreamState::Streaming,
+            state: LogState::Streaming,
             _stream: task,
         }
     }
@@ -109,28 +97,12 @@ impl Panel for LogsPanel {
 
 impl Render for LogsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (status, color) = match &self.state {
-            StreamState::Streaming => ("Streaming…".to_string(), theme.muted_foreground),
-            StreamState::Ended => ("Stream ended".to_string(), theme.muted_foreground),
-            StreamState::Failed(error) => (format!("Stream failed: {error}"), theme.danger),
-        };
-        v_flex()
-            .id("logs-tab")
-            .aria_label(self.title.clone())
-            .test_support()
-            .size_full()
-            .child(
-                div()
-                    .id("logs-status")
-                    .aria_label(status.clone())
-                    .test_support()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(color)
-                    .child(status),
-            )
-            .child(div().flex_1().min_h_0().child(self.terminal.clone()))
+        terminal_tab(
+            "logs-tab",
+            &self.title,
+            self.state.notice(),
+            &self.terminal,
+            cx,
+        )
     }
 }

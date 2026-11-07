@@ -15,6 +15,7 @@ mod resource_list;
 mod rows_table;
 pub mod session;
 mod session_view;
+mod terminal_panel;
 pub mod workspace;
 pub mod yaml_editor;
 
