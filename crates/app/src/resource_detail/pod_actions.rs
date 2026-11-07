@@ -1,109 +1,36 @@
 //! The Pod action flow: Logs, Exec and Port Forward, with the picker that
 //! asks for a container, a shell or a port, and the session's forwards.
 
-use astrolabe_kube::object::ObjectKey;
-use astrolabe_kube::pod::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest};
-use astrolabe_model::projection::{DetailModel, Forward, ForwardTo};
+use astrolabe_kube::pod::ForwardTarget;
+use astrolabe_model::detail_actions::{
+    ForwardTone, Picking, PodAction, SHELLS, containers, forward_row,
+};
+use astrolabe_model::projection::{DetailModel, Forward};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::{DetailTarget, OpenExec, OpenLogs, ResourceDetailPanel, button};
-use astrolabe_model::session::ForwardState;
-
-/// A Pod action that runs in one container; Forward also serves Services.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PodAction {
-    Logs,
-    Exec,
-    /// Picks a port, not a container.
-    Forward,
-}
-
-/// What the picker asks: a container, or for Exec in a chosen container,
-/// a shell.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Picking {
-    action: PodAction,
-    container: Option<String>,
-}
-
-/// The shells Exec offers; `sh` exists in nearly every image.
-const SHELLS: &[&str] = &["sh", "bash"];
+use super::{ResourceDetailPanel, button};
 
 impl ResourceDetailPanel {
-    /// Run `action` in the only container, or ask which one.
-    pub(super) fn pick_container(&mut self, action: PodAction, cx: &mut Context<Self>) {
-        let containers = self
-            .resolve(cx)
-            .map(|resolved| containers(&resolved.model, action))
-            .unwrap_or_default();
-        match containers.as_slice() {
-            [only] => self.run_in(action, only.clone(), cx),
-            _ => self.ask(action, None, cx),
-        }
+    fn choose_container(&mut self, action: PodAction, container: String, cx: &mut Context<Self>) {
+        let effect = self
+            .actions
+            .choose_container(action, container, &self.subject(cx));
+        self.carry_out(effect, cx);
     }
 
-    pub(super) fn ask(
-        &mut self,
-        action: PodAction,
-        container: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.picking = Some(Picking { action, container });
-        cx.notify();
+    fn choose_shell(&mut self, container: String, shell: &str, cx: &mut Context<Self>) {
+        let effect = self
+            .actions
+            .choose_shell(container, shell, &self.subject(cx));
+        self.carry_out(effect, cx);
     }
 
-    fn run_in(&mut self, action: PodAction, container: String, cx: &mut Context<Self>) {
-        let DetailTarget::Builtin { key, .. } = &self.target else {
-            return;
-        };
-        match action {
-            PodAction::Logs => {
-                self.picking = None;
-                cx.notify();
-                cx.emit(OpenLogs {
-                    title: format!("Logs {key} ({container})"),
-                    request: LogRequest {
-                        pod: key.clone(),
-                        container,
-                    },
-                })
-            }
-            PodAction::Exec => self.ask(action, Some(container), cx),
-            PodAction::Forward => {}
-        }
-    }
-
-    fn forward(&mut self, port: u16, cx: &mut Context<Self>) {
-        self.picking = None;
-        cx.notify();
-        let Some(target) = self
-            .resolve(cx)
-            .and_then(|resolved| forward_target(&resolved.model, &resolved.object.key))
-        else {
-            return;
-        };
-        let request = ForwardRequest { target, port };
-        self.session
-            .update(cx, |session, cx| session.forward_port(request, cx));
-    }
-
-    fn exec(&mut self, container: String, shell: &str, cx: &mut Context<Self>) {
-        self.picking = None;
-        cx.notify();
-        let DetailTarget::Builtin { key, .. } = &self.target else {
-            return;
-        };
-        cx.emit(OpenExec {
-            title: format!("Exec {key} ({container})"),
-            request: ExecRequest {
-                pod: key.clone(),
-                container,
-                shell: shell.to_string(),
-            },
-        });
+    fn choose_port(&mut self, port: u16, cx: &mut Context<Self>) {
+        let effect = self.actions.choose_port(port, &self.subject(cx));
+        self.carry_out(effect, cx);
     }
 
     pub(super) fn render_picker(
@@ -113,50 +40,44 @@ impl ResourceDetailPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let border = cx.theme().border;
+        let prompt = picking.prompt();
         let Picking { action, container } = picking;
-        let prompt = match (action, &container) {
-            (PodAction::Logs, _) => "Logs: choose a container".to_string(),
-            (PodAction::Exec, None) => "Exec: choose a container".to_string(),
-            (PodAction::Exec, Some(container)) => format!("Exec in {container}: choose a shell"),
-            (PodAction::Forward, _) => "Port forward: choose a port".to_string(),
+        let choices: Vec<AnyElement> = match (action, container) {
+            (PodAction::Forward, _) => model
+                .forward
+                .as_ref()
+                .map(|forward| self.render_ports(forward, cx))
+                .unwrap_or_default(),
+            (_, None) => containers(model, action)
+                .into_iter()
+                .map(|container| {
+                    button(
+                        SharedString::from(format!("pick-container-{container}")),
+                        container.clone(),
+                        border,
+                    )
+                    .on_click(cx.listener(move |panel, _, _, cx| {
+                        panel.choose_container(action, container.clone(), cx)
+                    }))
+                    .into_any_element()
+                })
+                .collect(),
+            (_, Some(container)) => SHELLS
+                .iter()
+                .map(|shell| {
+                    let container = container.clone();
+                    button(
+                        SharedString::from(format!("pick-shell-{shell}")),
+                        *shell,
+                        border,
+                    )
+                    .on_click(cx.listener(move |panel, _, _, cx| {
+                        panel.choose_shell(container.clone(), shell, cx)
+                    }))
+                    .into_any_element()
+                })
+                .collect(),
         };
-        let choices: Vec<AnyElement> =
-            match (action, container) {
-                (PodAction::Forward, _) => model
-                    .forward
-                    .as_ref()
-                    .map(|forward| self.render_ports(forward, cx))
-                    .unwrap_or_default(),
-                (_, None) => containers(model, action)
-                    .into_iter()
-                    .map(|container| {
-                        button(
-                            SharedString::from(format!("pick-container-{container}")),
-                            container.clone(),
-                            border,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.run_in(action, container.clone(), cx)
-                        }))
-                        .into_any_element()
-                    })
-                    .collect(),
-                (_, Some(container)) => SHELLS
-                    .iter()
-                    .map(|shell| {
-                        let container = container.clone();
-                        button(
-                            SharedString::from(format!("pick-shell-{shell}")),
-                            *shell,
-                            border,
-                        )
-                        .on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.exec(container.clone(), shell, cx)
-                        }))
-                        .into_any_element()
-                    })
-                    .collect(),
-            };
         h_flex()
             .id("container-picker")
             .test_support()
@@ -176,7 +97,7 @@ impl ResourceDetailPanel {
             .child(
                 button("picker-cancel", "Cancel", border).on_click(cx.listener(
                     |panel, _, _, cx| {
-                        panel.picking = None;
+                        panel.actions.cancel_picker();
                         cx.notify();
                     },
                 )),
@@ -210,7 +131,7 @@ impl ResourceDetailPanel {
                     port.label,
                     border,
                 )
-                .on_click(cx.listener(move |panel, _, _, cx| panel.forward(number, cx)))
+                .on_click(cx.listener(move |panel, _, _, cx| panel.choose_port(number, cx)))
                 .into_any_element()
             })
             .collect()
@@ -230,18 +151,13 @@ impl ResourceDetailPanel {
             .map(|forward| {
                 let request = forward.request.clone();
                 let port = request.port;
-                let (text, color) = match &forward.state {
-                    ForwardState::Starting => {
-                        (format!("Starting → {port}…"), theme.muted_foreground)
-                    }
-                    ForwardState::Listening(local) => {
-                        (format!("localhost:{local} → {port}"), theme.foreground)
-                    }
-                    ForwardState::Failed(error) => {
-                        (format!("Forward to {port} failed: {error}"), theme.danger)
-                    }
+                let (text, tone) = forward_row(&forward.state, port);
+                let color = match tone {
+                    ForwardTone::Muted => theme.muted_foreground,
+                    ForwardTone::Normal => theme.foreground,
+                    ForwardTone::Danger => theme.danger,
                 };
-                let failed = matches!(forward.state, ForwardState::Failed(_));
+                let failed = tone == ForwardTone::Danger;
                 let last_error = forward.last_error.as_ref().map(|error| {
                     let text = format!("Last connection failed: {error}");
                     div()
@@ -311,24 +227,4 @@ impl ResourceDetailPanel {
                 .into_any_element(),
         )
     }
-}
-
-/// The containers `action` can target: Logs reads every container, init
-/// containers first; Exec needs one still running.
-fn containers(model: &DetailModel, action: PodAction) -> Vec<String> {
-    let Some(containers) = &model.containers else {
-        return Vec::new();
-    };
-    match action {
-        PodAction::Logs => containers.all.clone(),
-        PodAction::Exec | PodAction::Forward => containers.running.clone(),
-    }
-}
-
-/// What Port Forward reaches from the detail of the object at `key`.
-pub(super) fn forward_target(model: &DetailModel, key: &ObjectKey) -> Option<ForwardTarget> {
-    Some(match model.forward.as_ref()?.to {
-        ForwardTo::Pod => ForwardTarget::Pod(key.clone()),
-        ForwardTo::Service => ForwardTarget::Service(key.clone()),
-    })
 }

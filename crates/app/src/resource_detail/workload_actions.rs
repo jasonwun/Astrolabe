@@ -1,6 +1,5 @@
-//! The Scale form; the panel's `run` sends what it asks for.
+//! The Scale form's rendering; `DetailActions` decides what it sends.
 
-use astrolabe_kube::object::Operation;
 use astrolabe_model::projection::ReplicaCounts;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::h_flex;
@@ -27,13 +26,9 @@ impl ResourceDetailPanel {
         let Some(input) = &self.scale else {
             return;
         };
-        let replicas = match input.read(cx).value().trim().parse::<i32>() {
-            Ok(replicas) if replicas >= 0 => replicas,
-            _ => return self.show_notice("Replicas must be a whole number, 0 or more", cx),
-        };
-        if self.run(|object| Operation::Scale { object, replicas }, cx) {
-            self.scale = None;
-        }
+        let text = input.read(cx).value().to_string();
+        let effect = self.actions.submit_scale(&text, &self.subject(cx));
+        self.carry_out(effect, cx);
     }
 
     pub(super) fn render_scale(
@@ -70,6 +65,7 @@ impl ResourceDetailPanel {
             )
             .child(
                 button("scale-cancel", "Cancel").on_click(cx.listener(|panel, _, _, cx| {
+                    panel.actions.cancel_scale();
                     panel.scale = None;
                     cx.notify();
                 })),
