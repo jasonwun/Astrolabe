@@ -150,3 +150,20 @@ fn with_no_cluster_the_workspace_editor_says_so_and_cannot_apply(cx: &mut TestAp
     assert_eq!(label(cx, "global-notice"), "cannot apply: no cluster");
     assert_eq!(label(cx, "yaml-status"), "no cluster");
 }
+
+/// The Apply's notices and a manual Precheck's are separate groups, drawn
+/// in the one banner with the Apply's first (#308).
+#[gpui_kit::test]
+fn the_banner_draws_the_apply_notice_before_the_precheck_notice(cx: &mut TestAppContext) {
+    let cx = open_workspace(cx, Vec::new());
+
+    edit(cx, "kind: ConfigMap");
+    apply(cx);
+    cx.simulate_keystrokes("f6");
+    cx.run_until_parked();
+
+    assert_eq!(
+        label(cx, "global-notice"),
+        "cannot apply: no cluster\ncannot precheck: no cluster"
+    );
+}
