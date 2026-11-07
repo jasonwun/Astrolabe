@@ -260,6 +260,14 @@ path of `<name>.png`, shrunk to one pixel per window point.
   `metadata.namespace` does not exist gives a 404, `namespaces "x" not
   found`. Paste two such documents separated by `---` to see one line per
   document (#240).
+- `dev/shot.sh "$D" name hotkey --key cmd+shift+Return` is the YAML
+  editor's Apply, and `cmd+a` then `cmd+v` replaces the buffer with the
+  clipboard (#299).
+- A top-level unknown field (`bogus: 1`) in a ConfigMap shows a red
+  outline and no status-bar note: the apiserver answers it as a typed
+  patch failure, which the editor treats as an error. The "unknown
+  field, apply will ignore it" warning needs a strict-decoding cause, so
+  leave that one to the `EditLoop` test (#299).
 - `press-key` sends no function keys: `F6` fails with `unsupported
   key 'F6'`. Reach the action another way: the YAML editor's Precheck
   also runs on its own about a second after an edit (#160).

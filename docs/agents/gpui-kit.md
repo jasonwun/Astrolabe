@@ -102,6 +102,11 @@ Reference: `crates/app/src/resource_list.rs`.
   unknown field `spec.bogus`: `support::unknown_field_report(snapshot)`
   (#161). A Global error on a document is a rule of `EditLoop`: test it
   there with a plain `#[test]` (#299).
+- The line tints of the YAML editor are not elements, so `try_find`
+  cannot see them. Build the view over a scripted Session
+  (`Session::scripted`, `YamlEditorView::with_session`), press the
+  Apply keystroke and read `YamlEditorView::apply_mark_ranges`
+  (`a_failed_apply_marks_its_line`, #299).
 - Clicking an element whose handler listens for mouse events, such as a
   dock tab or its close button, which `window.click` does not reach:
   `support::mouse_click(cx, id)` presses and releases on where `id` was
