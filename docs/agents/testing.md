@@ -531,3 +531,17 @@ Precheck already in flight would write its failure after that. A `Ticket`
 checked only the Cluster and the buffer. When a rule says "X voids Y",
 write the `begin_x`, `finish_y` order as a test, not only the clear
 (#308 retro).
+
+A projection that starts reading `status` breaks every fixture that built
+its Pod with the spec alone: #313's change made `running` follow
+`containerStatuses`, and four view fixtures (`workload_views.rs`,
+`dock_tabs.rs`) and three model tests went red because their Pods had no
+status. Run the affected test binaries right after the projection change
+and give each fixture the statuses its test relies on, rather than
+loosening the rule (#313 retro).
+
+A review fix that rewords text a screenshot shows leaves the PR's
+Evidence stale. #313's Spec review changed Forward's empty reason after
+the kind captures; the PR said so, but the `crashy` Forward capture still
+showed the old text. Redo the capture for any view whose text the review
+fix touched (#313 retro).
