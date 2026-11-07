@@ -18,11 +18,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::clock;
+use crate::notice_view::notice_view;
 use crate::perf;
 use crate::session::Session;
-use crate::workspace::{DENIED_STALE_MESSAGE, STALE_MESSAGE};
 use astrolabe_model::detail::{DetailTarget, ReferenceError};
 use astrolabe_model::list::{self, ListOutcome};
+use astrolabe_model::notice::Notice;
 use astrolabe_model::session::{CustomKindId, StaleCause};
 
 /// Why a row cannot be opened; shown as the list's notice.
@@ -83,19 +84,12 @@ impl ListView {
 /// A row was clicked: open its detail tab.
 pub struct OpenDetail(pub DetailTarget);
 
-/// What the list area shows instead of (or above) the table.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ListState {
-    Table,
-    Message(String),
-    Error(String),
-}
-
 pub struct ResourceListPanel {
     session: Entity<Session>,
     view: ListView,
     table: Entity<TableState<RowsTable>>,
-    state: ListState,
+    /// Why the table is not shown, if it is not.
+    outcome_notice: Option<Notice>,
     stale: Option<StaleCause>,
     group_filter: BTreeSet<String>,
     notice: Option<String>,
@@ -115,7 +109,7 @@ impl ResourceListPanel {
             session,
             view: ListView::Namespaces,
             table,
-            state: ListState::Table,
+            outcome_notice: None,
             stale: None,
             group_filter: BTreeSet::new(),
             notice: None,
@@ -217,19 +211,13 @@ impl ResourceListPanel {
         let data = self.session.read(cx).state();
         let (resolved, next_tick) =
             track_ages(now, || list::resolve(data, &self.group_filter, now));
-        let (table, state) = match resolved.outcome {
-            ListOutcome::Rows(table) => (table, ListState::Table),
-            ListOutcome::Loading(text)
-            | ListOutcome::Forbidden(text)
-            | ListOutcome::Undefined(text) => (ResourceTable::default(), ListState::Message(text)),
-            ListOutcome::Failed(error) => (
-                ResourceTable::default(),
-                ListState::Error(list::failed_message(error.as_ref())),
-            ),
-            ListOutcome::NotServed(text) => (ResourceTable::default(), ListState::Error(text)),
+        let outcome_notice = resolved.outcome.notice();
+        let table = match resolved.outcome {
+            ListOutcome::Rows(table) => table,
+            _ => ResourceTable::default(),
         };
         let stale = resolved.stale;
-        self.state = state;
+        self.outcome_notice = outcome_notice;
         self.stale = stale;
         self.tick = cx.spawn(async move |panel, cx| {
             cx.background_executor().timer(next_tick).await;
@@ -323,13 +311,6 @@ impl Panel for ResourceListPanel {
 impl Render for ResourceListPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let notice = match &self.state {
-            ListState::Table => None,
-            ListState::Message(text) => {
-                Some(("list-message", text.clone(), theme.muted_foreground))
-            }
-            ListState::Error(text) => Some(("list-error", text.clone(), theme.danger)),
-        };
         v_flex()
             // The dock focuses the displayed panel; `cmd-w` dispatches from
             // here.
@@ -339,12 +320,9 @@ impl Render for ResourceListPanel {
                 // Distinct ids and texts per cause keep `try_find`
                 // unambiguous; the alert takes `(id, 0)`: a tuple id needs a
                 // number.
-                let (id, text) = match cause {
-                    StaleCause::ConnectionLost => ("list-stale", STALE_MESSAGE),
-                    StaleCause::Denied => ("list-denied", DENIED_STALE_MESSAGE),
-                };
+                let Notice { id, text, .. } = cause.notice();
                 this.child(
-                    div().id(id).aria_label(text).test_support().child(
+                    div().id(id).aria_label(text.clone()).test_support().child(
                         gpui_kit::component::alert::Alert::warning((id, 0usize), text).banner(),
                     ),
                 )
@@ -364,16 +342,8 @@ impl Render for ResourceListPanel {
             .when(self.view == ListView::Definitions, |this| {
                 this.child(self.render_group_filter(cx))
             })
-            .map(|this| match notice {
-                Some((id, text, color)) => this.child(
-                    div()
-                        .id(id)
-                        .aria_label(text.clone())
-                        .test_support()
-                        .p_4()
-                        .text_color(color)
-                        .child(text),
-                ),
+            .map(|this| match self.outcome_notice.clone() {
+                Some(notice) => this.child(notice_view(notice, cx).p_4()),
                 None => this.child(fitted_table(&self.table, "list-table").flex_1().min_h_0()),
             })
     }

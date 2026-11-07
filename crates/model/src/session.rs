@@ -11,6 +11,7 @@ use astrolabe_kube::watch::WatchMessage;
 
 use crate::builtin::BuiltinKind;
 use crate::catalog::CustomKind;
+use crate::notice::{Intent, Notice};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ResourceKind {
@@ -59,6 +60,35 @@ pub enum ConnectionHealth {
     Stale,
 }
 
+/// The banner and the sidebar text of a lost connection.
+pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
+/// The banner of a list whose watch is denied after it had a Snapshot: the
+/// connection is fine, the permission is gone (#282).
+pub const DENIED_STALE_MESSAGE: &str = "No permission to refresh this list, data may be stale";
+
+/// What the sidebar shows beside a cluster whose session is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HealthIndicator {
+    pub label: &'static str,
+    pub intent: Intent,
+    pub tooltip: &'static str,
+}
+
+impl ConnectionHealth {
+    pub fn indicator(self) -> HealthIndicator {
+        let (label, intent, tooltip) = match self {
+            Self::Healthy => ("Healthy", Intent::Success, "Connected"),
+            Self::Connecting => ("Connecting", Intent::Warning, "Connecting to cluster"),
+            Self::Stale => ("Stale", Intent::Danger, STALE_MESSAGE),
+        };
+        HealthIndicator {
+            label,
+            intent,
+            tooltip,
+        }
+    }
+}
+
 /// Why a watch's old snapshot may no longer be true.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StaleCause {
@@ -66,6 +96,17 @@ pub enum StaleCause {
     ConnectionLost,
     /// RBAC denies the watch; the connection is fine.
     Denied,
+}
+
+impl StaleCause {
+    /// The banner above a list that shows an old snapshot. The ids differ
+    /// per cause so that `try_find` stays unambiguous.
+    pub fn notice(self) -> Notice {
+        match self {
+            Self::ConnectionLost => Notice::new("list-stale", STALE_MESSAGE, Intent::Warning),
+            Self::Denied => Notice::new("list-denied", DENIED_STALE_MESSAGE, Intent::Warning),
+        }
+    }
 }
 
 /// What a reader shows for one watch (see `Watched::reading`).

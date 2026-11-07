@@ -11,6 +11,7 @@ use astrolabe_kube::pod::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest
 
 use crate::builtin::Action;
 use crate::detail::{DetailTarget, Resolved};
+use crate::notice::Intent;
 use crate::operation_text;
 use crate::projection::{Containers, DetailModel, ForwardTo};
 use crate::session::ForwardState;
@@ -324,24 +325,13 @@ impl DetailActions {
     }
 }
 
-/// How a Forward row's text is drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ForwardTone {
-    Muted,
-    Normal,
-    Danger,
-}
-
-/// A Forward row's status text and tone.
-pub fn forward_row(state: &ForwardState, port: u16) -> (String, ForwardTone) {
+/// A Forward row's status text and intent.
+pub fn forward_row(state: &ForwardState, port: u16) -> (String, Intent) {
     match state {
-        ForwardState::Starting => (format!("Starting → {port}…"), ForwardTone::Muted),
-        ForwardState::Listening(local) => {
-            (format!("localhost:{local} → {port}"), ForwardTone::Normal)
+        ForwardState::Starting => (format!("Starting → {port}…"), Intent::Muted),
+        ForwardState::Listening(local) => (format!("localhost:{local} → {port}"), Intent::Neutral),
+        ForwardState::Failed(error) => {
+            (format!("Forward to {port} failed: {error}"), Intent::Danger)
         }
-        ForwardState::Failed(error) => (
-            format!("Forward to {port} failed: {error}"),
-            ForwardTone::Danger,
-        ),
     }
 }

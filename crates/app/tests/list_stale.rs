@@ -3,9 +3,9 @@
 
 mod support;
 
-use astrolabe::workspace::{DENIED_STALE_MESSAGE, STALE_MESSAGE};
 use astrolabe_kube::cluster::ClusterError;
 use astrolabe_model::builtin::BuiltinKind;
+use astrolabe_model::session::{DENIED_STALE_MESSAGE, STALE_MESSAGE};
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;

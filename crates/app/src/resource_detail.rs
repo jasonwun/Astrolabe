@@ -25,6 +25,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::clock;
+use crate::notice_view::notice_view;
 use crate::perf;
 use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
@@ -312,29 +313,8 @@ impl ResourceDetailPanel {
     /// the section's width by that kind's weights; a row's first cell opens
     /// its detail.
     fn render_related(&self, related: RelatedRows, cx: &mut Context<Self>) -> AnyElement {
-        let muted = cx.theme().muted_foreground;
+        let notice = related.outcome.notice();
         let content = match related.outcome {
-            RelatedOutcome::Failed(error) => {
-                let failed = detail::failed_message(error.as_ref());
-                div()
-                    .id("related-failed")
-                    .aria_label(failed.clone())
-                    .test_support()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(failed)
-                    .into_any_element()
-            }
-            RelatedOutcome::Forbidden(text)
-            | RelatedOutcome::Empty(text)
-            | RelatedOutcome::Loading(text) => div()
-                .id("related-empty")
-                .aria_label(text.clone())
-                .test_support()
-                .text_sm()
-                .text_color(muted)
-                .child(text)
-                .into_any_element(),
             RelatedOutcome::Rows(table) => {
                 // Header plus rows, inside the table's 1px borders: the
                 // detail body scrolls, the table never does vertically.
@@ -353,7 +333,11 @@ impl ResourceDetailPanel {
                     .h(height)
                     .into_any_element()
             }
+            _ => notice_view(notice.expect("an outcome without rows has a notice"), cx)
+                .text_sm()
+                .into_any_element(),
         };
+        let muted = cx.theme().muted_foreground;
         v_flex()
             .id("detail-related")
             .test_support()
@@ -672,21 +656,13 @@ impl Render for ResourceDetailPanel {
         let resolved = match resolved {
             DetailOutcome::Shown(resolved) => *resolved,
             absent => {
-                let (id, text) = absent
+                let notice = absent
                     .notice(&self.display_name())
                     .expect("an outcome that is not shown has a notice");
                 return v_flex()
                     .track_focus(&self.focus_handle)
                     .size_full()
-                    .child(
-                        div()
-                            .id(id)
-                            .aria_label(text.clone())
-                            .test_support()
-                            .p_4()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(text),
-                    )
+                    .child(notice_view(notice, cx).p_4())
                     .into_any_element();
             }
         };

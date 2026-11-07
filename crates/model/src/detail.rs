@@ -10,7 +10,7 @@ use crate::catalog::{CustomKind, KindResource};
 use crate::projection::{
     DetailModel, ResourceTable, custom_resource_detail, definition_detail, namespace_detail,
 };
-use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, ObjectReference};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
@@ -19,6 +19,7 @@ use astrolabe_kube::kube::core::DynamicObject;
 use astrolabe_kube::kube::discovery::ApiResource;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 
+use crate::notice::{Intent, Notice, failed_message};
 use crate::session::{CustomKindId, WatchReading, Watched};
 use crate::session_state::SessionState;
 
@@ -228,13 +229,13 @@ impl DetailOutcome {
 }
 
 impl DetailOutcome {
-    /// What the panel shows for `name` when there is no object: an element
-    /// id and the text. `None` for a shown object.
-    pub fn notice(&self, name: &str) -> Option<(&'static str, String)> {
-        Some(match self {
+    /// What the panel shows for `name` when there is no object. `None` for
+    /// a shown object.
+    pub fn notice(&self, name: &str) -> Option<Notice> {
+        let (id, text) = match self {
             Self::Shown(_) => return None,
             Self::Loading => ("detail-loading", format!("Loading {name}…")),
-            Self::Failed(error) => ("detail-failed", failed_message(error.as_ref())),
+            Self::Failed(error) => ("detail-failed", failed_message("object", error.as_ref())),
             Self::Forbidden => (
                 "detail-forbidden",
                 format!("No permission to read {name} here"),
@@ -246,19 +247,26 @@ impl DetailOutcome {
             ),
             Self::Unreadable => ("detail-unreadable", format!("Cannot read {name}")),
             Self::Gone => ("detail-gone", format!("{name} no longer exists")),
-        })
+        };
+        // Every absent outcome is drawn muted, failures included.
+        Some(Notice::new(id, text, Intent::Muted))
     }
 }
 
-/// The text shown where a detail's watch failed before its first snapshot.
-pub fn failed_message(error: Option<&ClusterError>) -> String {
-    match error {
-        None => "The watch ended before the object loaded".to_string(),
-        Some(error) => match error.kind() {
-            ClusterErrorKind::Connect => format!("Cannot connect to the cluster: {error}"),
-            ClusterErrorKind::Unreachable => format!("Cannot reach the cluster: {error}"),
-            _ => format!("Cannot load the object: {error}"),
-        },
+impl RelatedOutcome {
+    /// What the Related section shows instead of rows; none for rows.
+    pub fn notice(&self) -> Option<Notice> {
+        Some(match self {
+            Self::Rows(_) => return None,
+            Self::Failed(error) => Notice::new(
+                "related-failed",
+                failed_message("object", error.as_ref()),
+                Intent::Muted,
+            ),
+            Self::Forbidden(text) | Self::Empty(text) | Self::Loading(text) => {
+                Notice::new("related-empty", text.clone(), Intent::Muted)
+            }
+        })
     }
 }
 

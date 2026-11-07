@@ -3,13 +3,16 @@
 
 use astrolabe_kube::pod::ForwardTarget;
 use astrolabe_model::detail_actions::{
-    ForwardTone, Picking, PodAction, SHELLS, containers, forward_row, picker_empty,
+    Picking, PodAction, SHELLS, containers, forward_row, picker_empty,
 };
+use astrolabe_model::notice::Intent;
 use astrolabe_model::projection::{DetailModel, Forward};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+
+use crate::notice_view::intent_color;
 
 use super::{ResourceDetailPanel, button};
 
@@ -156,12 +159,8 @@ impl ResourceDetailPanel {
                 let request = forward.request.clone();
                 let port = request.port;
                 let (text, tone) = forward_row(&forward.state, port);
-                let color = match tone {
-                    ForwardTone::Muted => theme.muted_foreground,
-                    ForwardTone::Normal => theme.foreground,
-                    ForwardTone::Danger => theme.danger,
-                };
-                let failed = tone == ForwardTone::Danger;
+                let color = intent_color(tone, theme);
+                let failed = tone == Intent::Danger;
                 let last_error = forward.last_error.as_ref().map(|error| {
                     let text = format!("Last connection failed: {error}");
                     div()

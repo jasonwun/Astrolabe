@@ -14,9 +14,11 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::detail::{
-    DetailOutcome, DetailTarget, NeededWatch, ReferenceError, RelatedOutcome, Resolved,
-    failed_message, resolve, watches,
+    DetailOutcome, DetailTarget, NeededWatch, ReferenceError, RelatedOutcome, Resolved, resolve,
+    watches,
 };
+use astrolabe_model::notice::{Intent, Notice};
+use astrolabe_model::projection::ResourceTable;
 use astrolabe_model::session_state::SessionState;
 use support::object;
 
@@ -453,23 +455,6 @@ fn a_related_section_whose_watch_failed_before_a_snapshot_is_failed() {
 }
 
 #[test]
-fn failed_messages_name_the_kind_of_failure() {
-    assert_eq!(
-        failed_message(Some(&ClusterError::unreachable("refused"))),
-        format!(
-            "Cannot reach the cluster: {}",
-            ClusterError::unreachable("refused")
-        )
-    );
-    assert!(failed_message(Some(&ClusterError::connect("x"))).starts_with("Cannot connect"));
-    assert!(failed_message(Some(&ClusterError::new("boom"))).starts_with("Cannot load the object"));
-    assert_eq!(
-        failed_message(None),
-        "The watch ended before the object loaded"
-    );
-}
-
-#[test]
 fn only_gone_says_no_longer_exists() {
     let texts = [
         DetailOutcome::Loading,
@@ -479,11 +464,15 @@ fn only_gone_says_no_longer_exists() {
         DetailOutcome::NotServed,
         DetailOutcome::Unreadable,
     ]
-    .map(|outcome| outcome.notice("Pod web").unwrap().1);
+    .map(|outcome| outcome.notice("Pod web").unwrap().text);
     assert!(texts.iter().all(|text| !text.contains("no longer exists")));
     assert_eq!(
         DetailOutcome::Gone.notice("Pod web"),
-        Some(("detail-gone", "Pod web no longer exists".to_string()))
+        Some(Notice::new(
+            "detail-gone",
+            "Pod web no longer exists",
+            Intent::Muted
+        ))
     );
 }
 
@@ -499,4 +488,62 @@ fn a_builtin_detail_denied_after_a_snapshot_still_shows_its_object() {
     );
 
     assert_eq!(resolved(&target, &state).object.key.name, "web");
+}
+
+#[test]
+fn every_absent_detail_is_drawn_muted_with_its_own_id() {
+    let outcomes = [
+        (DetailOutcome::Loading, "detail-loading"),
+        (DetailOutcome::Failed(None), "detail-failed"),
+        (DetailOutcome::Forbidden, "detail-forbidden"),
+        (DetailOutcome::Undefined, "detail-undefined"),
+        (DetailOutcome::NotServed, "detail-not-served"),
+        (DetailOutcome::Unreadable, "detail-unreadable"),
+        (DetailOutcome::Gone, "detail-gone"),
+    ];
+    for (outcome, id) in outcomes {
+        let notice = outcome.notice("Pod web").unwrap();
+        assert_eq!((notice.id, notice.intent), (id, Intent::Muted));
+    }
+}
+
+#[test]
+fn a_failed_detail_names_the_object() {
+    assert_eq!(
+        DetailOutcome::Failed(None).notice("Pod web").unwrap().text,
+        "The watch ended before the object loaded"
+    );
+}
+
+#[test]
+fn a_related_section_without_rows_says_why() {
+    let cases = [
+        (
+            RelatedOutcome::Failed(None),
+            "related-failed",
+            "The watch ended before the object loaded",
+        ),
+        (
+            RelatedOutcome::Forbidden("No permission to list pods here".to_string()),
+            "related-empty",
+            "No permission to list pods here",
+        ),
+        (
+            RelatedOutcome::Empty("No pods".to_string()),
+            "related-empty",
+            "No pods",
+        ),
+        (
+            RelatedOutcome::Loading("Loading pods…".to_string()),
+            "related-empty",
+            "Loading pods…",
+        ),
+    ];
+    for (outcome, id, text) in cases {
+        assert_eq!(outcome.notice(), Some(Notice::new(id, text, Intent::Muted)));
+    }
+    assert_eq!(
+        RelatedOutcome::Rows(ResourceTable::default()).notice(),
+        None
+    );
 }
