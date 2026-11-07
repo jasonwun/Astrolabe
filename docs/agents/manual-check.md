@@ -300,7 +300,7 @@ path of `<name>.png`, shrunk to one pixel per window point.
   The command palette's "Run dry-run precheck now" did not confirm under
   `orca` until #317 (a deferred callback used `update_in`, which fails
   without a current window): since then `cmd+shift+p`, `Down`, `Return`
-  and a click on the row both close the palette. The auto-run Precheck
+  and a click on the row each close the palette. The auto-run Precheck
   masks the result on screen, so the closed palette is the evidence and
   the `yaml_editor` UI tests count the Prechecks (#317).
 - An edit made *while* an Apply is in flight (the line marks re-mapped

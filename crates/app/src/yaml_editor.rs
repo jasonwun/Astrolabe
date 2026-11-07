@@ -373,14 +373,20 @@ impl YamlEditorView {
         cx.notify();
     }
 
+    /// Close the palette and hand focus back to the editor.
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.state.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
     fn on_palette_confirm(
         &mut self,
         index: &gpui_kit::component::IndexPath,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.palette = None;
-        self.state.focus_handle(cx).focus(window, cx);
+        self.close_palette(window, cx);
         match palette_entries().get(index.row).map(|(command, _)| command) {
             Some(PaletteCommand::Apply) => self.apply(ApplyMode::Normal, cx),
             Some(PaletteCommand::Precheck) => self.run_precheck(true, cx),
@@ -516,16 +522,14 @@ impl YamlEditorView {
                                 view.update(cx, |this, cx| {
                                     this.on_palette_confirm(&index, window, cx);
                                 })
-                                .expect("the editor outlives its palette");
+                                // Err only when the editor is already gone: nothing to confirm.
+                                .ok();
                             })
                             .on_cancel(move |window, cx| {
                                 cancel_view
-                                    .update(cx, |this, cx| {
-                                        this.palette = None;
-                                        this.state.focus_handle(cx).focus(window, cx);
-                                        cx.notify();
-                                    })
-                                    .expect("the editor outlives its palette");
+                                    .update(cx, |this, cx| this.close_palette(window, cx))
+                                    // Err only when the editor is already gone.
+                                    .ok();
                             }),
                     ),
                 ),

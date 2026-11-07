@@ -198,7 +198,7 @@ fn palette_row_click_runs_its_command(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn palette_escape_closes_and_returns_focus_to_the_editor(cx: &mut TestAppContext) {
-    let (view, cx, _, _) = open_counting(cx);
+    let (view, cx, prechecks, applies) = open_counting(cx);
     cx.simulate_keystrokes("cmd-shift-p");
     cx.run_until_parked();
     cx.simulate_keystrokes("escape");
@@ -206,7 +206,9 @@ fn palette_escape_closes_and_returns_focus_to_the_editor(cx: &mut TestAppContext
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     let state = cx.read(|cx| view.read(cx).editor_state());
-    cx.read(|cx| assert!(state.read(cx).value().contains('\n')));
+    // Esc ran no command.
+    assert_eq!(prechecks.get(), 0);
+    assert!(applies.borrow().is_empty());
     cx.read(|cx| {
         assert_eq!(
             state.read(cx).value().as_ref(),
