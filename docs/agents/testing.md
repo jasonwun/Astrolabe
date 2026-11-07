@@ -48,6 +48,12 @@ type used as a `BTreeMap` probe (#244's `dyn KeyView`) is never called by
 to the type. A test that binds `a`, `b`, `x`, `y` trips clippy's
 `many_single_char_names`: name the bindings (#244 retro).
 
+Code moved from the app crate into `astrolabe-model` or `astrolabe-kube`
+enters the mutants scope, tests and all: #302 moved `OpenRowError` and its
+hand-written `Error::source`, and `dev/pre-push.sh` reported `source -> None`
+MISSED, because the app's window tests had never asserted it. Test each moved
+trait impl in the model's own tests, before the first push (#302 retro).
+
 Run the lint job's steps and `dev/test-evidence.sh` on the rebased tree,
 right before the push that opens the PR and again after every later
 rebase, and fetch `origin/main` first. CI lints the merge with main:

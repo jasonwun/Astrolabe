@@ -299,7 +299,18 @@ path of `<name>.png`, shrunk to one pixel per window point.
   a notice, take a fresh capture before the next click: #216's second
   click landed between rows. A click that raises a notice on an Events
   row needs `dev/demo.yaml`'s synthetic Events (unregistered kind,
-  nameless reference) (#216).
+  nameless reference) (#216). They list last (no age): in a 1000x1000
+  window, `dev/scroll.sh 700 600 down 90` puts the nameless one at y 899
+  and the unregistered `gadget/g1` at y 931, and clicking a Reason cell
+  opens a row. The first rows are the cluster's live events, whose order
+  changes whenever the namespace is deleted and re-seeded: a "first row"
+  click opened an HPA in one run and a Pod in the next, so a before/after
+  of an Events click needs one seeding for both runs, and the notices are
+  the comparable shots (#302 retro).
+- A baseline app that was explored by hand keeps its tabs (a detail opened
+  by a probe click): its tab bar then differs from the fresh `after`
+  launch. Relaunch the baseline before the scripted run, not only the
+  exploration's dropdowns (#302 retro).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - A view that changes with time (ages): `dev/demo.yaml` objects keep
