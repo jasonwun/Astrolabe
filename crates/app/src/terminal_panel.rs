@@ -14,7 +14,7 @@ pub(crate) const ROWS: usize = 40;
 pub(crate) const SCROLLBACK: usize = 10_000;
 
 /// The tab `tab_id` titled `title`: `status` over `terminal`.
-pub(crate) fn terminal_panel(
+pub(crate) fn terminal_tab(
     tab_id: &'static str,
     title: &str,
     status: Notice,

@@ -5,6 +5,9 @@ use astrolabe_kube::cluster::ClusterError;
 
 use crate::notice::{Intent, Notice};
 
+const LOGS_STATUS: &str = "logs-status";
+const EXEC_STATUS: &str = "exec-status";
+
 /// Where a followed container log stands.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogState {
@@ -16,10 +19,10 @@ pub enum LogState {
 impl LogState {
     pub fn notice(&self) -> Notice {
         match self {
-            Self::Streaming => Notice::new("logs-status", "Streaming…", Intent::Muted),
-            Self::Ended => Notice::new("logs-status", "Stream ended", Intent::Muted),
+            Self::Streaming => Notice::new(LOGS_STATUS, "Streaming…", Intent::Muted),
+            Self::Ended => Notice::new(LOGS_STATUS, "Stream ended", Intent::Muted),
             Self::Failed(error) => Notice::new(
-                "logs-status",
+                LOGS_STATUS,
                 format!("Stream failed: {error}"),
                 Intent::Danger,
             ),
@@ -38,14 +41,14 @@ pub enum ExecState {
 impl ExecState {
     pub fn notice(&self) -> Notice {
         match self {
-            Self::Running => Notice::new("exec-status", "Session running", Intent::Muted),
+            Self::Running => Notice::new(EXEC_STATUS, "Session running", Intent::Muted),
             Self::Exited(code) => Notice::new(
-                "exec-status",
+                EXEC_STATUS,
                 format!("Exited with code {code}"),
                 Intent::Muted,
             ),
             Self::Failed(error) => Notice::new(
-                "exec-status",
+                EXEC_STATUS,
                 format!("Session failed: {error}"),
                 Intent::Danger,
             ),

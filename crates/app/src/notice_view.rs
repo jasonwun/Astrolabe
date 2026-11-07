@@ -18,7 +18,8 @@ pub(crate) fn intent_color(intent: Intent, theme: &Theme) -> Hsla {
 }
 
 /// The plain text of `notice`; the caller sizes and pads it. Banners
-/// (`Alert`, which carry `Role::Alert`) and status bars are not drawn here.
+/// (`Alert`, which carry `Role::Alert`) are not drawn here; the Logs and Exec
+/// status bars are (`terminal_panel`).
 pub(crate) fn notice_view(notice: Notice, cx: &App) -> Observed<Stateful<Div>> {
     let color = intent_color(notice.intent, cx.theme());
     div()

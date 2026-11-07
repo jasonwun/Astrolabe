@@ -480,6 +480,9 @@ fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
                 .try_find_by_label("Logs default/web-1 (app)")
                 .is_some()
         );
+        // The text itself is the model layer's (`LogState::notice`); this
+        // checks that the failure reached the panel's status element.
+        assert!(window.try_find("logs-status").is_some());
         assert!(
             window
                 .try_find_by_label("Stream failed: stream reset")
@@ -536,6 +539,9 @@ fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContex
                 .try_find_by_label("Exec default/web-1 (sidecar)")
                 .is_some()
         );
+        // The text itself is the model layer's (`ExecState::notice`); this
+        // checks that the exit reached the panel's status element.
+        assert!(window.try_find("exec-status").is_some());
         assert!(window.try_find_by_label("Exited with code 0").is_some());
     });
     let mut execed = ui.execed.borrow_mut();

@@ -10,7 +10,7 @@ use astrolabe_terminal::{TerminalBackend, TerminalView};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::*;
 
-use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_panel};
+use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_tab};
 
 /// Log bytes as a terminal must receive them: a bare `\n` only moves the
 /// cursor down, so each gets the carriage return a TTY would add. A `\r`
@@ -97,7 +97,7 @@ impl Panel for LogsPanel {
 
 impl Render for LogsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        terminal_panel(
+        terminal_tab(
             "logs-tab",
             &self.title,
             self.state.notice(),

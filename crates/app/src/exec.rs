@@ -12,7 +12,7 @@ use futures::channel::mpsc;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::*;
 
-use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_panel};
+use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_tab};
 
 /// The terminal's far end: the exec session's input.
 struct SessionSink(mpsc::UnboundedSender<ExecInput>);
@@ -115,7 +115,7 @@ impl Panel for ExecPanel {
 
 impl Render for ExecPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        terminal_panel(
+        terminal_tab(
             "exec-tab",
             &self.title,
             self.state.notice(),
