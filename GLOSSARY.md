@@ -87,3 +87,7 @@ _Avoid_: save, update, patch
 **Precheck**:
 A dry-run apply that reports problems without changing the cluster.
 _Avoid_: validation, lint
+
+**Edit loop**:
+A YAML buffer's path from editing to Apply, and the Precheck and Apply results that round leaves.
+_Avoid_: session

@@ -11,8 +11,8 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use astrolabe_kube::apply::{self, ApplyError, ApplyMode, ApplyReport, Location};
-use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind};
+use astrolabe_kube::apply::{ApplyMode, ApplyReport};
+use astrolabe_kube::cluster::ClusterError;
 use futures::future::BoxFuture;
 use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::input::language_config::LanguageConfig;
@@ -22,6 +22,8 @@ use gpui_kit::component::input::{
 };
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
+
+use astrolabe_model::edit_loop::{EditLoop, Panel, Severity};
 
 use crate::session::Session;
 
@@ -58,33 +60,6 @@ pub fn register_yaml_language(cx: &mut App) {
     set_language_config("yaml", config, cx);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Severity {
-    Error,
-    Warning,
-}
-
-/// One row of the apply-error panel (levels 1–3 of the degradation chain;
-/// level 4 goes to the global error bar instead).
-struct PanelItem {
-    severity: Severity,
-    doc: String,
-    field: String,
-    message: String,
-    line: Option<usize>,
-    /// Degradation / anchor annotation, e.g. "nearest existing ancestor,
-    /// missing `spec.strategy`" or "value comes from anchor `base`".
-    note: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PrecheckStatus {
-    Idle,
-    Checking,
-    /// Background precheck failed (RBAC 403 / network): silent degradation.
-    Unavailable,
-}
-
 /// The report an Apply or Precheck answers with.
 type ApplyAnswer = BoxFuture<'static, Result<ApplyReport, ClusterError>>;
 
@@ -110,44 +85,14 @@ pub struct YamlEditorView {
     /// Where Apply and Precheck go; with none, the editor says "no
     /// cluster" and sends nothing.
     session: Option<Entity<Session>>,
-    /// Bumped when `session` changes, so an Apply or Precheck answered by
-    /// the previous Cluster is dropped.
-    session_version: u64,
-    /// Monotonic buffer version; precheck results older than the current
-    /// version are discarded.
-    buffer_version: u64,
-    /// Version a running precheck was started from.
-    precheck_version: Option<u64>,
-    precheck_status: PrecheckStatus,
-    applying: bool,
-    /// The buffer content currently being applied; error mapping runs on it
-    /// (#10: the snapshot is what the server saw). If the buffer moved on
-    /// while the apply was in flight, causes are re-mapped against the
-    /// current buffer best-effort on completion.
-    pending_snapshot: Option<String>,
-    /// Last apply's panel rows; replaced when the next apply starts,
-    /// cleared on success, untouched by edits (#10 lifecycle).
-    panel: Vec<PanelItem>,
-    /// Managers on the other side of last apply's 409s, shown next to the
-    /// panel's Force Apply button.
-    conflict_managers: Vec<String>,
-    /// Force Apply is offered only in the 409 context (#10: panel button,
-    /// never automatic, never default-on).
-    force_apply_available: bool,
-    /// Global error bar (degradation level 4): full messages, no line jump,
-    /// one per failure (a multi-document apply can fail several documents).
-    /// Part of the apply result group: replaced when the next apply starts.
-    global_notices: Vec<String>,
-    /// Solid line tints for apply errors (persist across edits).
-    apply_decorations: Option<RangeDecorationCollection>,
-    /// Outline line tints for precheck results (cleared on edit / on apply).
-    precheck_decorations: Option<RangeDecorationCollection>,
-    /// Strict-decoding warning annotation (#15: "unknown field, apply will
-    /// ignore it"), shown in the status bar since outline marks are
-    /// color-only.
-    precheck_note: Option<String>,
+    /// The Edit loop's rules and what they show.
+    edit: EditLoop,
+    /// Solid line tints for apply errors (persist across edits), drawn for
+    /// these lines.
+    apply_decorations: Option<(Vec<usize>, RangeDecorationCollection)>,
+    /// Outline line tints for precheck results, drawn for these marks.
+    precheck_decorations: Option<(Vec<(usize, Severity)>, RangeDecorationCollection)>,
     palette: Option<Entity<CommandState>>,
-    status_line: String,
 }
 
 impl YamlEditorView {
@@ -185,21 +130,10 @@ impl YamlEditorView {
             state,
             window_handle: window.window_handle(),
             session: None,
-            session_version: 0,
-            buffer_version: 0,
-            precheck_version: None,
-            precheck_status: PrecheckStatus::Idle,
-            applying: false,
-            pending_snapshot: None,
-            panel: Vec::new(),
-            conflict_managers: Vec::new(),
-            force_apply_available: false,
-            global_notices: Vec::new(),
+            edit: EditLoop::new(),
             apply_decorations: None,
             precheck_decorations: None,
-            precheck_note: None,
             palette: None,
-            status_line: "no cluster".to_string(),
         }
     }
 
@@ -209,28 +143,24 @@ impl YamlEditorView {
         self.state.clone()
     }
 
+    /// The byte ranges of the lines the last Apply's errors tint.
+    pub fn apply_mark_ranges(&self, cx: &App) -> Vec<Range<usize>> {
+        self.apply_decorations
+            .as_ref()
+            .map(|(_, collection)| collection.get_ranges(cx))
+            .unwrap_or_default()
+    }
+
     /// Send Apply and Precheck through `session` from now on. The
     /// Workspace's editor follows the selected Cluster this way (#161).
     pub fn set_session(&mut self, session: Entity<Session>, cx: &mut Context<Self>) {
         if self.session.as_ref() == Some(&session) {
             return;
         }
-        // The Session connects lazily and Apply waits on it, so the status
-        // names where Apply goes rather than a connection state.
-        self.status_line = format!("cluster {}", session.read(cx).state().watch_key().cluster);
+        let cluster = session.read(cx).state().watch_key().cluster.to_string();
         self.session = Some(session);
-        self.session_version += 1;
-        // The last Apply's result describes the previous Cluster: its Force
-        // Apply would overwrite this Cluster's fields.
-        self.applying = false;
-        self.pending_snapshot = None;
-        self.panel.clear();
-        self.conflict_managers.clear();
-        self.force_apply_available = false;
-        self.global_notices.clear();
-        self.clear_apply_decorations(cx);
-        // So does the last Precheck's; the next edit checks against this one.
-        self.clear_precheck(cx);
+        self.edit.cluster_changed(&cluster);
+        self.sync_decorations(cx);
         cx.notify();
     }
 
@@ -247,129 +177,36 @@ impl YamlEditorView {
     }
 
     fn apply(&mut self, mode: ApplyMode, cx: &mut Context<Self>) {
-        if self.applying {
-            return;
-        }
-        let snapshot = self.state.read(cx).value().to_string();
-        let Some(applied) = self.send(|session| session.apply(&snapshot, mode), cx) else {
-            self.global_notices = vec![no_cluster_notice("apply")];
-            cx.notify();
-            return;
-        };
-        self.applying = true;
-        self.pending_snapshot = Some(snapshot.clone());
-        // Next apply replaces the whole previous result group — panel, line
-        // marks, and the global error bar alike (#10 lifecycle).
-        self.panel.clear();
-        self.conflict_managers.clear();
-        self.force_apply_available = false;
-        self.global_notices.clear();
-        self.clear_apply_decorations(cx);
-        self.status_line = match mode {
-            ApplyMode::Normal => "applying…".to_string(),
-            ApplyMode::Force => "force applying…".to_string(),
-        };
+        let buffer = self.state.read(cx).value().to_string();
+        let ticket = self.edit.begin_apply(&buffer, mode);
+        let answer = ticket.and_then(|_| self.send(|session| session.apply(&buffer, mode), cx));
+        self.sync_decorations(cx);
         cx.notify();
-
-        let session_version = self.session_version;
+        let (Some(ticket), Some(applied)) = (ticket, answer) else {
+            return;
+        };
         cx.spawn(async move |view, cx| {
             let result = applied.await;
             view.update(cx, |this, cx| {
-                if this.session_version == session_version {
-                    this.finish_apply(result, cx);
-                }
+                let current = this.state.read(cx).value().to_string();
+                this.edit.finish_apply(ticket, result, &current);
+                this.sync_decorations(cx);
+                cx.notify();
             })
             .ok();
         })
         .detach();
     }
 
-    fn finish_apply(&mut self, result: Result<ApplyReport, ClusterError>, cx: &mut Context<Self>) {
-        self.applying = false;
-        // The server gave an authoritative answer; precheck rehearsal is
-        // void regardless of outcome (#15).
-        self.clear_precheck(cx);
-
-        let mut report = match result {
-            Ok(report) => report,
-            Err(e) => {
-                self.pending_snapshot = None;
-                self.global_notices = vec![failure_notice("apply", &e)];
-                self.status_line = "apply failed".to_string();
-                cx.notify();
-                return;
-            }
-        };
-        // The buffer may have moved on while the apply was in flight:
-        // re-map every cause against the current buffer, best-effort (#10).
-        if let Some(snapshot) = self.pending_snapshot.take()
-            && self.state.read(cx).value().as_ref() != snapshot.as_str()
-        {
-            let current = self.state.read(cx).value().to_string();
-            report.remap(&current);
-        }
-        if report.ok() {
-            self.status_line = "applied".to_string();
-            cx.notify();
-            return;
-        }
-
-        let mut errors = 0;
-        for outcome in &report.outcomes {
-            let Err(error) = &outcome.result else {
-                continue;
-            };
-            match &error.error {
-                ApplyError::Global { message, .. } => {
-                    self.global_notices
-                        .push(format!("{}: {message}", outcome.doc));
-                }
-                ApplyError::Validation(_) => {
-                    errors += error.causes.len();
-                    for located in &error.causes {
-                        self.panel
-                            .push(panel_item(outcome, &located.cause, &located.located));
-                    }
-                }
-                ApplyError::Conflict(conflicts) => {
-                    errors += error.causes.len();
-                    self.force_apply_available = true;
-                    for conflict in conflicts {
-                        if !self.conflict_managers.contains(&conflict.manager) {
-                            self.conflict_managers.push(conflict.manager.clone());
-                        }
-                    }
-                    if conflicts.is_empty() {
-                        // Message failed to parse: degrade to the global bar.
-                        self.global_notices.push(format!(
-                            "{}: apply conflicted (unparsable details); force apply available",
-                            outcome.doc
-                        ));
-                    }
-                    for located in &error.causes {
-                        self.panel
-                            .push(panel_item(outcome, &located.cause, &located.located));
-                    }
-                }
-            }
-        }
-        self.status_line = format!("apply failed: {errors} problem(s)");
-        self.rebuild_apply_decorations(cx);
-        cx.notify();
-    }
-
     // ------------------------------------------------------------ precheck
 
     fn on_buffer_changed(&mut self, cx: &mut Context<Self>) {
-        self.buffer_version += 1;
-        let version = self.buffer_version;
-        // Precheck results describe the buffer they checked; any edit voids
-        // them, and the debounce re-checks (#15 live-diagnostics semantics).
-        self.clear_precheck(cx);
+        let version = self.edit.buffer_changed();
+        self.sync_decorations(cx);
         cx.spawn(async move |view, cx| {
             cx.background_executor().timer(PRECHECK_DEBOUNCE).await;
             view.update(cx, |this, cx| {
-                if this.buffer_version == version && !this.applying {
+                if this.edit.precheck_due(version) {
                     this.run_precheck(false, cx);
                 }
             })
@@ -379,157 +216,87 @@ impl YamlEditorView {
     }
 
     fn run_precheck(&mut self, manual: bool, cx: &mut Context<Self>) {
-        if self.state.read(cx).value().trim().is_empty() {
-            return;
-        }
-        let snapshot = self.state.read(cx).value().to_string();
-        let Some(checked) = self.send(|session| session.precheck(&snapshot), cx) else {
-            // The debounced Precheck stays silent: the status already says
-            // "no cluster".
-            if manual {
-                self.global_notices = vec![no_cluster_notice("precheck")];
-                cx.notify();
-            }
+        let buffer = self.state.read(cx).value().to_string();
+        let ticket = self.edit.begin_precheck(&buffer, manual);
+        let answer = ticket.and_then(|_| self.send(|session| session.precheck(&buffer), cx));
+        cx.notify();
+        let (Some(ticket), Some(checked)) = (ticket, answer) else {
             return;
         };
-        let version = self.buffer_version;
-        self.precheck_version = Some(version);
-        self.precheck_status = PrecheckStatus::Checking;
-        cx.notify();
-
-        let session_version = self.session_version;
         cx.spawn(async move |view, cx| {
             let result = checked.await;
             view.update(cx, |this, cx| {
-                if this.session_version == session_version {
-                    this.finish_precheck(version, manual, result, cx);
-                }
+                this.edit.finish_precheck(ticket, manual, result);
+                this.sync_decorations(cx);
+                cx.notify();
             })
             .ok();
         })
         .detach();
     }
 
-    fn finish_precheck(
-        &mut self,
-        version: u64,
-        manual: bool,
-        result: Result<ApplyReport, ClusterError>,
-        cx: &mut Context<Self>,
-    ) {
-        self.precheck_status = PrecheckStatus::Idle;
-        // Stale result: the buffer moved on; the debounce re-checks.
-        if self.buffer_version != version {
-            return;
-        }
-        let report = match result {
-            Ok(report) => report,
-            Err(e) => {
-                if manual {
-                    self.global_notices = vec![failure_notice("precheck", &e)];
-                } else {
-                    self.precheck_status = PrecheckStatus::Unavailable;
-                }
-                cx.notify();
-                return;
-            }
-        };
-        let mut unavailable: Vec<String> = Vec::new();
-        let mut warnings = 0usize;
-        let mut marks: Vec<(usize, Severity)> = Vec::new();
-        for outcome in &report.outcomes {
-            let Err(error) = &outcome.result else {
-                continue;
-            };
-            if let ApplyError::Global { message, .. } = &error.error {
-                unavailable.push(format!("{}: {message}", outcome.doc));
-                continue;
-            }
-            for located in &error.causes {
-                let Some(line) = located_line(&located.located) else {
-                    continue;
-                };
-                // Strict-decoding causes (unknown/duplicate field) render
-                // as warnings: a real apply ignores those fields (#15).
-                let severity = if located.cause.is_strict_decoding() {
-                    Severity::Warning
-                } else {
-                    Severity::Error
-                };
-                if severity == Severity::Warning {
-                    warnings += 1;
-                }
-                marks.push((line, severity));
-            }
-        }
-        // The outline marks are color-only, so the warning annotation lives
-        // in the status bar (#15: note that apply will ignore the field).
-        self.precheck_note = (warnings > 0)
-            .then(|| format!("{warnings} unknown/duplicate field(s) — apply will ignore them"));
-        let red = cx.theme().red;
-        let yellow = cx.theme().yellow;
-        let collection = self.state.update(cx, |state, cx| {
-            let decorations = marks
-                .into_iter()
-                .filter_map(|(line, severity)| {
-                    let color = match severity {
-                        Severity::Error => red,
-                        Severity::Warning => yellow,
-                    };
-                    line_byte_range(state, line).map(|range| {
-                        RangeDecoration::new(range)
-                            .with_style(RangeDecorationStyle::Frame)
-                            .with_color(color)
-                    })
-                })
-                .collect();
-            state.create_range_decorations_collection(decorations, cx)
-        });
-        if let Some(old) = self.precheck_decorations.replace(collection) {
-            old.dispose(cx);
-        }
-        if !unavailable.is_empty() && manual {
-            self.global_notices = unavailable;
-        } else if !unavailable.is_empty() {
-            self.precheck_status = PrecheckStatus::Unavailable;
-        }
-        cx.notify();
-    }
-
-    fn clear_precheck(&mut self, cx: &mut Context<Self>) {
-        self.precheck_version = None;
-        if let Some(collection) = self.precheck_decorations.take() {
-            collection.dispose(cx);
-        }
-        self.precheck_status = PrecheckStatus::Idle;
-        self.precheck_note = None;
-    }
-
     // ------------------------------------------------------------ decorations
 
-    fn rebuild_apply_decorations(&mut self, cx: &mut Context<Self>) {
+    /// Make the tints match what the Edit loop shows. A tint is only
+    /// rebuilt when its lines changed: it follows edits on its own.
+    fn sync_decorations(&mut self, cx: &mut Context<Self>) {
+        let shown = self.edit.projection();
         let red = cx.theme().red;
-        let mut fill = red;
-        fill.a = 0.18;
-        let lines: Vec<usize> = self.panel.iter().filter_map(|item| item.line).collect();
-        let collection = self.state.update(cx, |state, cx| {
-            let decorations = lines
-                .into_iter()
-                .filter_map(|line| line_byte_range(state, line))
-                .map(|range| {
-                    RangeDecoration::new(range)
-                        .with_style(RangeDecorationStyle::Fill)
-                        .with_color(fill)
-                })
-                .collect();
-            state.create_range_decorations_collection(decorations, cx)
-        });
-        self.apply_decorations = Some(collection);
-    }
+        let yellow = cx.theme().yellow;
 
-    fn clear_apply_decorations(&mut self, cx: &mut Context<Self>) {
-        if let Some(collection) = self.apply_decorations.take() {
-            collection.dispose(cx);
+        let drawn = self.precheck_decorations.as_ref().map(|(marks, _)| marks);
+        if drawn.map_or(!shown.precheck_marks.is_empty(), |d| {
+            *d != shown.precheck_marks
+        }) {
+            if let Some((_, old)) = self.precheck_decorations.take() {
+                old.dispose(cx);
+            }
+            if !shown.precheck_marks.is_empty() {
+                let marks = shown.precheck_marks;
+                let collection = self.state.update(cx, |state, cx| {
+                    let decorations = marks
+                        .iter()
+                        .filter_map(|&(line, severity)| {
+                            let color = match severity {
+                                Severity::Error => red,
+                                Severity::Warning => yellow,
+                            };
+                            line_byte_range(state, line).map(|range| {
+                                RangeDecoration::new(range)
+                                    .with_style(RangeDecorationStyle::Frame)
+                                    .with_color(color)
+                            })
+                        })
+                        .collect();
+                    state.create_range_decorations_collection(decorations, cx)
+                });
+                self.precheck_decorations = Some((marks, collection));
+            }
+        }
+
+        let drawn = self.apply_decorations.as_ref().map(|(lines, _)| lines);
+        if drawn.map_or(!shown.apply_lines.is_empty(), |d| *d != shown.apply_lines) {
+            if let Some((_, old)) = self.apply_decorations.take() {
+                old.dispose(cx);
+            }
+            if !shown.apply_lines.is_empty() {
+                let lines = shown.apply_lines;
+                let mut fill = red;
+                fill.a = 0.18;
+                let collection = self.state.update(cx, |state, cx| {
+                    let decorations = lines
+                        .iter()
+                        .filter_map(|&line| line_byte_range(state, line))
+                        .map(|range| {
+                            RangeDecoration::new(range)
+                                .with_style(RangeDecorationStyle::Fill)
+                                .with_color(fill)
+                        })
+                        .collect();
+                    state.create_range_decorations_collection(decorations, cx)
+                });
+                self.apply_decorations = Some((lines, collection));
+            }
         }
     }
 
@@ -624,46 +391,19 @@ impl YamlEditorView {
 
     // ------------------------------------------------------------ rendering
 
-    fn render_panel(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if self.panel.is_empty() && self.conflict_managers.is_empty() {
-            return None;
-        }
+    fn render_panel(&mut self, panel: Panel, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let mut header = format!("{} problem(s) from last apply", self.panel.len());
-        if !self.conflict_managers.is_empty() {
-            header.push_str(&format!(
-                " — conflicts with {}",
-                self.conflict_managers.join(", ")
-            ));
-        }
-
-        let rows = self
-            .panel
-            .iter()
+        let rows = panel
+            .rows
+            .into_iter()
             .enumerate()
             .map(|(i, item)| {
-                let note = item
-                    .note
-                    .as_ref()
-                    .map(|n| format!(" — {n}"))
-                    .unwrap_or_default();
-                let text = format!(
-                    "{} [{}] {}: {}{}",
-                    match item.severity {
-                        Severity::Error => "error",
-                        Severity::Warning => "warning",
-                    },
-                    item.doc,
-                    item.field,
-                    item.message,
-                    note
-                );
                 let mut row = div()
                     .id(i)
                     .px_2()
                     .text_xs()
                     .text_color(theme.foreground)
-                    .child(text);
+                    .child(item.text);
                 if let Some(line) = item.line {
                     row = row
                         .cursor_pointer()
@@ -680,13 +420,13 @@ impl YamlEditorView {
         let mut header_row = div().px_2().py_1().flex().justify_between().child(
             div()
                 .id("yaml-problems")
-                .aria_label(header.clone())
+                .aria_label(panel.header.clone())
                 .test_support()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(header),
+                .child(panel.header),
         );
-        if self.force_apply_available {
+        if panel.force_apply {
             header_row = header_row.child(
                 div()
                     .id("force-apply")
@@ -711,16 +451,16 @@ impl YamlEditorView {
         for row in rows {
             panel = panel.child(row);
         }
-        Some(panel)
+        panel
     }
 
-    fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_status_bar(
+        &self,
+        status: String,
+        precheck: String,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme();
-        let precheck = match &self.precheck_status {
-            PrecheckStatus::Idle => self.precheck_note.clone().unwrap_or_default(),
-            PrecheckStatus::Checking => "checking…".to_string(),
-            PrecheckStatus::Unavailable => "● precheck unavailable".to_string(),
-        };
         div()
             .w_full()
             .px_2()
@@ -732,11 +472,11 @@ impl YamlEditorView {
             .child(
                 div()
                     .id("yaml-status")
-                    .aria_label(self.status_line.clone())
+                    .aria_label(status.clone())
                     .test_support()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(self.status_line.clone()),
+                    .child(status),
             )
             .child(
                 div()
@@ -810,8 +550,9 @@ impl Render for YamlEditorView {
             .on_action(cx.listener(Self::on_force_apply))
             .on_action(cx.listener(Self::on_precheck))
             .on_action(cx.listener(Self::on_toggle_palette));
-        if !self.global_notices.is_empty() {
-            let notice = self.global_notices.join("\n");
+        let shown = self.edit.projection();
+        if !shown.notices.is_empty() {
+            let notice = shown.notices.join("\n");
             root = root.child(
                 div()
                     .id("global-notice")
@@ -825,13 +566,9 @@ impl Render for YamlEditorView {
                     .text_color(theme.red)
                     .border_b_1()
                     .border_color(theme.border)
-                    .children(
-                        self.global_notices
-                            .iter()
-                            .map(|line| div().child(line.clone())),
-                    )
+                    .children(shown.notices.into_iter().map(|line| div().child(line)))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.global_notices.clear();
+                        this.edit.dismiss_notices();
                         cx.notify();
                     })),
             );
@@ -842,10 +579,10 @@ impl Render for YamlEditorView {
                 .min_h_0()
                 .child(Editor::new(&self.state).h_full()),
         );
-        if let Some(panel) = self.render_panel(cx) {
-            root = root.child(panel);
+        if let Some(panel) = shown.panel {
+            root = root.child(self.render_panel(panel, cx));
         }
-        root = root.child(self.render_status_bar(cx));
+        root = root.child(self.render_status_bar(shown.status, shown.precheck, cx));
         if let Some(palette) = self.render_palette(cx) {
             root = root.child(palette);
         }
@@ -854,57 +591,6 @@ impl Render for YamlEditorView {
 }
 
 // ---------------------------------------------------------------- helpers
-
-/// The notice for a `verb` ("apply", "precheck") that had no Cluster to go
-/// to.
-fn no_cluster_notice(verb: &str) -> String {
-    format!("cannot {verb}: no cluster")
-}
-
-/// The notice for a `verb` ("apply", "precheck") the Cluster failed.
-fn failure_notice(verb: &str, error: &ClusterError) -> String {
-    match error.kind() {
-        ClusterErrorKind::Connect => format!("cannot {verb}: cluster unreachable ({error})"),
-        _ => error.to_string(),
-    }
-}
-
-fn located_line(located: &apply::Located) -> Option<usize> {
-    match located.location {
-        Location::Exact { line } => Some(line),
-        Location::Ancestor { line, .. } => Some(line),
-        Location::DocHeader { line } => Some(line),
-        Location::Global => None,
-    }
-}
-
-fn panel_item(
-    outcome: &apply::DocOutcome,
-    cause: &apply::FieldCause,
-    located: &apply::Located,
-) -> PanelItem {
-    let note = match &located.location {
-        Location::Ancestor { missing, .. } => Some(format!(
-            "nearest existing ancestor; `{}` not found in manifest",
-            missing
-        )),
-        Location::DocHeader { .. } => {
-            Some("cannot locate precisely; at document start".to_string())
-        }
-        _ => located
-            .anchor_note
-            .as_ref()
-            .map(|a| format!("value comes from anchor `{a}`")),
-    };
-    PanelItem {
-        severity: Severity::Error,
-        doc: outcome.doc.clone(),
-        field: cause.raw_field.clone(),
-        message: cause.message.clone(),
-        line: located_line(located),
-        note,
-    }
-}
 
 /// 1-based absolute line → UTF-8 byte range covering the line's content.
 fn line_byte_range(state: &EditorState, line: usize) -> Option<Range<usize>> {

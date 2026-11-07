@@ -5,6 +5,7 @@ pub mod builtin;
 pub mod catalog;
 pub mod detail;
 pub mod discovery_cache;
+pub mod edit_loop;
 pub mod jsonpath;
 pub mod list;
 pub mod operation_text;
