@@ -225,27 +225,6 @@ fn failed_report(snapshot: &str, status: serde_json::Value) -> ApplyReport {
     )
 }
 
-/// A report whose documents `docs` each failed with a Global error naming
-/// the document, e.g. `forbidden: v1 Namespace/a`.
-pub fn global_report(docs: &[&str]) -> ApplyReport {
-    let outcomes = docs
-        .iter()
-        .enumerate()
-        .map(|(doc_index, doc)| DocOutcome {
-            doc_index,
-            doc: (*doc).to_string(),
-            result: Err(DocError {
-                error: astrolabe_kube::apply::ApplyError::Global {
-                    message: format!("forbidden: {doc}"),
-                    kind: astrolabe_kube::cluster::ClusterErrorKind::Forbidden,
-                },
-                causes: Vec::new(),
-            }),
-        })
-        .collect();
-    ApplyReport::new(outcomes)
-}
-
 /// What a plain Apply answers: `kubectl` owns `metadata.name` (409).
 pub fn conflict_report(snapshot: &str) -> ApplyReport {
     failed_report(

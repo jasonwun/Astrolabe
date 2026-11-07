@@ -283,7 +283,7 @@ detail with `support::open_detail`, and builds a `DynamicObject` with
 `support::mouse_click`; one over several Clusters opens the Workspace
 with `support::open_workspace` and reads a label with `support::label`;
 a scripted Apply or Precheck answers with `support::conflict_report`,
-`support::unknown_field_report` or `support::global_report`; a test asserting on `tracing` output
+`support::unknown_field_report`; a test asserting on `tracing` output
 captures it with `support::LogCapture`, or `LogCapture::with_filter`
 when it needs a filter other than the default `astrolabe=debug` one
 (`dev/log-capture.sh` checks the last; it and `dev/comment-width.sh`
@@ -349,8 +349,9 @@ a `SessionState` input, query or `Command`, or a free function in
 `#[test]` that would pin it. A diff that only touches code beside a rule
 already in Session is not a finding for that rule, which #147's tickets
 move; a diff that changes the rule itself moves it, or names the #147
-ticket that will. The YAML editor's own rules and the Workspace's launch
-preselection stay in the UI layer for now (#147, Out of Scope).
+ticket that will. The Workspace's launch preselection stays in the UI layer for now
+(#147, Out of Scope); the YAML editor's Apply and Precheck rules moved
+to `EditLoop` (#299).
 
 A rule keyed on what the user has open ("never evict what a detail
 reads") protects a watch only once its input has reached the state. A

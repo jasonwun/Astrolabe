@@ -1,9 +1,14 @@
 //! Headless UI tests for the YAML editor loop (#21): Enter-indent rules and
 //! `- ` list-item continuation, driven through real key dispatch.
 
+mod support;
+
+use astrolabe::session::{ScriptedCluster, Session};
 use astrolabe::yaml_editor::{YamlEditorView, register_yaml_language};
+use astrolabe_kube::cluster::ClusterId;
+use futures::channel::mpsc;
 use gpui_kit::{
-    TestAppContext,
+    AppContext as _, TestAppContext,
     component::input::{Enter, Position},
 };
 
@@ -63,4 +68,31 @@ fn enter_after_plain_key_only_indents(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn enter_after_colon_line_nests_one_level(cx: &mut TestAppContext) {
     enter_at(cx, "spec:", 0, 5, "spec:\n  ");
+}
+
+/// A failed Apply tints the line its error is on: the conflict over
+/// `metadata.name` marks the `name:` line.
+#[gpui_kit::test]
+fn a_failed_apply_marks_its_line(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        astrolabe::keymap::bind(cx);
+        register_yaml_language(cx);
+    });
+    let (_events, receiver) = mpsc::channel(8);
+    let scripted = ScriptedCluster::new(receiver)
+        .apply(|snapshot: &str, _| Ok(support::conflict_report(snapshot)));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        let session =
+            cx.new(|cx| Session::scripted(ClusterId::named("kind-a"), "default", scripted, cx));
+        YamlEditorView::with_session(window, cx, "metadata:\n  name: old\n".to_string(), session)
+    });
+
+    cx.simulate_keystrokes("cmd-shift-enter");
+    cx.run_until_parked();
+
+    // Line 2, `  name: old`, without its newline.
+    let marks = cx.read(|cx| view.read(cx).apply_mark_ranges(cx));
+    assert_eq!(marks.len(), 1);
+    assert_eq!(marks[0], 10..21);
 }
