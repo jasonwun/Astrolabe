@@ -18,14 +18,13 @@ use crate::notice_view::notice_view;
 use crate::perf;
 use crate::rows_table::{RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
+use crate::session_view::OpenTab;
 use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::list::{self, ListOutcome};
 use astrolabe_model::notice::Notice;
 use astrolabe_model::session::StaleCause;
 use astrolabe_model::session_state::Viewing;
-
-/// A row was clicked: open its detail tab.
-pub struct OpenDetail(pub DetailTarget);
+use astrolabe_model::tab::TabRequest;
 
 pub struct ResourceListPanel {
     session: Entity<Session>,
@@ -82,7 +81,7 @@ impl ResourceListPanel {
         match DetailTarget::from_row(state.viewing(), key, state) {
             Ok(target) => {
                 self.notice = None;
-                cx.emit(OpenDetail(target));
+                cx.emit(OpenTab(TabRequest::Detail(target)));
             }
             Err(error) => {
                 self.notice = Some(error.to_string());
@@ -157,7 +156,7 @@ impl ResourceListPanel {
     }
 }
 
-impl EventEmitter<OpenDetail> for ResourceListPanel {}
+impl EventEmitter<OpenTab> for ResourceListPanel {}
 impl EventEmitter<PanelEvent> for ResourceListPanel {}
 
 impl Focusable for ResourceListPanel {

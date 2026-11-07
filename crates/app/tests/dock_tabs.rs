@@ -177,3 +177,43 @@ fn cmd_w_closes_an_editor_tab(cx: &mut TestAppContext) {
         "Edit Pod default/web-1",
     );
 }
+
+#[gpui_kit::test]
+fn opening_the_same_detail_twice_shows_one_tab(cx: &mut TestAppContext) {
+    let mut ui = open(cx, Vec::new());
+    open_namespace_detail(&mut ui);
+    ui.frame(|window, cx| window.click("nav-namespaces", cx));
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-old", cx));
+    ui.settle();
+
+    assert!(detail_tab_shown(&mut ui), "the open detail is selected");
+    assert!(bounds(&mut ui, DETAIL_TAB).is_some());
+    assert!(bounds(&mut ui, CHILD_TAB).is_none(), "no second detail tab");
+}
+
+#[gpui_kit::test]
+fn opening_logs_twice_shows_two_tabs(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+
+    // Reopening the detail selects its tab, whose Logs button is shown.
+    ui.frame(|window, cx| window.click("nav-pods", cx));
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-default/web-1", cx));
+    ui.settle();
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, "dock-tab-3").is_some(), "a second Logs tab");
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (app)")
+                .is_some()
+        )
+    });
+}

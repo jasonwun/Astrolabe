@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use astrolabe::clock::Clock;
+use astrolabe::launch::Preselection;
 use astrolabe::session::ScriptedCluster;
-use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::apply::{ApplyMode, ApplyReport, DocError, DocOutcome};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::Namespace;

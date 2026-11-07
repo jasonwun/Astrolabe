@@ -2,7 +2,6 @@ use std::collections::{BTreeSet, HashMap};
 
 use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::object::ObjectKey;
-use astrolabe_kube::pod::{ExecRequest, LogRequest};
 use astrolabe_model::builtin::BuiltinKind;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
@@ -12,17 +11,21 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::exec::ExecPanel;
+use crate::launch::LaunchTab;
 use crate::logs::LogsPanel;
-use crate::resource_detail::{EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel};
-use crate::resource_list::{OpenDetail, ResourceListPanel};
+use crate::resource_detail::{EditorPanel, ResourceDetailPanel};
+use crate::resource_list::ResourceListPanel;
 use crate::session::{ScriptedCluster, Session};
-use crate::workspace::LaunchTab;
 use crate::yaml_editor::YamlEditorView;
 use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::list::CRD_DENIED;
 use astrolabe_model::notice::Notice;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId};
 use astrolabe_model::session_state::Viewing;
+use astrolabe_model::tab::{TabKey, TabRequest};
+
+/// A panel asks for a tab.
+pub struct OpenTab(pub TabRequest);
 
 /// Key context around the session dock: `cmd-w` closes its active tab.
 pub const DOCK_KEY_CONTEXT: &str = "SessionDock";
@@ -33,7 +36,9 @@ pub struct SessionView {
     session: Entity<Session>,
     dock: Entity<DockArea>,
     list: Entity<ResourceListPanel>,
-    details: HashMap<DetailTarget, Entity<ResourceDetailPanel>>,
+    /// The open tabs a request may reuse; a closed tab's entry stays until
+    /// replaced.
+    tabs: HashMap<TabKey, Entity<ResourceDetailPanel>>,
     collapsed: BTreeSet<String>,
     namespace_menu: bool,
 }
@@ -62,10 +67,7 @@ impl SessionView {
 
     fn with_session(session: Entity<Session>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let list = cx.new(|cx| ResourceListPanel::new(session.clone(), window, cx));
-        cx.subscribe_in(&list, window, |this, _, event: &OpenDetail, window, cx| {
-            this.open_detail(event.0.clone(), window, cx);
-        })
-        .detach();
+        Self::forward_open_tab(&list, window, cx);
         let (dock, skin) = DockSkin::dock_area("session", None, window, cx);
         // Off by default in the skin; the panels' `closable` still gates each
         // tab.
@@ -84,7 +86,7 @@ impl SessionView {
             session,
             dock,
             list,
-            details: HashMap::new(),
+            tabs: HashMap::new(),
             collapsed: BTreeSet::new(),
             namespace_menu: false,
         }
@@ -109,7 +111,11 @@ impl SessionView {
                 LaunchTab::List(kind) => self.show(Viewing::Builtin(kind), window, cx),
                 LaunchTab::Detail(kind, name) => {
                     let key = ObjectKey::new(Some(namespace.clone()), name);
-                    self.open_detail(DetailTarget::Builtin { kind, key }, window, cx);
+                    self.open_tab(
+                        TabRequest::Detail(DetailTarget::Builtin { kind, key }),
+                        window,
+                        cx,
+                    );
                 }
             }
         }
@@ -132,71 +138,66 @@ impl SessionView {
         }
     }
 
-    fn open_detail(&mut self, target: DetailTarget, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(panel) = self.details.get(&target) {
-            let id = PanelId::from(panel.entity_id());
-            if self.dock.read(cx).panel(id).is_some() {
-                self.select(id, window, cx);
-                return;
+    /// Open the tab a panel asked for: show the open tab with the request's
+    /// key (`TabRequest::key`), else build the panel.
+    ///
+    /// Who starts I/O: a Logs or Exec stream lives as long as its tab, so
+    /// this starts it when it makes the tab. The detail panel's Scale,
+    /// Delete and Forward are one-shot, so the panel calls `Session` itself.
+    fn open_tab(&mut self, request: TabRequest, window: &mut Window, cx: &mut Context<Self>) {
+        let key = request.key();
+        if let Some(key) = &key
+            && let Some(panel) = self.reusable(key, cx)
+        {
+            self.select(panel, window, cx);
+            return;
+        }
+        match request {
+            TabRequest::Detail(target) => {
+                let session = self.session.clone();
+                let panel = cx.new(|cx| ResourceDetailPanel::new(session, target, window, cx));
+                Self::forward_open_tab(&panel, window, cx);
+                self.add_tab(panel_handle(panel.clone()), window, cx);
+                if let Some(key) = key {
+                    self.tabs.insert(key, panel);
+                }
+            }
+            TabRequest::Logs { title, request } => {
+                let stream = self.session.update(cx, |session, _| session.logs(request));
+                let panel = cx.new(|cx| LogsPanel::new(title, stream, window, cx));
+                self.add_tab(panel_handle(panel), window, cx);
+            }
+            TabRequest::Exec { title, request } => {
+                let session = self.session.update(cx, |session, _| session.exec(request));
+                let panel = cx.new(|cx| ExecPanel::new(title, session, window, cx));
+                self.add_tab(panel_handle(panel), window, cx);
+            }
+            TabRequest::Editor { title, yaml } => {
+                let session = self.session.clone();
+                let editor = cx.new(|cx| YamlEditorView::with_session(window, cx, yaml, session));
+                let panel = cx.new(|_| EditorPanel::new(title, editor));
+                self.add_tab(panel_handle(panel), window, cx);
             }
         }
-        let session = self.session.clone();
-        let panel = cx.new(|cx| ResourceDetailPanel::new(session, target.clone(), window, cx));
-        cx.subscribe_in(&panel, window, |this, _, event: &OpenEditor, window, cx| {
-            this.open_editor(event.title.clone(), event.yaml.clone(), window, cx);
-        })
-        .detach();
-        cx.subscribe_in(&panel, window, |this, _, event: &OpenDetail, window, cx| {
-            this.open_detail(event.0.clone(), window, cx);
-        })
-        .detach();
-        cx.subscribe_in(&panel, window, |this, _, event: &OpenLogs, window, cx| {
-            this.open_logs(event.title.clone(), event.request.clone(), window, cx);
-        })
-        .detach();
-        cx.subscribe_in(&panel, window, |this, _, event: &OpenExec, window, cx| {
-            this.open_exec(event.title.clone(), event.request.clone(), window, cx);
-        })
-        .detach();
-        self.add_tab(panel_handle(panel.clone()), window, cx);
-        self.details.insert(target, panel);
     }
 
-    fn open_logs(
-        &mut self,
-        title: String,
-        request: LogRequest,
+    /// The open tab for `key`, checked against the dock: a closed tab's
+    /// entry stays in the map.
+    fn reusable(&self, key: &TabKey, cx: &App) -> Option<PanelId> {
+        let id = PanelId::from(self.tabs.get(key)?.entity_id());
+        self.dock.read(cx).panel(id).is_some().then_some(id)
+    }
+
+    /// Open the tabs a panel asks for.
+    fn forward_open_tab<P: EventEmitter<OpenTab>>(
+        panel: &Entity<P>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let stream = self.session.update(cx, |session, _| session.logs(request));
-        let panel = cx.new(|cx| LogsPanel::new(title, stream, window, cx));
-        self.add_tab(panel_handle(panel), window, cx);
-    }
-
-    fn open_exec(
-        &mut self,
-        title: String,
-        request: ExecRequest,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let session = self.session.update(cx, |session, _| session.exec(request));
-        let panel = cx.new(|cx| ExecPanel::new(title, session, window, cx));
-        self.add_tab(panel_handle(panel), window, cx);
-    }
-
-    fn open_editor(
-        &mut self,
-        title: String,
-        yaml: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let session = self.session.clone();
-        let editor = cx.new(|cx| YamlEditorView::with_session(window, cx, yaml, session));
-        let panel = cx.new(|_| EditorPanel::new(title, editor));
-        self.add_tab(panel_handle(panel), window, cx);
+        cx.subscribe_in(panel, window, |this, _, event: &OpenTab, window, cx| {
+            this.open_tab(event.0.clone(), window, cx);
+        })
+        .detach();
     }
 
     fn add_tab(

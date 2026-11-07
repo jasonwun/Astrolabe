@@ -7,7 +7,6 @@
 use std::collections::BTreeSet;
 
 use astrolabe_kube::object::ObjectKey;
-use astrolabe_kube::pod::{ExecRequest, LogRequest};
 use astrolabe_model::builtin::Action;
 use astrolabe_model::detail_actions::{DetailActions, Effect, Subject, forward_target};
 use astrolabe_model::projection::config::{HIDDEN, SecretKey};
@@ -15,6 +14,7 @@ use astrolabe_model::projection::{
     DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
 };
 use astrolabe_model::session_state::SessionState;
+use astrolabe_model::tab::TabRequest;
 use gpui_kit::base::test_support::Observed;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -27,9 +27,9 @@ use gpui_kit::*;
 use crate::clock;
 use crate::notice_view::notice_view;
 use crate::perf;
-use crate::resource_list::OpenDetail;
 use crate::rows_table::{RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
+use crate::session_view::OpenTab;
 use astrolabe_model::detail::{
     self, DetailOutcome, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches,
 };
@@ -39,24 +39,6 @@ mod pod_actions;
 mod workload_actions;
 
 pub use editor_panel::EditorPanel;
-
-/// Logs was pressed: open a Logs tab following this container.
-pub struct OpenLogs {
-    pub title: String,
-    pub request: LogRequest,
-}
-
-/// A shell was chosen: open an Exec tab running it.
-pub struct OpenExec {
-    pub title: String,
-    pub request: ExecRequest,
-}
-
-/// Edit YAML was pressed: open an editor tab on this text.
-pub struct OpenEditor {
-    pub title: String,
-    pub yaml: String,
-}
 
 pub struct ResourceDetailPanel {
     session: Entity<Session>,
@@ -119,10 +101,10 @@ impl ResourceDetailPanel {
             return;
         };
         if let Some(related) = &kind.registration().related {
-            cx.emit(OpenDetail(DetailTarget::Builtin {
+            cx.emit(OpenTab(TabRequest::Detail(DetailTarget::Builtin {
                 kind: related.kind,
                 key: key.clone(),
-            }));
+            })));
         }
     }
 
@@ -145,10 +127,10 @@ impl ResourceDetailPanel {
 
     fn edit(&mut self, cx: &mut Context<Self>) {
         if let Some(resolved) = self.resolve(cx) {
-            cx.emit(OpenEditor {
+            cx.emit(OpenTab(TabRequest::Editor {
                 title: resolved.model.title,
                 yaml: resolved.model.edit_yaml.unwrap_or(resolved.model.yaml),
-            });
+            }));
         }
     }
 
@@ -230,8 +212,12 @@ impl ResourceDetailPanel {
     fn carry_out(&mut self, effect: Effect, cx: &mut Context<Self>) {
         match effect {
             Effect::None => {}
-            Effect::OpenLogs { title, request } => cx.emit(OpenLogs { title, request }),
-            Effect::OpenExec { title, request } => cx.emit(OpenExec { title, request }),
+            Effect::OpenLogs { title, request } => {
+                cx.emit(OpenTab(TabRequest::Logs { title, request }))
+            }
+            Effect::OpenExec { title, request } => {
+                cx.emit(OpenTab(TabRequest::Exec { title, request }))
+            }
             Effect::Forward(request) => self
                 .session
                 .update(cx, |session, cx| session.forward_port(request, cx)),
@@ -619,10 +605,7 @@ fn summary_table_with_id(table: &SummaryTable, id: String, cx: &App) -> AnyEleme
         .into_any_element()
 }
 
-impl EventEmitter<OpenEditor> for ResourceDetailPanel {}
-impl EventEmitter<OpenDetail> for ResourceDetailPanel {}
-impl EventEmitter<OpenLogs> for ResourceDetailPanel {}
-impl EventEmitter<OpenExec> for ResourceDetailPanel {}
+impl EventEmitter<OpenTab> for ResourceDetailPanel {}
 impl EventEmitter<PanelEvent> for ResourceDetailPanel {}
 
 impl Focusable for ResourceDetailPanel {
