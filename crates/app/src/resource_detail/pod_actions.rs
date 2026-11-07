@@ -3,7 +3,7 @@
 
 use astrolabe_kube::pod::ForwardTarget;
 use astrolabe_model::detail_actions::{
-    ForwardTone, Picking, PodAction, SHELLS, containers, forward_row,
+    ForwardTone, Picking, PodAction, SHELLS, containers, forward_row, no_containers,
 };
 use astrolabe_model::projection::{DetailModel, Forward};
 use gpui_kit::component::ActiveTheme as _;
@@ -41,6 +41,7 @@ impl ResourceDetailPanel {
     ) -> impl IntoElement {
         let border = cx.theme().border;
         let prompt = picking.prompt();
+        let reason = no_containers(model, &picking);
         let Picking { action, container } = picking;
         let choices: Vec<AnyElement> = match (action, container) {
             (PodAction::Forward, _) => model
@@ -48,6 +49,10 @@ impl ResourceDetailPanel {
                 .as_ref()
                 .map(|forward| self.render_ports(forward, cx))
                 .unwrap_or_default(),
+            (_, None) if reason.is_some() => reason
+                .map(|text| self.render_empty(text, cx))
+                .into_iter()
+                .collect(),
             (_, None) => containers(model, action)
                 .into_iter()
                 .map(|container| {
@@ -104,23 +109,25 @@ impl ResourceDetailPanel {
             )
     }
 
+    /// The muted reason the picker has nothing to offer.
+    fn render_empty(&self, text: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("picker-empty")
+            .aria_label(text)
+            .test_support()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(text)
+            .into_any_element()
+    }
+
     /// One button per declared port (a Service's TCP ports), or why there
     /// are none.
     fn render_ports(&self, forward: &Forward, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let border = cx.theme().border;
         let ports = forward.ports.clone();
         if ports.is_empty() {
-            let text = forward.empty;
-            return vec![
-                div()
-                    .id("picker-empty")
-                    .aria_label(text)
-                    .test_support()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(text)
-                    .into_any_element(),
-            ];
+            return vec![self.render_empty(forward.empty, cx)];
         }
         ports
             .into_iter()

@@ -10,7 +10,8 @@ use astrolabe_kube::pod::{ForwardRequest, ForwardTarget};
 use astrolabe_model::builtin::{Action, BuiltinKind};
 use astrolabe_model::detail::{DetailTarget, resolve, watches};
 use astrolabe_model::detail_actions::{
-    DetailActions, Effect, ForwardTone, PodAction, Subject, containers, forward_row, forward_target,
+    DetailActions, Effect, ForwardTone, Picking, PodAction, Subject, containers, forward_row,
+    forward_target, no_containers,
 };
 use astrolabe_model::projection::Containers;
 use astrolabe_model::session::ForwardState;
@@ -383,6 +384,37 @@ fn a_subject_reads_what_the_shown_pod_offers() {
         forward_target(&resolved.model, &key()),
         Some(ForwardTarget::Pod(key()))
     );
+}
+
+#[test]
+fn exec_with_no_running_container_says_so_and_the_others_do_not() {
+    let (target, state) = pod_state();
+    let now = "2026-10-22T12:00:00Z".parse().unwrap();
+    let mut model = resolve(&target, &state, now).shown().unwrap().model;
+    let ask = |action| Picking {
+        action,
+        container: None,
+    };
+    // Running containers: nothing to explain.
+    assert_eq!(no_containers(&model, &ask(PodAction::Exec)), None);
+    // Between restarts of a crash-looping Pod none is running.
+    model.containers = Some(Containers {
+        all: names(&["app"]),
+        running: Vec::new(),
+    });
+    assert_eq!(
+        no_containers(&model, &ask(PodAction::Exec)),
+        Some("No running container")
+    );
+    // Logs reads every container; Forward's reasons come with its ports.
+    assert_eq!(no_containers(&model, &ask(PodAction::Logs)), None);
+    assert_eq!(no_containers(&model, &ask(PodAction::Forward)), None);
+    // Past the container, the shell buttons stand.
+    let in_container = Picking {
+        action: PodAction::Exec,
+        container: Some("app".to_string()),
+    };
+    assert_eq!(no_containers(&model, &in_container), None);
 }
 
 #[test]
