@@ -21,7 +21,7 @@ use astrolabe_kube::object::{ObjectKey, ObjectRef};
 
 use crate::notice::{Intent, Notice, failed_message};
 use crate::session::{CustomKindId, WatchReading, Watched};
-use crate::session_state::SessionState;
+use crate::session_state::{SessionState, Viewing};
 
 /// What a detail tab shows: one object, addressed in its list's store.
 /// Custom resources are version-free (#41): each resolve reads the watch at
@@ -59,7 +59,91 @@ impl std::fmt::Display for ReferenceError {
 
 impl std::error::Error for ReferenceError {}
 
+/// Why a list row cannot be opened; shown as the list's notice.
+#[derive(Debug, PartialEq, Eq)]
+pub enum OpenRowError {
+    /// The row's object left its watch, or its kind has no reference to follow.
+    ObjectUnavailable {
+        kind: String,
+        key: ObjectKey,
+    },
+    Reference(ReferenceError),
+}
+
+impl std::fmt::Display for OpenRowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ObjectUnavailable { kind, key } => {
+                write!(f, "Cannot open {kind} {key}: object is unavailable")
+            }
+            Self::Reference(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for OpenRowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ObjectUnavailable { .. } => None,
+            Self::Reference(error) => Some(error),
+        }
+    }
+}
+
+impl From<ReferenceError> for OpenRowError {
+    fn from(error: ReferenceError) -> Self {
+        Self::Reference(error)
+    }
+}
+
 impl DetailTarget {
+    /// The detail a click on the row `key` of the list `viewing` opens. A
+    /// built-in kind whose registration has a `row_target` (Events) opens
+    /// the object the row's object references instead of the row itself.
+    ///
+    /// # Errors
+    ///
+    /// The row's object is no longer in its watch or yields no reference, or
+    /// its reference cannot be opened.
+    pub fn from_row(
+        viewing: &Viewing,
+        key: &ObjectKey,
+        state: &SessionState,
+    ) -> Result<Self, OpenRowError> {
+        match viewing {
+            Viewing::Namespaces => Ok(Self::Namespace {
+                name: key.name.clone(),
+            }),
+            Viewing::Builtin(kind) => match kind.registration().row_target {
+                Some(row_target) => {
+                    let (object, reference) = state
+                        .builtin_object(*kind, key.namespace.as_deref(), &key.name)
+                        .and_then(|object| Some((object, row_target(object)?)))
+                        .ok_or_else(|| OpenRowError::ObjectUnavailable {
+                            kind: kind.kind(),
+                            key: key.clone(),
+                        })?;
+                    Ok(Self::by_reference(
+                        reference,
+                        object.metadata.namespace.clone(),
+                        state,
+                    )?)
+                }
+                None => Ok(Self::Builtin {
+                    kind: *kind,
+                    key: key.clone(),
+                }),
+            },
+            Viewing::Definitions => Ok(Self::Definition {
+                name: key.name.clone(),
+            }),
+            Viewing::Custom(id) => Ok(Self::Custom {
+                id: id.clone(),
+                key: key.clone(),
+            }),
+        }
+    }
+
     /// The object `reference` names (an Event's involved object): a
     /// built-in kind, a Namespace, a CRD or a custom kind. A namespaced
     /// object without a namespace of its own is in `namespace`.

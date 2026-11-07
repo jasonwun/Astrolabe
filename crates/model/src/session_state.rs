@@ -4,7 +4,7 @@
 //! input answers with the `Command`s Session carries out; Session decides
 //! nothing about them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind, ClusterId};
@@ -135,6 +135,29 @@ pub enum Viewing {
     Builtin(BuiltinKind),
     Definitions,
     Custom(CustomKindId),
+}
+
+impl Viewing {
+    /// The list's tab name. `_state` is part of the signature for a label
+    /// that reads the state; none does yet.
+    #[must_use]
+    pub fn label(&self, _state: &SessionState) -> String {
+        match self {
+            Self::Namespaces => "Namespaces".to_string(),
+            Self::Builtin(kind) => kind.registration().label.to_string(),
+            Self::Definitions => "Definitions".to_string(),
+            Self::Custom(id) => id.kind.clone(),
+        }
+    }
+
+    /// Whether every cell of a row opens its detail, not only the first.
+    #[must_use]
+    pub fn opens_from_every_cell(&self) -> bool {
+        match self {
+            Self::Builtin(kind) => kind.registration().open_all_cells,
+            Self::Namespaces | Self::Definitions | Self::Custom(_) => false,
+        }
+    }
 }
 
 /// The kind `id` names in `catalog`.
@@ -524,6 +547,16 @@ impl SessionState {
     /// The Definitions watch.
     pub fn crds(&self) -> &Watched<CustomResourceDefinition> {
         &self.crds
+    }
+
+    /// The API groups of the Definitions watch's objects: the group chips of
+    /// the Definitions list.
+    #[must_use]
+    pub fn crd_groups(&self) -> BTreeSet<String> {
+        self.crds
+            .objects()
+            .map(|crd| crd.spec.group.clone())
+            .collect()
     }
 
     /// The custom kinds by API group, as Custom Resources navigation shows
