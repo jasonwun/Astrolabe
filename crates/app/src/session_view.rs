@@ -67,7 +67,7 @@ impl SessionView {
 
     fn with_session(session: Entity<Session>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let list = cx.new(|cx| ResourceListPanel::new(session.clone(), window, cx));
-        Self::subscribe(&list, window, cx);
+        Self::forward_open_tab(&list, window, cx);
         let (dock, skin) = DockSkin::dock_area("session", None, window, cx);
         // Off by default in the skin; the panels' `closable` still gates each
         // tab.
@@ -145,18 +145,18 @@ impl SessionView {
     /// this starts it when it makes the tab. The detail panel's Scale,
     /// Delete and Forward are one-shot, so the panel calls `Session` itself.
     fn open_tab(&mut self, request: TabRequest, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(key) = request.key()
-            && let Some(panel) = self.reusable(&key, cx)
+        let key = request.key();
+        if let Some(key) = &key
+            && let Some(panel) = self.reusable(key, cx)
         {
             self.select(panel, window, cx);
             return;
         }
-        let key = request.key();
         match request {
             TabRequest::Detail(target) => {
                 let session = self.session.clone();
                 let panel = cx.new(|cx| ResourceDetailPanel::new(session, target, window, cx));
-                Self::subscribe(&panel, window, cx);
+                Self::forward_open_tab(&panel, window, cx);
                 self.add_tab(panel_handle(panel.clone()), window, cx);
                 if let Some(key) = key {
                     self.tabs.insert(key, panel);
@@ -189,7 +189,7 @@ impl SessionView {
     }
 
     /// Open the tabs a panel asks for.
-    fn subscribe<P: EventEmitter<OpenTab>>(
+    fn forward_open_tab<P: EventEmitter<OpenTab>>(
         panel: &Entity<P>,
         window: &mut Window,
         cx: &mut Context<Self>,
