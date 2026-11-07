@@ -616,13 +616,15 @@ mod tests {
         };
         let mut unlocated = cause("spec.x", "bad");
         unlocated.located.location = Location::Global;
+        let mut header = cause("spec.y", "worse");
+        header.located.location = Location::DocHeader { line: 1 };
         apply_with(
             &mut edit,
             report(vec![
                 failed(
                     "apps/v1 Deployment/d",
                     ApplyError::Validation(Vec::new()),
-                    vec![missing, unlocated],
+                    vec![missing, unlocated, header],
                 ),
                 failed(
                     "v1 Namespace/n",
@@ -638,7 +640,8 @@ mod tests {
         let shown = edit.projection();
         let panel = shown.panel.unwrap();
         assert!(!panel.force_apply);
-        assert_eq!(panel.header, "2 problem(s) from last apply");
+        assert_eq!(panel.header, "3 problem(s) from last apply");
+        assert_eq!(shown.status, "apply failed: 3 problem(s)");
         assert_eq!(
             panel.rows,
             [
@@ -652,10 +655,16 @@ mod tests {
                     text: "error [apps/v1 Deployment/d] spec.x: bad".to_string(),
                     line: None,
                 },
+                ProblemRow {
+                    text: "error [apps/v1 Deployment/d] spec.y: worse — cannot locate precisely; \
+                           at document start"
+                        .to_string(),
+                    line: Some(1),
+                },
             ]
         );
         assert_eq!(shown.notices, ["v1 Namespace/n: forbidden"]);
-        assert_eq!(shown.apply_lines, [2]);
+        assert_eq!(shown.apply_lines, [2, 1]);
     }
 
     #[test]
@@ -735,6 +744,25 @@ mod tests {
             "1 unknown/duplicate field(s) — apply will ignore them"
         );
         assert!(shown.panel.is_none());
+    }
+
+    #[test]
+    fn a_precheck_with_only_errors_has_no_unknown_field_note() {
+        let mut edit = ready();
+        let ticket = edit.begin_precheck(BUFFER, false).unwrap();
+        edit.finish_precheck(
+            ticket,
+            false,
+            report(vec![failed(
+                "v1 ConfigMap/a",
+                ApplyError::Validation(Vec::new()),
+                vec![cause("data.a", "Invalid value")],
+            )]),
+        );
+
+        let shown = edit.projection();
+        assert_eq!(shown.precheck_marks, [(3, Severity::Error)]);
+        assert_eq!(shown.precheck, "");
     }
 
     #[test]
