@@ -41,10 +41,38 @@ pub struct ExecPanel {
 impl ExecPanel {
     pub fn new(
         title: String,
-        mut session: ExecSession,
+        session: ExecSession,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (terminal, task) = Self::run(session, window, cx);
+        Self {
+            title,
+            terminal,
+            state: ExecState::Running,
+            _session: task,
+        }
+    }
+
+    /// The shell has exited or failed.
+    pub fn is_finished(&self) -> bool {
+        self.state.is_finished()
+    }
+
+    /// Run `session` in this tab, on a fresh terminal.
+    pub fn restart(&mut self, session: ExecSession, window: &mut Window, cx: &mut Context<Self>) {
+        let (terminal, task) = Self::run(session, window, cx);
+        self.terminal = terminal;
+        self._session = task;
+        self.state = ExecState::Running;
+        cx.notify();
+    }
+
+    fn run(
+        mut session: ExecSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<TerminalView>, Task<()>) {
         let (backend, events) = remote(
             COLS,
             ROWS,
@@ -80,12 +108,7 @@ impl ExecPanel {
                 })
                 .ok();
         });
-        Self {
-            title,
-            terminal,
-            state: ExecState::Running,
-            _session: task,
-        }
+        (terminal, task)
     }
 }
 

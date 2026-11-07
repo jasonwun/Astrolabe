@@ -286,6 +286,15 @@ pub fn open_detail(
     ui.settle();
 }
 
+/// Back to the open detail of `name` in the `default` namespace, through
+/// `kind`'s list: the row click selects the open tab.
+pub fn reopen_detail(ui: &mut Ui<'_>, kind: BuiltinKind, name: &str) {
+    ui.frame(|window, cx| window.click(kind.nav_id(), cx));
+    ui.settle();
+    ui.frame(|window, cx| window.click(format!("row-default/{name}"), cx));
+    ui.settle();
+}
+
 /// Projects ages from `start` plus the test scheduler's elapsed time, so
 /// `advance_clock` ages every object (#70). Like the system time, no two
 /// reads return the same instant (each adds a nanosecond), so a panel that

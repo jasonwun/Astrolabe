@@ -9,7 +9,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Pixels, TestAppContext};
-use support::{Ui, key, mouse_click, object, open, open_detail};
+use support::{Ui, key, mouse_click, object, open, open_detail, reopen_detail};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
@@ -193,22 +193,134 @@ fn opening_the_same_detail_twice_shows_one_tab(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn opening_logs_twice_shows_two_tabs(cx: &mut TestAppContext) {
+fn opening_logs_for_the_same_container_twice_shows_one_tab_with_a_new_stream(
+    cx: &mut TestAppContext,
+) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
-
-    // Reopening the detail selects its tab, whose Logs button is shown.
-    ui.frame(|window, cx| window.click("nav-pods", cx));
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web-1", cx));
-    ui.settle();
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
 
-    assert!(bounds(&mut ui, "dock-tab-3").is_some(), "a second Logs tab");
+    assert!(bounds(&mut ui, "dock-tab-3").is_none(), "one Logs tab");
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (app)")
+                .is_some(),
+            "the Logs tab is selected"
+        )
+    });
+    // The scripted stream failed, so the second open follows it again.
+    assert_eq!(ui.logged.borrow().len(), 2);
+}
+
+#[gpui_kit::test]
+fn opening_exec_again_after_the_shell_exited_starts_a_new_shell_in_the_same_tab(
+    cx: &mut TestAppContext,
+) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.frame(|window, cx| window.click("pick-shell-sh", cx));
+    ui.settle();
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
+    ui.frame(|window, cx| window.click("detail-exec", cx));
+    ui.frame(|window, cx| window.click("pick-shell-bash", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, "dock-tab-3").is_none(), "one Exec tab");
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Exec default/web-1 (app)")
+                .is_some(),
+            "the Exec tab is selected"
+        );
+        // The second shell is the one the tab now shows.
+        assert!(window.try_find_by_label("Exited with code 0").is_some());
+    });
+    assert_eq!(ui.execed.borrow().len(), 2);
+}
+
+#[gpui_kit::test]
+fn opening_edit_yaml_twice_shows_one_editor_that_keeps_its_state(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-edit", cx));
+    ui.settle();
+    // An apply leaves a status that a reloaded editor would not have.
+    ui.cx.simulate_keystrokes("cmd-shift-enter");
+    ui.settle();
+    let status = ui.label("yaml-status");
+    assert_eq!(status, "apply failed: 1 problem(s)");
+
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
+    ui.frame(|window, cx| window.click("detail-edit", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, "dock-tab-3").is_none(), "one editor tab");
+    assert_eq!(
+        ui.label("yaml-status"),
+        status,
+        "the editor was not reloaded"
+    );
+}
+
+#[gpui_kit::test]
+fn opening_logs_for_two_containers_shows_two_tabs(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let two = object(serde_json::json!({
+        "apiVersion": "v1", "kind": "Pod",
+        "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
+        "spec": {"containers": [{"name": "app", "image": "nginx"}, {"name": "sidecar", "image": "envoy"}]},
+        "status": {"phase": "Running", "containerStatuses": [
+            {"name": "app", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}},
+            {"name": "sidecar", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}}]}
+    }));
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![two], "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.frame(|window, cx| window.click("pick-container-app", cx));
+    ui.settle();
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.frame(|window, cx| window.click("pick-container-sidecar", cx));
+    ui.settle();
+
+    assert!(
+        bounds(&mut ui, "dock-tab-3").is_some(),
+        "a tab per container"
+    );
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (sidecar)")
+                .is_some()
+        )
+    });
+}
+
+#[gpui_kit::test]
+fn a_closed_logs_tab_reopens_as_a_fresh_tab(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+    ui.frame(|window, cx| window.press("cmd-w", cx));
+    ui.settle();
+    assert!(bounds(&mut ui, CHILD_TAB).is_none());
+
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, CHILD_TAB).is_some(), "the Logs tab is back");
     ui.frame(|window, _| {
         assert!(
             window
