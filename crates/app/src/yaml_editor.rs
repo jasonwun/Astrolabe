@@ -373,14 +373,20 @@ impl YamlEditorView {
         cx.notify();
     }
 
+    /// Close the palette and hand focus back to the editor.
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette = None;
+        self.state.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
     fn on_palette_confirm(
         &mut self,
         index: &gpui_kit::component::IndexPath,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.palette = None;
-        self.state.focus_handle(cx).focus(window, cx);
+        self.close_palette(window, cx);
         match palette_entries().get(index.row).map(|(command, _)| command) {
             Some(PaletteCommand::Apply) => self.apply(ApplyMode::Normal, cx),
             Some(PaletteCommand::Precheck) => self.run_precheck(true, cx),
@@ -510,19 +516,20 @@ impl YamlEditorView {
                         Command::new(palette)
                             .placeholder("YAML editor command…")
                             .group(group)
-                            .on_confirm(move |index, _window, cx| {
-                                view.update_in(cx, |this, window, cx| {
+                            .on_confirm(move |index, window, cx| {
+                                // `update`, not `update_in`: a deferred
+                                // callback has no current window, so
+                                // `update_in` fails there (#317).
+                                view.update(cx, |this, cx| {
                                     this.on_palette_confirm(&index, window, cx);
                                 })
+                                // Err only when the editor is gone.
                                 .ok();
                             })
-                            .on_cancel(move |_window, cx| {
+                            .on_cancel(move |window, cx| {
                                 cancel_view
-                                    .update_in(cx, |this, window, cx| {
-                                        this.palette = None;
-                                        this.state.focus_handle(cx).focus(window, cx);
-                                        cx.notify();
-                                    })
+                                    .update(cx, |this, cx| this.close_palette(window, cx))
+                                    // Err only when the editor is already gone.
                                     .ok();
                             }),
                     ),
