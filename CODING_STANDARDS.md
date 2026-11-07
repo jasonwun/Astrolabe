@@ -360,6 +360,12 @@ leaves them unprotected in between: #245's panel did that, and its
 review found it. The reviewer reads the order of a protecting input
 against the calls it protects, and the fix is to send the input first.
 
+A view that matches a model enum with a `_ =>` arm, and then unwraps a
+value the model derived from the same enum (`notice.expect(..)` beside a
+`Rows` arm), hides the next variant: it compiles and panics. List the
+variants so the compiler asks for them. Both reviewers of #301 flagged
+`render_related`'s `_ =>` (#301 retro).
+
 Origin: #147 — relist, the 403 backoff, the Discovery debounce, detail
 resolution and the Forward list's states were written inside Session,
 so each was testable only through `gpui_kit::test`, and the relist test
