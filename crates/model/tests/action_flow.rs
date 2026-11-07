@@ -1,17 +1,20 @@
 //! The detail panel's action flow (#300), with no view: what each step
 //! asks for and which effect it answers with. Synthetic objects.
 
-use astrolabe_kube::cluster::ClusterError;
+use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::apps::v1::Deployment;
 use astrolabe_kube::kube::discovery::ApiResource;
+use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
 use astrolabe_kube::pod::{ForwardRequest, ForwardTarget};
-use astrolabe_model::builtin::Action;
+use astrolabe_model::builtin::{Action, BuiltinKind};
+use astrolabe_model::detail::{DetailTarget, resolve, watches};
 use astrolabe_model::detail_actions::{
-    DetailActions, Effect, ForwardTone, PodAction, Subject, forward_row,
+    DetailActions, Effect, ForwardTone, PodAction, Subject, containers, forward_row, forward_target,
 };
 use astrolabe_model::projection::Containers;
 use astrolabe_model::session::ForwardState;
+use astrolabe_model::session_state::SessionState;
 
 fn key() -> ObjectKey {
     ObjectKey::new(Some("default".to_string()), "web-0")
@@ -307,4 +310,105 @@ fn a_forward_row_reads_by_state() {
     );
     assert_eq!(failed.1, ForwardTone::Danger);
     assert!(failed.0.starts_with("Forward to 80 failed: "), "{failed:?}");
+}
+
+mod support;
+
+fn pod_state() -> (DetailTarget, SessionState) {
+    let target = DetailTarget::Builtin {
+        kind: BuiltinKind::Pods,
+        key: key(),
+    };
+    let mut state = SessionState::new(ClusterId::named("kind-a"), "default");
+    for watch in watches(&target) {
+        state.watch_builtin(watch.kind, watch.namespace.as_deref());
+    }
+    let watch = state.watch_builtin(BuiltinKind::Pods, Some("default")).key;
+    state.object_message(&watch, Ok(Event::Init));
+    state.object_message(
+        &watch,
+        Ok(Event::InitApply(support::object(serde_json::json!({
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": "web-0", "namespace": "default", "uid": "uid-pod"},
+            "spec": {
+                "initContainers": [{"name": "setup", "image": "busybox"}],
+                "containers": [
+                    {"name": "app", "image": "nginx", "ports": [{"containerPort": 80}]},
+                    {"name": "sidecar", "image": "envoy"}
+                ]
+            },
+            "status": {
+                "phase": "Running",
+                "initContainerStatuses": [{"name": "setup", "image": "busybox", "imageID": "", "ready": true, "restartCount": 0,
+                    "state": {"terminated": {"exitCode": 0}}}],
+                "containerStatuses": [
+                    {"name": "app", "image": "nginx", "imageID": "", "ready": true, "restartCount": 0,
+                     "state": {"running": {}}},
+                    {"name": "sidecar", "image": "envoy", "imageID": "", "ready": true, "restartCount": 0,
+                     "state": {"running": {}}}
+                ]
+            }
+        })))),
+    );
+    state.object_message(&watch, Ok(Event::InitDone));
+    (target, state)
+}
+
+#[test]
+fn a_subject_reads_what_the_shown_pod_offers() {
+    let (target, state) = pod_state();
+    let now = "2026-10-22T12:00:00Z".parse().unwrap();
+    let resolved = resolve(&target, &state, now).shown().unwrap();
+    let subject = Subject::of(&target, &state, Some(&resolved));
+    assert_eq!(subject.pod, Some(key()));
+    assert_eq!(subject.containers.all, names(&["setup", "app", "sidecar"]));
+    assert_eq!(subject.containers.running, names(&["app", "sidecar"]));
+    assert_eq!(subject.forward, Some(ForwardTarget::Pod(key())));
+    assert_eq!(subject.object.map(|object| object.key), Some(key()));
+    assert!(!subject.suspended);
+    // The same rules read off the model directly, as the picker draws them.
+    assert_eq!(
+        containers(&resolved.model, PodAction::Logs),
+        names(&["setup", "app", "sidecar"])
+    );
+    assert_eq!(
+        containers(&resolved.model, PodAction::Exec),
+        names(&["app", "sidecar"])
+    );
+    assert_eq!(
+        containers(&resolved.model, PodAction::Forward),
+        names(&["app", "sidecar"])
+    );
+    assert_eq!(
+        forward_target(&resolved.model, &key()),
+        Some(ForwardTarget::Pod(key()))
+    );
+}
+
+#[test]
+fn a_subject_of_a_vanished_object_offers_nothing() {
+    let (target, _) = pod_state();
+    let empty = SessionState::new(ClusterId::named("kind-a"), "default");
+    let subject = Subject::of(&target, &empty, None);
+    assert_eq!(subject.pod, Some(key()));
+    assert_eq!(subject.object, None);
+    assert_eq!(subject.forward, None);
+    assert_eq!(subject.containers, Containers::default());
+}
+
+#[test]
+fn a_target_that_is_not_built_in_has_no_pod() {
+    let namespace = DetailTarget::Namespace {
+        name: "default".to_string(),
+    };
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    assert_eq!(Subject::of(&namespace, &state, None).pod, None);
+}
+
+#[test]
+fn cancelling_scale_closes_the_form() {
+    let mut actions = DetailActions::default();
+    actions.press(Action::Scale, &Subject::default());
+    actions.cancel_scale();
+    assert!(!actions.scale_open());
 }
