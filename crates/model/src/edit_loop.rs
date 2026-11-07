@@ -355,7 +355,7 @@ impl EditLoop {
         self.precheck_marks = marks;
         if !unavailable.is_empty() && manual {
             // Replaces the notices the last Apply left, although they
-            // belong to the Apply result (see the follow-up to #299).
+            // belong to the Apply result (see #308).
             self.global_notices = unavailable;
         } else if !unavailable.is_empty() {
             self.precheck_status = PrecheckStatus::Unavailable;
