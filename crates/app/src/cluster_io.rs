@@ -76,6 +76,14 @@ struct HeldSenders {
 }
 
 impl OpenStreams {
+    fn hold_log(&self, sender: mpsc::UnboundedSender<LogChunk>) {
+        self.0.borrow_mut().logs.push(sender);
+    }
+
+    fn hold_exec(&self, sender: mpsc::UnboundedSender<ExecOutput>) {
+        self.0.borrow_mut().execs.push(sender);
+    }
+
     /// End every stream and session held open so far.
     pub fn close(&self) {
         let mut held = self.0.borrow_mut();
@@ -388,7 +396,7 @@ impl ClusterIo {
                     let _ = sender.unbounded_send(chunk);
                 }
                 if let Some(open) = &cluster.open_streams {
-                    open.0.borrow_mut().logs.push(sender);
+                    open.hold_log(sender);
                 }
                 LogStream::new(chunks)
             }
@@ -407,7 +415,7 @@ impl ClusterIo {
                     let _ = sender.unbounded_send(item);
                 }
                 if let Some(open) = &cluster.open_streams {
-                    open.0.borrow_mut().execs.push(sender);
+                    open.hold_exec(sender);
                 }
                 ExecSession::new(input, output)
             }

@@ -119,9 +119,11 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   is a `CODING_STANDARDS.md` finding (#306).
 - `ScriptedCluster`'s `logs` and `exec` closures return a fixed list, and
   the stream or session ends as soon as it is sent: every Logs or Exec tab
-  in a UI test is already finished (`Stream failed`, `Exited`). A branch
-  for a still-live stream, such as "reopening does not restart it", cannot
-  be tested until a scripted stream can stay open (#332, #306 retro).
+  in a UI test is already finished (`Stream failed`, `Exited`). For a
+  still-live one, build the window with `support::open_streaming`: its
+  streams stay open (`Streaming…`, `Session running`) until
+  `ui.open_streams.close()`. It is the way to test a branch for a live
+  stream, such as "reopening does not restart it" (#332).
 - An element's accessible label, as the frame draws it:
   `ui.label(id)` (`crates/app/tests/support`); it panics when `id` is
   not rendered (#160). A test that builds its window without
