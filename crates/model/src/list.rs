@@ -6,12 +6,13 @@
 
 use std::collections::BTreeSet;
 
-use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind};
+use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::ResourceExt;
 
 use crate::catalog::KindResource;
 use crate::detail::forbidden_message;
+use crate::notice::{Intent, Notice, failed_message};
 use crate::projection::{
     ResourceTable, project_custom_resources, project_definitions, project_namespaces,
 };
@@ -41,15 +42,21 @@ pub enum ListOutcome {
     NotServed(String),
 }
 
-/// The text shown where a list's watch failed before its first snapshot.
-pub fn failed_message(error: Option<&ClusterError>) -> String {
-    match error {
-        None => "The watch ended before the list loaded".to_string(),
-        Some(error) => match error.kind() {
-            ClusterErrorKind::Connect => format!("Cannot connect to the cluster: {error}"),
-            ClusterErrorKind::Unreachable => format!("Cannot reach the cluster: {error}"),
-            _ => format!("Cannot load the list: {error}"),
-        },
+impl ListOutcome {
+    /// What the list shows instead of rows; none for rows.
+    pub fn notice(&self) -> Option<Notice> {
+        Some(match self {
+            Self::Rows(_) => return None,
+            Self::Loading(text) | Self::Forbidden(text) | Self::Undefined(text) => {
+                Notice::new("list-message", text.clone(), Intent::Muted)
+            }
+            Self::Failed(error) => Notice::new(
+                "list-error",
+                failed_message("list", error.as_ref()),
+                Intent::Danger,
+            ),
+            Self::NotServed(text) => Notice::new("list-error", text.clone(), Intent::Danger),
+        })
     }
 }
 

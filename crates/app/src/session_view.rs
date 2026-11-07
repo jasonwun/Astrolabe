@@ -16,13 +16,12 @@ use crate::logs::LogsPanel;
 use crate::resource_detail::{EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel};
 use crate::resource_list::{ListView, OpenDetail, ResourceListPanel};
 use crate::session::{ScriptedCluster, Session};
-use crate::workspace::{LaunchTab, STALE_MESSAGE};
+use crate::workspace::LaunchTab;
 use crate::yaml_editor::YamlEditorView;
 use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::list::CRD_DENIED;
+use astrolabe_model::notice::Notice;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId};
-
-pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource navigation may be stale";
 
 /// Key context around the session dock: `cmd-w` closes its active tab.
 pub const DOCK_KEY_CONTEXT: &str = "SessionDock";
@@ -441,24 +440,18 @@ impl Render for SessionView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = self.session.read(cx).state();
         let status = data.status();
-        let stale = status.show_stale_warning();
-        // Same banner, but say what failed: the watch may be healthy.
-        let message = if status.discovery_failed && status.health != ConnectionHealth::Stale {
-            DISCOVERY_STALE_MESSAGE
-        } else {
-            STALE_MESSAGE
-        };
+        let banner = status.banner();
         let border = cx.theme().border;
         v_flex()
             .size_full()
-            .when(stale, |this| {
+            .when_some(banner, |this, Notice { id, text, .. }| {
                 this.child(
                     div()
-                        .id("namespace-stale")
+                        .id(id)
                         .role(Role::Alert)
-                        .aria_label(message)
+                        .aria_label(text.clone())
                         .test_support()
-                        .child(Alert::warning("namespace-stale-alert", message).banner()),
+                        .child(Alert::warning("namespace-stale-alert", text).banner()),
                 )
             })
             .child(

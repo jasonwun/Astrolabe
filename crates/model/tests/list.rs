@@ -5,7 +5,9 @@ use astrolabe_kube::discovery::ServedResources;
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_model::builtin::BuiltinKind;
-use astrolabe_model::list::{CRD_DENIED, ListOutcome, Resolved, failed_message, resolve};
+use astrolabe_model::list::{CRD_DENIED, ListOutcome, Resolved, resolve};
+use astrolabe_model::notice::{Intent, Notice};
+use astrolabe_model::projection::ResourceTable;
 use astrolabe_model::session::{CustomKindId, StaleCause};
 use astrolabe_model::session_state::{Command, SessionState};
 use support::{object, served};
@@ -230,26 +232,6 @@ fn a_custom_list_before_its_first_snapshot_is_loading() {
     assert_eq!(
         resolved(&state).outcome,
         ListOutcome::Loading("Loading crontabs…".to_string())
-    );
-}
-
-#[test]
-fn failed_messages_name_the_kind_of_failure() {
-    assert_eq!(
-        failed_message(Some(&ClusterError::unreachable("refused"))),
-        "Cannot reach the cluster: refused"
-    );
-    assert_eq!(
-        failed_message(Some(&ClusterError::connect("no kubeconfig"))),
-        "Cannot connect to the cluster: no kubeconfig"
-    );
-    assert_eq!(
-        failed_message(Some(&ClusterError::new("boom"))),
-        "Cannot load the list: boom"
-    );
-    assert_eq!(
-        failed_message(None),
-        "The watch ended before the list loaded"
     );
 }
 
@@ -547,4 +529,62 @@ fn a_custom_list_denied_before_a_snapshot_is_forbidden() {
     state.object_message(&key, denied());
 
     assert_eq!(resolved(&state).stale, None);
+}
+
+#[test]
+fn a_list_without_rows_says_why() {
+    let message = |text: &str| Some(Notice::new("list-message", text, Intent::Muted));
+    assert_eq!(
+        ListOutcome::Loading("Loading pods…".to_string()).notice(),
+        message("Loading pods…")
+    );
+    assert_eq!(
+        ListOutcome::Forbidden("No permission".to_string()).notice(),
+        message("No permission")
+    );
+    assert_eq!(
+        ListOutcome::Undefined("Foo is no longer defined".to_string()).notice(),
+        message("Foo is no longer defined")
+    );
+    assert_eq!(
+        ListOutcome::NotServed("Foo v1 is not served".to_string()).notice(),
+        Some(Notice::new(
+            "list-error",
+            "Foo v1 is not served",
+            Intent::Danger
+        ))
+    );
+    assert_eq!(
+        ListOutcome::Failed(Some(ClusterError::unreachable("refused"))).notice(),
+        Some(Notice::new(
+            "list-error",
+            "Cannot reach the cluster: refused",
+            Intent::Danger
+        ))
+    );
+    assert_eq!(
+        ListOutcome::Failed(None).notice().unwrap().text,
+        "The watch ended before the list loaded"
+    );
+    assert_eq!(ListOutcome::Rows(ResourceTable::default()).notice(), None);
+}
+
+#[test]
+fn a_stale_cause_has_its_own_banner() {
+    assert_eq!(
+        StaleCause::ConnectionLost.notice(),
+        Notice::new(
+            "list-stale",
+            "connection lost, data may be stale",
+            Intent::Warning
+        )
+    );
+    assert_eq!(
+        StaleCause::Denied.notice(),
+        Notice::new(
+            "list-denied",
+            "No permission to refresh this list, data may be stale",
+            Intent::Warning
+        )
+    );
 }

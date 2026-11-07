@@ -22,9 +22,14 @@ use crate::builtin::BuiltinKind;
 use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
 use crate::detail::{self, DetailTarget};
 use crate::discovery_cache::DiscoveryCache;
+use crate::notice::{Intent, Notice};
 use crate::session::{
-    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey, Watched,
+    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, STALE_MESSAGE, SnapshotChange,
+    WatchKey, Watched,
 };
+
+/// The banner text of a failed Discovery refresh.
+pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource navigation may be stale";
 
 /// What a Session shows about its connection, read in one place by the
 /// views.
@@ -46,6 +51,20 @@ impl SessionStatus {
     /// the latest Discovery refresh failed.
     pub fn show_stale_warning(self) -> bool {
         self.namespaces_stale || self.discovery_failed
+    }
+
+    /// The session banner, if one shows. A failed Discovery over a healthy
+    /// connection says so; otherwise the connection is what was lost.
+    pub fn banner(self) -> Option<Notice> {
+        if !self.show_stale_warning() {
+            return None;
+        }
+        let text = if self.discovery_failed && self.health != ConnectionHealth::Stale {
+            DISCOVERY_STALE_MESSAGE
+        } else {
+            STALE_MESSAGE
+        };
+        Some(Notice::new("namespace-stale", text, Intent::Warning))
     }
 }
 

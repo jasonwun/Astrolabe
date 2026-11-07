@@ -10,9 +10,10 @@ use astrolabe_kube::pod::{ForwardRequest, ForwardTarget};
 use astrolabe_model::builtin::{Action, BuiltinKind};
 use astrolabe_model::detail::{DetailTarget, resolve, watches};
 use astrolabe_model::detail_actions::{
-    DetailActions, Effect, ForwardTone, Picking, PodAction, Subject, containers, forward_row,
-    forward_target, picker_empty,
+    DetailActions, Effect, Picking, PodAction, Subject, containers, forward_row, forward_target,
+    picker_empty,
 };
+use astrolabe_model::notice::Intent;
 use astrolabe_model::projection::Containers;
 use astrolabe_model::session::ForwardState;
 use astrolabe_model::session_state::SessionState;
@@ -299,17 +300,17 @@ fn a_finished_operation_shows_its_done_or_failed_notice() {
 fn a_forward_row_reads_by_state() {
     assert_eq!(
         forward_row(&ForwardState::Starting, 80),
-        ("Starting → 80…".to_string(), ForwardTone::Muted)
+        ("Starting → 80…".to_string(), Intent::Muted)
     );
     assert_eq!(
         forward_row(&ForwardState::Listening(5000), 80),
-        ("localhost:5000 → 80".to_string(), ForwardTone::Normal)
+        ("localhost:5000 → 80".to_string(), Intent::Neutral)
     );
     let failed = forward_row(
         &ForwardState::Failed(ClusterError::unreachable("refused")),
         80,
     );
-    assert_eq!(failed.1, ForwardTone::Danger);
+    assert_eq!(failed.1, Intent::Danger);
     assert!(failed.0.starts_with("Forward to 80 failed: "), "{failed:?}");
 }
 

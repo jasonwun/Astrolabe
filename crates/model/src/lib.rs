@@ -9,6 +9,7 @@ pub mod discovery_cache;
 pub mod edit_loop;
 pub mod jsonpath;
 pub mod list;
+pub mod notice;
 pub mod operation_text;
 pub mod projection;
 pub mod session;

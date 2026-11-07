@@ -5,18 +5,13 @@ use futures::channel::mpsc;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
+use crate::notice_view::intent_color;
 use crate::perf;
 use crate::session::{DEFAULT_NAMESPACE, ScriptedCluster};
 use crate::session_view::SessionView;
 use crate::yaml_editor::YamlEditorView;
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::watch::NamespaceWatchMessage;
-use astrolabe_model::session::ConnectionHealth;
-
-pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
-/// The banner of a list whose watch is denied after it had a Snapshot: the
-/// connection is fine, the permission is gone (#282).
-pub const DENIED_STALE_MESSAGE: &str = "No permission to refresh this list, data may be stale";
 
 /// What the launch opens instead of the first cluster in `default`; empty
 /// leaves the launch as it is. Debug builds fill it from
@@ -270,11 +265,14 @@ impl WorkspaceView {
                 .get(&cluster)
                 .map(|session| session.read(cx).health(cx));
             let (health_label, health_color, tooltip) = match health {
-                Some(ConnectionHealth::Healthy) => ("Healthy", theme.success, "Connected"),
-                Some(ConnectionHealth::Connecting) => {
-                    ("Connecting", theme.warning, "Connecting to cluster")
+                Some(health) => {
+                    let indicator = health.indicator();
+                    (
+                        indicator.label,
+                        intent_color(indicator.intent, theme),
+                        indicator.tooltip,
+                    )
                 }
-                Some(ConnectionHealth::Stale) => ("Stale", theme.danger, STALE_MESSAGE),
                 None => ("Not open", theme.muted_foreground, "Select to open session"),
             };
             let selected = self.selected_cluster.as_ref() == Some(&cluster) && !self.show_yaml;

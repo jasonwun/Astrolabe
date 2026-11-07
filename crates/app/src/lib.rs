@@ -8,6 +8,7 @@ mod cluster_io;
 pub mod exec;
 pub mod keymap;
 pub mod logs;
+mod notice_view;
 pub mod perf;
 mod resource_detail;
 mod resource_list;
