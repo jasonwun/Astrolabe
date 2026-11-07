@@ -128,6 +128,7 @@ impl ResourceDetailPanel {
     fn edit(&mut self, cx: &mut Context<Self>) {
         if let Some(resolved) = self.resolve(cx) {
             cx.emit(OpenTab(TabRequest::Editor {
+                target: self.target.clone(),
                 title: resolved.model.title,
                 yaml: resolved.model.edit_yaml.unwrap_or(resolved.model.yaml),
             }));

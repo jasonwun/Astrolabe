@@ -27,6 +27,25 @@ use astrolabe_model::tab::{TabKey, TabRequest};
 /// A panel asks for a tab.
 pub struct OpenTab(pub TabRequest);
 
+/// A tab a request may reuse. Only a Logs or Exec tab is restarted, so
+/// only those keep their panel.
+#[derive(Clone)]
+enum OpenedTab {
+    Logs(Entity<LogsPanel>),
+    Exec(Entity<ExecPanel>),
+    Other(PanelId),
+}
+
+impl OpenedTab {
+    fn id(&self) -> PanelId {
+        match self {
+            Self::Logs(panel) => PanelId::from(panel.entity_id()),
+            Self::Exec(panel) => PanelId::from(panel.entity_id()),
+            Self::Other(id) => *id,
+        }
+    }
+}
+
 /// Key context around the session dock: `cmd-w` closes its active tab.
 pub const DOCK_KEY_CONTEXT: &str = "SessionDock";
 
@@ -38,7 +57,7 @@ pub struct SessionView {
     list: Entity<ResourceListPanel>,
     /// The open tabs a request may reuse; a closed tab's entry stays until
     /// replaced.
-    tabs: HashMap<TabKey, Entity<ResourceDetailPanel>>,
+    tabs: HashMap<TabKey, OpenedTab>,
     collapsed: BTreeSet<String>,
     namespace_menu: bool,
 }
@@ -139,53 +158,85 @@ impl SessionView {
     }
 
     /// Open the tab a panel asked for: show the open tab with the request's
-    /// key (`TabRequest::key`), else build the panel.
+    /// key (`TabRequest::key`), else build the panel. Reopening a Logs or
+    /// Exec tab whose stream has finished starts a new one in that tab.
     ///
     /// Who starts I/O: a Logs or Exec stream lives as long as its tab, so
-    /// this starts it when it makes the tab. The detail panel's Scale,
-    /// Delete and Forward are one-shot, so the panel calls `Session` itself.
+    /// this starts it when it makes or restarts the tab. The detail panel's
+    /// Scale, Delete and Forward are one-shot, so the panel calls `Session`
+    /// itself.
     fn open_tab(&mut self, request: TabRequest, window: &mut Window, cx: &mut Context<Self>) {
         let key = request.key();
         if let Some(key) = &key
-            && let Some(panel) = self.reusable(key, cx)
+            && let Some(opened) = self.reusable(key, cx)
         {
-            self.select(panel, window, cx);
+            // Only a finished Logs or Exec tab is restarted; any other
+            // reused tab is just selected. Keys are disjoint per kind, so
+            // the request is of the tab's kind.
+            match &opened {
+                OpenedTab::Logs(panel) => {
+                    if let TabRequest::Logs { request, .. } = request
+                        && panel.read(cx).is_finished()
+                    {
+                        let stream = self.session.update(cx, |session, _| session.logs(request));
+                        panel.update(cx, |panel, cx| panel.restart(stream, window, cx));
+                    }
+                }
+                OpenedTab::Exec(panel) => {
+                    if let TabRequest::Exec { request, .. } = request
+                        && panel.read(cx).is_finished()
+                    {
+                        let session = self.session.update(cx, |session, _| session.exec(request));
+                        panel.update(cx, |panel, cx| panel.restart(session, window, cx));
+                    }
+                }
+                OpenedTab::Other(_) => {}
+            }
+            self.select(opened.id(), window, cx);
             return;
         }
-        match request {
+        let opened = match request {
             TabRequest::Detail(target) => {
                 let session = self.session.clone();
                 let panel = cx.new(|cx| ResourceDetailPanel::new(session, target, window, cx));
                 Self::forward_open_tab(&panel, window, cx);
-                self.add_tab(panel_handle(panel.clone()), window, cx);
-                if let Some(key) = key {
-                    self.tabs.insert(key, panel);
-                }
+                let id = self.add_tab(panel_handle(panel), window, cx);
+                OpenedTab::Other(id)
             }
             TabRequest::Logs { title, request } => {
                 let stream = self.session.update(cx, |session, _| session.logs(request));
                 let panel = cx.new(|cx| LogsPanel::new(title, stream, window, cx));
-                self.add_tab(panel_handle(panel), window, cx);
+                self.add_tab(panel_handle(panel.clone()), window, cx);
+                OpenedTab::Logs(panel)
             }
             TabRequest::Exec { title, request } => {
                 let session = self.session.update(cx, |session, _| session.exec(request));
                 let panel = cx.new(|cx| ExecPanel::new(title, session, window, cx));
-                self.add_tab(panel_handle(panel), window, cx);
+                self.add_tab(panel_handle(panel.clone()), window, cx);
+                OpenedTab::Exec(panel)
             }
-            TabRequest::Editor { title, yaml } => {
+            TabRequest::Editor { title, yaml, .. } => {
                 let session = self.session.clone();
                 let editor = cx.new(|cx| YamlEditorView::with_session(window, cx, yaml, session));
                 let panel = cx.new(|_| EditorPanel::new(title, editor));
-                self.add_tab(panel_handle(panel), window, cx);
+                let id = self.add_tab(panel_handle(panel), window, cx);
+                OpenedTab::Other(id)
             }
+        };
+        if let Some(key) = key {
+            self.tabs.insert(key, opened);
         }
     }
 
     /// The open tab for `key`, checked against the dock: a closed tab's
     /// entry stays in the map.
-    fn reusable(&self, key: &TabKey, cx: &App) -> Option<PanelId> {
-        let id = PanelId::from(self.tabs.get(key)?.entity_id());
-        self.dock.read(cx).panel(id).is_some().then_some(id)
+    fn reusable(&self, key: &TabKey, cx: &App) -> Option<OpenedTab> {
+        let opened = self.tabs.get(key)?;
+        self.dock
+            .read(cx)
+            .panel(opened.id())
+            .is_some()
+            .then(|| opened.clone())
     }
 
     /// Open the tabs a panel asks for.
@@ -205,13 +256,14 @@ impl SessionView {
         panel: std::sync::Arc<dyn gpui_kit::component::dock::BasePanelView>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> PanelId {
         let id = panel.panel_id(cx);
         self.dock.update(cx, |dock, cx| {
             dock.add_panel_view(panel, DockPlacement::Center, None, window, cx)
         });
         self.select(id, window, cx);
         cx.notify();
+        id
     }
 
     fn render_namespace_select(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
