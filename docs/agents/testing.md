@@ -76,6 +76,10 @@ Origin: #224's first draft caught the full paths but let
 `use kube::{config::Kubeconfig}` through; the Spec reviewer found it and
 the rules were tightened before merge (#224 retro).
 
+CI's `mutants` job takes about 15 minutes on a diff of 57 mutants, where
+`dev/pre-push.sh` took 4: a PR on a new model module waits that long for
+auto-merge after the other four jobs pass in 3 (#299).
+
 A CI failure in a test the diff cannot reach: rerun the failed job once,
 and when it passes file a `needs-triage` issue with both run links instead
 of merging silently. #225's `build-test` failed twice on
