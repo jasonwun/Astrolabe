@@ -331,8 +331,7 @@ fn pod_state() -> (DetailTarget, SessionState) {
 
 /// `web-0` with its `status.phase: Running` and the given container
 /// statuses, as the apiserver would report them.
-fn pod_state_with(statuses: serde_json::Value) -> (DetailTarget, SessionState) {
-    let mut status = statuses;
+fn pod_state_with(mut status: serde_json::Value) -> (DetailTarget, SessionState) {
     status["phase"] = "Running".into();
     let target = DetailTarget::Builtin {
         kind: BuiltinKind::Pods,

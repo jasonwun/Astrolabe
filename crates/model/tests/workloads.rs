@@ -663,6 +663,7 @@ fn statuses_match_by_name_and_sidecars_read_only_the_init_statuses() {
         }),
     );
     assert!(running_containers(&swapped).is_empty());
+    assert!(pod_ports(&swapped).is_empty());
     // A status under another name does not count either.
     let renamed = typed_pod(
         spec.clone(),
@@ -705,7 +706,8 @@ fn a_pod_detail_offers_its_containers_and_ports_to_the_actions() {
         Some(Forward {
             to: ForwardTo::Pod,
             ports: Vec::new(),
-            empty: "No declared ports",
+            // `app` declares port 80 but is not running.
+            empty: "No running container with a declared port",
         })
     );
     assert_eq!(model.suspended, None);
