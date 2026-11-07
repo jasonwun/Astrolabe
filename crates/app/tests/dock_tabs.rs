@@ -9,7 +9,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Pixels, TestAppContext};
-use support::{Ui, key, mouse_click, object, open, open_detail};
+use support::{Ui, key, mouse_click, object, open, open_detail, reopen_detail};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
@@ -192,14 +192,6 @@ fn opening_the_same_detail_twice_shows_one_tab(cx: &mut TestAppContext) {
     assert!(bounds(&mut ui, CHILD_TAB).is_none(), "no second detail tab");
 }
 
-/// Back to the open `web-1` detail tab, via the Pods list.
-fn reopen_pod_detail(ui: &mut Ui<'_>) {
-    ui.frame(|window, cx| window.click("nav-pods", cx));
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-default/web-1", cx));
-    ui.settle();
-}
-
 #[gpui_kit::test]
 fn opening_logs_for_the_same_container_twice_shows_one_tab_with_a_new_stream(
     cx: &mut TestAppContext,
@@ -209,7 +201,7 @@ fn opening_logs_for_the_same_container_twice_shows_one_tab_with_a_new_stream(
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
-    reopen_pod_detail(&mut ui);
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
 
@@ -236,7 +228,7 @@ fn opening_exec_again_after_the_shell_exited_starts_a_new_shell_in_the_same_tab(
     ui.frame(|window, cx| window.click("detail-exec", cx));
     ui.frame(|window, cx| window.click("pick-shell-sh", cx));
     ui.settle();
-    reopen_pod_detail(&mut ui);
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
     ui.frame(|window, cx| window.click("detail-exec", cx));
     ui.frame(|window, cx| window.click("pick-shell-bash", cx));
     ui.settle();
@@ -268,7 +260,7 @@ fn opening_edit_yaml_twice_shows_one_editor_that_keeps_its_state(cx: &mut TestAp
     let status = ui.label("yaml-status");
     assert_eq!(status, "apply failed: 1 problem(s)");
 
-    reopen_pod_detail(&mut ui);
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
     ui.frame(|window, cx| window.click("detail-edit", cx));
     ui.settle();
 
@@ -296,7 +288,7 @@ fn opening_logs_for_two_containers_shows_two_tabs(cx: &mut TestAppContext) {
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.frame(|window, cx| window.click("pick-container-app", cx));
     ui.settle();
-    reopen_pod_detail(&mut ui);
+    reopen_detail(&mut ui, BuiltinKind::Pods, "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.frame(|window, cx| window.click("pick-container-sidecar", cx));
     ui.settle();

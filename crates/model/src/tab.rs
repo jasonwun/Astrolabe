@@ -29,17 +29,18 @@ pub enum TabRequest {
 pub enum TabKey {
     Detail(DetailTarget),
     /// Logs of one container; one tab per container.
-    Logs {
-        pod: ObjectKey,
-        container: String,
-    },
+    Logs(ContainerRef),
     /// A shell in one container; the shell is not part of the key.
-    Exec {
-        pod: ObjectKey,
-        container: String,
-    },
+    Exec(ContainerRef),
     /// The editor on one object.
     Editor(DetailTarget),
+}
+
+/// One container of one Pod.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ContainerRef {
+    pub pod: ObjectKey,
+    pub container: String,
 }
 
 impl TabRequest {
@@ -49,14 +50,14 @@ impl TabRequest {
     pub fn key(&self) -> Option<TabKey> {
         Some(match self {
             Self::Detail(target) => TabKey::Detail(target.clone()),
-            Self::Logs { request, .. } => TabKey::Logs {
+            Self::Logs { request, .. } => TabKey::Logs(ContainerRef {
                 pod: request.pod.clone(),
                 container: request.container.clone(),
-            },
-            Self::Exec { request, .. } => TabKey::Exec {
+            }),
+            Self::Exec { request, .. } => TabKey::Exec(ContainerRef {
                 pod: request.pod.clone(),
                 container: request.container.clone(),
-            },
+            }),
             Self::Editor { target, .. } => TabKey::Editor(target.clone()),
         })
     }
