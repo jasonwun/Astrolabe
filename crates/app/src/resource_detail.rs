@@ -6,10 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use astrolabe_kube::object::{ObjectKey, ObjectRef, Operation};
+use astrolabe_kube::object::ObjectKey;
 use astrolabe_kube::pod::{ExecRequest, LogRequest};
 use astrolabe_model::builtin::Action;
-use astrolabe_model::operation_text;
+use astrolabe_model::detail_actions::{DetailActions, Effect, Subject, forward_target};
 use astrolabe_model::projection::config::{HIDDEN, SecretKey};
 use astrolabe_model::projection::{
     DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
@@ -37,7 +37,6 @@ mod pod_actions;
 mod workload_actions;
 
 pub use editor_panel::EditorPanel;
-use pod_actions::{Picking, PodAction, forward_target};
 
 /// Logs was pressed: open a Logs tab following this container.
 pub struct OpenLogs {
@@ -60,16 +59,14 @@ pub struct OpenEditor {
 pub struct ResourceDetailPanel {
     session: Entity<Session>,
     target: DetailTarget,
-    confirm_delete: bool,
-    /// The Scale field, while open.
+    /// The action flow: delete confirmation, picker, Scale form and
+    /// notice.
+    actions: DetailActions,
+    /// The Scale field, while the form is open.
     scale: Option<Entity<InputState>>,
-    /// The picker, while a Pod action waits for a container, a shell or a
-    /// port.
-    picking: Option<Picking>,
     /// The Secret keys whose values are shown; every other value stays
     /// masked.
     revealed: BTreeSet<String>,
-    notice: Option<String>,
     /// The Related section's table; empty when the target's kind has none.
     related_table: Entity<TableState<RowsTable>>,
     /// Re-renders when the youngest shown age next changes (#70); replaced
@@ -105,11 +102,9 @@ impl ResourceDetailPanel {
         Self {
             session,
             target,
-            confirm_delete: false,
+            actions: DetailActions::default(),
             scale: None,
-            picking: None,
             revealed: BTreeSet::new(),
-            notice: None,
             related_table,
             tick: Task::ready(()),
             focus_handle: cx.focus_handle(),
@@ -156,8 +151,22 @@ impl ResourceDetailPanel {
     }
 
     fn delete(&mut self, cx: &mut Context<Self>) {
-        self.confirm_delete = false;
-        self.run(|object| Operation::Delete { object }, cx);
+        let effect = self.actions.confirm_delete(&self.subject(cx));
+        self.carry_out(effect, cx);
+    }
+
+    /// What the shown object offers the action flow.
+    fn subject(&self, cx: &App) -> Subject {
+        let resolved = self.resolve(cx);
+        Subject::of(&self.target, self.state(cx), resolved.as_ref())
+    }
+
+    fn press(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        let effect = self.actions.press(action, &self.subject(cx));
+        if action == Action::Scale {
+            self.open_scale(window, cx);
+        }
+        self.carry_out(effect, cx);
     }
 
     /// A Secret's keys, each value masked until revealed.
@@ -215,48 +224,35 @@ impl ResourceDetailPanel {
         )
     }
 
-    fn show_notice(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
-        self.notice = Some(notice.into());
-        cx.notify();
-    }
-
-    /// Send the operation `operation` builds for the shown object, showing
-    /// its pending text until the server answers, then its done text or
-    /// failure. Sends nothing, and returns false, once the object is gone.
-    fn run(
-        &mut self,
-        operation: impl FnOnce(ObjectRef) -> Operation,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(object) = self.target.object(self.state(cx)) else {
-            return false;
-        };
-        let operation = operation(object);
-        let (pending, done, verb) = (
-            operation_text::pending(&operation),
-            operation_text::done(&operation),
-            operation_text::verb(&operation),
-        );
-        let result = self
-            .session
-            .update(cx, |session, _| session.operate(operation));
-        self.show_notice(pending, cx);
-        cx.spawn(async move |panel, cx| {
-            let result = result.await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_notice(
-                        match result {
-                            Ok(()) => done,
-                            Err(error) => format!("{verb} failed: {error}"),
-                        },
-                        cx,
-                    )
+    /// Carry out what the action flow asked for.
+    fn carry_out(&mut self, effect: Effect, cx: &mut Context<Self>) {
+        match effect {
+            Effect::None => {}
+            Effect::OpenLogs { title, request } => cx.emit(OpenLogs { title, request }),
+            Effect::OpenExec { title, request } => cx.emit(OpenExec { title, request }),
+            Effect::Forward(request) => self
+                .session
+                .update(cx, |session, cx| session.forward_port(request, cx)),
+            Effect::Run(operation) => {
+                let result = self
+                    .session
+                    .update(cx, |session, _| session.operate(operation.clone()));
+                cx.spawn(async move |panel, cx| {
+                    let result = result.await;
+                    panel
+                        .update(cx, |panel, cx| {
+                            panel.actions.finished(&operation, result);
+                            cx.notify();
+                        })
+                        .ok();
                 })
-                .ok();
-        })
-        .detach();
-        true
+                .detach();
+            }
+        }
+        if !self.actions.scale_open() {
+            self.scale = None;
+        }
+        cx.notify();
     }
 
     fn render_toolbar(
@@ -267,7 +263,6 @@ impl ResourceDetailPanel {
     ) -> impl IntoElement {
         let theme = cx.theme();
         let border = theme.border;
-        let suspended = model.is_suspended();
         h_flex()
             .gap_2()
             .p_2()
@@ -275,52 +270,32 @@ impl ResourceDetailPanel {
             .border_color(theme.border)
             .children(actions.iter().map(|&action| {
                 let button = |id: &'static str| button(id, action.label(model), border);
-                match action {
-                    Action::Logs => button("detail-logs").on_click(
-                        cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Logs, cx)),
-                    ),
-                    Action::Exec => button("detail-exec").on_click(
-                        cx.listener(|panel, _, _, cx| panel.pick_container(PodAction::Exec, cx)),
-                    ),
-                    Action::PortForward => button("detail-forward").on_click(
-                        cx.listener(|panel, _, _, cx| panel.ask(PodAction::Forward, None, cx)),
-                    ),
-                    Action::Scale => button("detail-scale")
-                        .on_click(cx.listener(|panel, _, window, cx| panel.open_scale(window, cx))),
-                    Action::RolloutRestart => {
-                        button("detail-restart").on_click(cx.listener(|panel, _, _, cx| {
-                            panel.run(|object| Operation::RolloutRestart { object }, cx);
-                        }))
+                let id = match action {
+                    Action::Logs => "detail-logs",
+                    Action::Exec => "detail-exec",
+                    Action::PortForward => "detail-forward",
+                    Action::Scale => "detail-scale",
+                    Action::RolloutRestart => "detail-restart",
+                    Action::Suspend => "detail-suspend",
+                    Action::Trigger => "detail-trigger",
+                    Action::Edit => "detail-edit",
+                    Action::Delete => "detail-delete",
+                };
+                let button = button(id);
+                let button = if action == Action::Delete {
+                    button.text_color(theme.danger)
+                } else {
+                    button
+                };
+                button.on_click(cx.listener(move |panel, _, window, cx| {
+                    if action == Action::Edit {
+                        panel.edit(cx);
+                    } else {
+                        panel.press(action, window, cx);
                     }
-                    Action::Suspend => {
-                        button("detail-suspend").on_click(cx.listener(move |panel, _, _, cx| {
-                            panel.run(
-                                |object| Operation::SetSuspend {
-                                    object,
-                                    suspend: !suspended,
-                                },
-                                cx,
-                            );
-                        }))
-                    }
-                    Action::Trigger => {
-                        button("detail-trigger").on_click(cx.listener(|panel, _, _, cx| {
-                            panel.run(|object| Operation::TriggerCronJob { object }, cx);
-                        }))
-                    }
-                    Action::Edit => button("detail-edit")
-                        .on_click(cx.listener(|panel, _, _, cx| panel.edit(cx))),
-                    Action::Delete => {
-                        button("detail-delete")
-                            .text_color(theme.danger)
-                            .on_click(cx.listener(|panel, _, _, cx| {
-                                panel.confirm_delete = true;
-                                cx.notify();
-                            }))
-                    }
-                }
+                }))
             }))
-            .when_some(self.notice.clone(), |bar, notice| {
+            .when_some(self.actions.notice().map(str::to_string), |bar, notice| {
                 bar.child(
                     div()
                         .id("detail-notice")
@@ -443,7 +418,7 @@ impl ResourceDetailPanel {
                     )
                     .child(action("delete-confirm-no", "Cancel").on_click(cx.listener(
                         |panel, _, _, cx| {
-                            panel.confirm_delete = false;
+                            panel.actions.cancel_delete();
                             cx.notify();
                         },
                     ))),
@@ -809,13 +784,13 @@ impl Render for ResourceDetailPanel {
             .test_support()
             .size_full()
             .child(self.render_toolbar(resolved.actions, &model, cx))
-            .when_some(self.picking.clone(), |this, picking| {
+            .when_some(self.actions.picking().cloned(), |this, picking| {
                 this.child(self.render_picker(picking, &model, cx))
             })
             .when_some(self.scale.clone(), |this, input| {
                 this.child(self.render_scale(&input, replicas, cx))
             })
-            .when(self.confirm_delete, |this| {
+            .when(self.actions.delete_confirmation_open(), |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })
             .children(forwards.and_then(|target| self.render_forwards(target, cx)))

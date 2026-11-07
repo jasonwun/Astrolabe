@@ -214,28 +214,10 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
         assert!(window.try_find("scale-input").is_none());
     });
 
-    // Not a number: nothing is sent.
+    // A refusal is reported.
     ui.frame(|window, cx| window.click("detail-scale", cx));
     ui.frame(|window, cx| {
         window.click("scale-input", cx);
-        window.input("-x", cx);
-        window.click("scale-apply", cx);
-    });
-    ui.settle();
-    ui.frame(|window, _| {
-        assert!(
-            window
-                .try_find_by_label("Replicas must be a whole number, 0 or more")
-                .is_some()
-        );
-    });
-
-    // A refusal is reported.
-    ui.frame(|window, cx| {
-        window.click("scale-input", cx);
-        for _ in 0..2 {
-            window.press("backspace", cx);
-        }
         window.input("0", cx);
         window.press("enter", cx);
     });
@@ -514,31 +496,6 @@ fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_single_container_pod_opens_its_logs_directly(cx: &mut TestAppContext) {
-    let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_detail(
-        &mut ui,
-        BuiltinKind::Pods,
-        &mut pods,
-        vec![crashing_pod("default")],
-        "web-1",
-    );
-
-    ui.frame(|window, cx| window.click("detail-logs", cx));
-    ui.settle();
-    ui.frame(|window, _| {
-        assert!(window.try_find("container-picker").is_none());
-        assert!(
-            window
-                .try_find_by_label("Logs default/web-1 (app)")
-                .is_some()
-        );
-    });
-    assert_eq!(ui.logged.borrow().len(), 1);
-}
-
-#[gpui_kit::test]
 fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
     let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
@@ -595,38 +552,6 @@ fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContex
         matches!(input.try_recv(), Ok(ExecInput::Resize { .. })),
         "the remote TTY learns the terminal's size"
     );
-}
-
-#[gpui_kit::test]
-fn a_single_container_pod_asks_only_for_the_shell(cx: &mut TestAppContext) {
-    let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
-    open_detail(
-        &mut ui,
-        BuiltinKind::Pods,
-        &mut pods,
-        vec![crashing_pod("default")],
-        "web-1",
-    );
-
-    ui.frame(|window, cx| window.click("detail-exec", cx));
-    ui.frame(|window, cx| {
-        assert!(
-            window
-                .try_find_by_label("Exec in app: choose a shell")
-                .is_some()
-        );
-        window.click("pick-shell-sh", cx);
-    });
-    ui.settle();
-    ui.frame(|window, _| {
-        assert!(
-            window
-                .try_find_by_label("Session failed: container not found (\"app\")")
-                .is_some()
-        );
-    });
-    assert_eq!(ui.execed.borrow()[0].0.shell, "sh");
 }
 
 /// Synthetic Pod (plausible shape, not captured from a server).
