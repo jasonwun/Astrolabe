@@ -278,7 +278,8 @@ retro).
 ## View-test steps the support module already has
 
 A view test opens a built-in kind's list with `support::open_list`, its
-detail with `support::open_detail`, and builds a `DynamicObject` with
+detail with `support::open_detail`, goes back to an open detail with
+`support::reopen_detail`, and builds a `DynamicObject` with
 `support::object`, and clicks a dock tab or its close button with
 `support::mouse_click`; one over several Clusters opens the Workspace
 with `support::open_workspace` and reads a label with `support::label`;

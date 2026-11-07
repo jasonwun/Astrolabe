@@ -113,6 +113,15 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   A Secret's `data` values must be base64: the list drops a row it cannot
   decode, and the test then fails on a missing `row-…` id, not on the
   fixture (#106).
+- Back to an already open detail tab: `support::reopen_detail(ui,
+  BuiltinKind, name)` clicks the kind's nav item and the row, and the row
+  click selects the open tab. A local copy of those clicks in a test file
+  is a `CODING_STANDARDS.md` finding (#306).
+- `ScriptedCluster`'s `logs` and `exec` closures return a fixed list, and
+  the stream or session ends as soon as it is sent: every Logs or Exec tab
+  in a UI test is already finished (`Stream failed`, `Exited`). A branch
+  for a still-live stream, such as "reopening does not restart it", cannot
+  be tested until a scripted stream can stay open (#332, #306 retro).
 - An element's accessible label, as the frame draws it:
   `ui.label(id)` (`crates/app/tests/support`); it panics when `id` is
   not rendered (#160). A test that builds its window without
