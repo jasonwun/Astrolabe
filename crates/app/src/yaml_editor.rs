@@ -517,12 +517,13 @@ impl YamlEditorView {
                             .placeholder("YAML editor command…")
                             .group(group)
                             .on_confirm(move |index, window, cx| {
-                                // `update`, not `update_in`: a deferred callback has no
-                                // current window, so `update_in` fails there (#317).
+                                // `update`, not `update_in`: a deferred
+                                // callback has no current window, so
+                                // `update_in` fails there (#317).
                                 view.update(cx, |this, cx| {
                                     this.on_palette_confirm(&index, window, cx);
                                 })
-                                // Err only when the editor is already gone: nothing to confirm.
+                                // Err only when the editor is gone.
                                 .ok();
                             })
                             .on_cancel(move |window, cx| {
