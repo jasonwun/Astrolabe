@@ -7,6 +7,7 @@ pub mod clock;
 mod cluster_io;
 pub mod exec;
 pub mod keymap;
+pub mod launch;
 pub mod logs;
 mod notice_view;
 pub mod perf;

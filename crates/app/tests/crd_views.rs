@@ -2,8 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
+use astrolabe::launch::Preselection;
 use astrolabe::session::ScriptedCluster;
-use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::discovery::{ServedResource, ServedResources};
 use astrolabe_kube::k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;

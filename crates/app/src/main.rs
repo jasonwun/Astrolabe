@@ -1,8 +1,9 @@
 //! Astrolabe desktop application: GPUI entry point.
 
 #[cfg(debug_assertions)]
-use astrolabe::workspace::LaunchTab;
-use astrolabe::workspace::{Preselection, WorkspaceView};
+use astrolabe::launch::LaunchTab;
+use astrolabe::launch::Preselection;
+use astrolabe::workspace::WorkspaceView;
 use astrolabe::{keymap, perf, yaml_editor};
 use gpui_kit::*;
 

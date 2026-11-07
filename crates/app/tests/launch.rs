@@ -1,8 +1,9 @@
 //! Launch preselection (#111): the workspace opens a chosen cluster in a
 //! chosen namespace at launch; sessions opened later start in `default`.
 
+use astrolabe::launch::{LaunchTab, Preselection};
 use astrolabe::session::ScriptedCluster;
-use astrolabe::workspace::{LaunchTab, Preselection, WorkspaceView};
+use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::watch::{NamespaceWatchMessage, ObjectWatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
