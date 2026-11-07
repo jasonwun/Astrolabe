@@ -708,3 +708,21 @@ fn an_event_row_whose_object_is_of_an_unregistered_kind_is_a_reference_error() {
         }))
     );
 }
+
+#[test]
+fn only_a_reference_error_has_a_source() {
+    use std::error::Error as _;
+    let reference = ReferenceError::MissingName {
+        kind: "Pod".to_string(),
+    };
+    let wrapped = OpenRowError::from(reference.clone());
+    assert_eq!(
+        wrapped.source().map(ToString::to_string),
+        Some(reference.to_string())
+    );
+    let unavailable = OpenRowError::ObjectUnavailable {
+        kind: "Event".to_string(),
+        key: row(Some("default"), "e1"),
+    };
+    assert!(unavailable.source().is_none());
+}
