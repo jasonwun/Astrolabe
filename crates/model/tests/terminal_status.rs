@@ -33,3 +33,13 @@ fn exec_states_say_how_the_session_stands() {
         Notice::new("exec-status", "Session failed: boom", Intent::Danger)
     );
 }
+
+#[test]
+fn only_a_live_stream_or_shell_is_unfinished() {
+    assert!(!LogState::Streaming.is_finished());
+    assert!(LogState::Ended.is_finished());
+    assert!(LogState::Failed(ClusterError::new("boom")).is_finished());
+    assert!(!ExecState::Running.is_finished());
+    assert!(ExecState::Exited(0).is_finished());
+    assert!(ExecState::Failed(ClusterError::new("boom")).is_finished());
+}

@@ -37,10 +37,38 @@ pub struct LogsPanel {
 impl LogsPanel {
     pub fn new(
         title: String,
-        mut stream: LogStream,
+        stream: LogStream,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (terminal, task) = Self::follow(stream, window, cx);
+        Self {
+            title,
+            terminal,
+            state: LogState::Streaming,
+            _stream: task,
+        }
+    }
+
+    /// The stream has ended or failed.
+    pub fn is_finished(&self) -> bool {
+        self.state.is_finished()
+    }
+
+    /// Follow `stream` in this tab, on a fresh terminal.
+    pub fn restart(&mut self, stream: LogStream, window: &mut Window, cx: &mut Context<Self>) {
+        let (terminal, task) = Self::follow(stream, window, cx);
+        self.terminal = terminal;
+        self._stream = task;
+        self.state = LogState::Streaming;
+        cx.notify();
+    }
+
+    fn follow(
+        mut stream: LogStream,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<TerminalView>, Task<()>) {
         let (backend, events) = display_only(COLS, ROWS, SCROLLBACK);
         let backend: Arc<dyn TerminalBackend> = Arc::new(backend);
         let terminal = {
@@ -62,12 +90,7 @@ impl LogsPanel {
                 })
                 .ok();
         });
-        Self {
-            title,
-            terminal,
-            state: LogState::Streaming,
-            _stream: task,
-        }
+        (terminal, task)
     }
 }
 

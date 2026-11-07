@@ -17,6 +17,11 @@ pub enum LogState {
 }
 
 impl LogState {
+    /// The stream has ended or failed: reopening starts a new one.
+    pub fn is_finished(&self) -> bool {
+        !matches!(self, Self::Streaming)
+    }
+
     pub fn notice(&self) -> Notice {
         match self {
             Self::Streaming => Notice::new(LOGS_STATUS, "Streaming…", Intent::Muted),
@@ -39,6 +44,11 @@ pub enum ExecState {
 }
 
 impl ExecState {
+    /// The shell has exited or failed: reopening starts a new one.
+    pub fn is_finished(&self) -> bool {
+        !matches!(self, Self::Running)
+    }
+
     pub fn notice(&self) -> Notice {
         match self {
             Self::Running => Notice::new(EXEC_STATUS, "Session running", Intent::Muted),
