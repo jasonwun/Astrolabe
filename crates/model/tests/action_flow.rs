@@ -317,6 +317,23 @@ fn a_forward_row_reads_by_state() {
 mod support;
 
 fn pod_state() -> (DetailTarget, SessionState) {
+    pod_state_with(serde_json::json!({
+        "initContainerStatuses": [{"name": "setup", "image": "busybox", "imageID": "", "ready": true, "restartCount": 0,
+            "state": {"terminated": {"exitCode": 0}}}],
+        "containerStatuses": [
+            {"name": "app", "image": "nginx", "imageID": "", "ready": true, "restartCount": 0,
+             "state": {"running": {}}},
+            {"name": "sidecar", "image": "envoy", "imageID": "", "ready": true, "restartCount": 0,
+             "state": {"running": {}}}
+        ]
+    }))
+}
+
+/// `web-0` with its `status.phase: Running` and the given container
+/// statuses, as the apiserver would report them.
+fn pod_state_with(statuses: serde_json::Value) -> (DetailTarget, SessionState) {
+    let mut status = statuses;
+    status["phase"] = "Running".into();
     let target = DetailTarget::Builtin {
         kind: BuiltinKind::Pods,
         key: key(),
@@ -339,17 +356,7 @@ fn pod_state() -> (DetailTarget, SessionState) {
                     {"name": "sidecar", "image": "envoy"}
                 ]
             },
-            "status": {
-                "phase": "Running",
-                "initContainerStatuses": [{"name": "setup", "image": "busybox", "imageID": "", "ready": true, "restartCount": 0,
-                    "state": {"terminated": {"exitCode": 0}}}],
-                "containerStatuses": [
-                    {"name": "app", "image": "nginx", "imageID": "", "ready": true, "restartCount": 0,
-                     "state": {"running": {}}},
-                    {"name": "sidecar", "image": "envoy", "imageID": "", "ready": true, "restartCount": 0,
-                     "state": {"running": {}}}
-                ]
-            }
+            "status": status
         })))),
     );
     state.object_message(&watch, Ok(Event::InitDone));
@@ -398,8 +405,8 @@ fn exec_with_no_running_container_says_so_and_the_others_do_not() {
     };
     // Running containers: nothing to explain.
     assert_eq!(picker_empty(&model, &ask(PodAction::Exec)), None);
-    // A hand-built model: `running` comes from the Pod spec, so a real Pod
-    // never has it empty and this state is not reachable from cluster data.
+    // A hand-built model; `a_crash_looping_pod_says_no_running_container`
+    // reaches the same state from a Pod's status.
     model.containers = Some(Containers {
         all: names(&["app"]),
         running: Vec::new(),
@@ -417,6 +424,32 @@ fn exec_with_no_running_container_says_so_and_the_others_do_not() {
         container: Some("app".to_string()),
     };
     assert_eq!(picker_empty(&model, &in_container), None);
+}
+
+#[test]
+fn a_crash_looping_pod_says_no_running_container() {
+    let (target, state) = pod_state_with(serde_json::json!({
+        "containerStatuses": [
+            {"name": "app", "image": "nginx", "imageID": "", "ready": false, "restartCount": 5,
+             "state": {"waiting": {"reason": "CrashLoopBackOff"}}},
+            {"name": "sidecar", "image": "envoy", "imageID": "", "ready": false, "restartCount": 5,
+             "state": {"terminated": {"exitCode": 1}}}
+        ]
+    }));
+    let now = "2026-10-22T12:00:00Z".parse().unwrap();
+    let resolved = resolve(&target, &state, now).shown().unwrap();
+    let subject = Subject::of(&target, &state, Some(&resolved));
+    assert_eq!(subject.containers.running, Vec::<String>::new());
+    let mut actions = DetailActions::default();
+    // Exec opens no shell request: it asks, and the picker says why.
+    assert_eq!(actions.press(Action::Exec, &subject), Effect::None);
+    let picking = actions.picking().unwrap();
+    assert_eq!(
+        picker_empty(&resolved.model, picking),
+        Some("No running container")
+    );
+    // Forward offers no port of a container that is not running.
+    assert_eq!(resolved.model.forward.unwrap().ports, []);
 }
 
 #[test]

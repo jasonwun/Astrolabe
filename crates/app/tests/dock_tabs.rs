@@ -119,7 +119,7 @@ fn pod() -> DynamicObject {
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
         "spec": {"containers": [{"name": "app", "image": "nginx"}]},
-        "status": {"phase": "Running"}
+        "status": {"phase": "Running", "containerStatuses": [{"name": "app", "image": "x", "imageID": "", "ready": true, "restartCount": 0, "state": {"running": {}}}]}
     }))
 }
 

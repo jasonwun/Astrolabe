@@ -380,16 +380,40 @@ pub struct ForwardPort {
     pub label: String,
 }
 
-/// The containers that keep running, so Exec and Port Forward can reach
-/// them: native sidecars (init containers with `restartPolicy: Always`)
-/// first, then the app containers. Run-once init containers have exited.
+/// The containers that are running now, so Exec and Port Forward can
+/// reach them: native sidecars (init containers with `restartPolicy:
+/// Always`) first, then the app containers. A container counts only when
+/// its status, matched by name, has `state.running`: waiting, terminated
+/// and not-yet-reported containers do not (Freelens `getRunningContainers`).
+/// Run-once init containers have exited.
 fn long_running(pod: &Pod) -> impl Iterator<Item = &Container> {
-    pod.spec.iter().flat_map(|spec| {
-        spec.init_containers
+    let status = pod.status.as_ref();
+    let is_running = |statuses: Option<&Vec<ContainerStatus>>, container: &Container| {
+        statuses.into_iter().flatten().any(|status| {
+            status.name == container.name
+                && status
+                    .state
+                    .as_ref()
+                    .is_some_and(|state| state.running.is_some())
+        })
+    };
+    pod.spec.iter().flat_map(move |spec| {
+        let sidecars = spec
+            .init_containers
             .iter()
             .flatten()
             .filter(|init| init.restart_policy.as_deref() == Some("Always"))
-            .chain(&spec.containers)
+            .filter(move |init| {
+                is_running(
+                    status.and_then(|s| s.init_container_statuses.as_ref()),
+                    init,
+                )
+            });
+        let apps = spec
+            .containers
+            .iter()
+            .filter(move |app| is_running(status.and_then(|s| s.container_statuses.as_ref()), app));
+        sidecars.chain(apps)
     })
 }
 

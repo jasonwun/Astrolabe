@@ -528,7 +528,7 @@ fn pod_ports_are_the_running_containers_declared_tcp_ports_in_order() {
                 {"name": "plain"}
             ]
         }),
-        serde_json::json!({}),
+        all_running(&["proxy", "app", "sidecar", "plain"], &["proxy"]),
     );
     assert_eq!(
         pod_ports(&pod),
@@ -559,9 +559,127 @@ fn exec_targets_sidecars_and_app_containers_but_not_run_once_init_containers() {
             ],
             "containers": [{"name": "app"}, {"name": "log-shipper"}]
         }),
-        serde_json::json!({}),
+        all_running(&["proxy", "app", "log-shipper"], &["proxy"]),
     );
     assert_eq!(running_containers(&pod), ["proxy", "app", "log-shipper"]);
+}
+
+/// A status where every container in `names` is running; the names in
+/// `init` are reported under `initContainerStatuses`, the rest under
+/// `containerStatuses`.
+fn all_running(names: &[&str], init: &[&str]) -> serde_json::Value {
+    let statuses = |init_wanted: bool| -> Vec<serde_json::Value> {
+        names
+            .iter()
+            .filter(|name| init.contains(name) == init_wanted)
+            .map(|name| container_status(name, true, &serde_json::json!({"running": {}})))
+            .collect()
+    };
+    serde_json::json!({
+        "initContainerStatuses": statuses(true),
+        "containerStatuses": statuses(false)
+    })
+}
+
+/// A Pod with ports on `app` (8080) and `db` (5432), whose `app` status is
+/// `app_state` and whose `db` status is `db_state` (None: not reported).
+fn two_container_pod(
+    app_state: Option<serde_json::Value>,
+    db_state: Option<serde_json::Value>,
+) -> Pod {
+    let statuses: Vec<_> = [("app", app_state), ("db", db_state)]
+        .into_iter()
+        .filter_map(|(name, state)| Some(container_status(name, false, &state?)))
+        .collect();
+    typed_pod(
+        serde_json::json!({"containers": [
+            {"name": "app", "ports": [{"containerPort": 8080}]},
+            {"name": "db", "ports": [{"containerPort": 5432}]}
+        ]}),
+        serde_json::json!({"containerStatuses": statuses}),
+    )
+}
+
+#[test]
+fn only_a_container_whose_status_is_running_counts_as_running() {
+    let running = Some(serde_json::json!({"running": {}}));
+    let waiting = Some(serde_json::json!({"waiting": {"reason": "CrashLoopBackOff"}}));
+    let terminated = Some(serde_json::json!({"terminated": {"exitCode": 1}}));
+    for (state, counts) in [
+        (running, true),
+        (waiting, false),
+        (terminated, false),
+        (None, false),
+    ] {
+        let pod = two_container_pod(state.clone(), state);
+        let expected: &[&str] = if counts { &["app", "db"] } else { &[] };
+        assert_eq!(running_containers(&pod), expected, "{pod:?}");
+        assert_eq!(pod_ports(&pod).is_empty(), !counts, "{pod:?}");
+    }
+}
+
+#[test]
+fn a_status_with_no_state_is_not_running() {
+    let mut pod = two_container_pod(Some(serde_json::json!({"running": {}})), None);
+    pod.status
+        .as_mut()
+        .unwrap()
+        .container_statuses
+        .as_mut()
+        .unwrap()[0]
+        .state = None;
+    assert!(running_containers(&pod).is_empty());
+}
+
+#[test]
+fn a_crash_looping_container_leaves_its_running_sibling_and_ports() {
+    let pod = two_container_pod(
+        Some(serde_json::json!({"waiting": {"reason": "CrashLoopBackOff"}})),
+        Some(serde_json::json!({"running": {}})),
+    );
+    assert_eq!(running_containers(&pod), ["db"]);
+    assert_eq!(
+        pod_ports(&pod),
+        [ForwardPort {
+            port: 5432,
+            label: "5432 (db)".to_string()
+        }]
+    );
+}
+
+#[test]
+fn statuses_match_by_name_and_sidecars_read_only_the_init_statuses() {
+    let spec = serde_json::json!({
+        "initContainers": [{"name": "proxy", "restartPolicy": "Always"}],
+        "containers": [{"name": "app"}]
+    });
+    // A running `proxy` under containerStatuses (and `app` under
+    // initContainerStatuses) is the wrong list: neither counts.
+    let swapped = typed_pod(
+        spec.clone(),
+        serde_json::json!({
+            "initContainerStatuses": [container_status("app", true, &serde_json::json!({"running": {}}))],
+            "containerStatuses": [container_status("proxy", true, &serde_json::json!({"running": {}}))]
+        }),
+    );
+    assert!(running_containers(&swapped).is_empty());
+    // A status under another name does not count either.
+    let renamed = typed_pod(
+        spec.clone(),
+        serde_json::json!({
+            "containerStatuses": [container_status("other", true, &serde_json::json!({"running": {}}))]
+        }),
+    );
+    assert!(running_containers(&renamed).is_empty());
+    // A terminated sidecar drops out while the app stays.
+    let sidecar_down = typed_pod(
+        spec,
+        serde_json::json!({
+            "initContainerStatuses": [container_status("proxy", false, &serde_json::json!({"terminated": {"exitCode": 1}}))],
+            "containerStatuses": [container_status("app", true, &serde_json::json!({"running": {}}))]
+        }),
+    );
+    assert_eq!(running_containers(&sidecar_down), ["app"]);
 }
 
 #[test]
@@ -578,17 +696,15 @@ fn a_pod_detail_offers_its_containers_and_ports_to_the_actions() {
         model.containers,
         Some(Containers {
             all: ["migrate", "app", "sidecar"].map(String::from).to_vec(),
-            running: ["app", "sidecar"].map(String::from).to_vec(),
+            // `app` is in CrashLoopBackOff: only `sidecar` is running.
+            running: ["sidecar"].map(String::from).to_vec(),
         })
     );
     assert_eq!(
         model.forward,
         Some(Forward {
             to: ForwardTo::Pod,
-            ports: vec![ForwardPort {
-                port: 80,
-                label: "80/http (app)".to_string()
-            }],
+            ports: Vec::new(),
             empty: "No declared ports",
         })
     );
