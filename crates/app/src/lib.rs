@@ -10,6 +10,7 @@ pub mod keymap;
 pub mod launch;
 pub mod logs;
 mod notice_view;
+mod open_tab;
 pub mod perf;
 mod resource_detail;
 mod resource_list;
