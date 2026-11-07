@@ -523,3 +523,11 @@ ticket could not show the reason, which is how it came out. Read the
 projection that builds the list, and say in the ticket what drives it,
 before writing a rule or an AC that depends on the list being empty
 (#307 retro; the status-driven version is #313).
+
+A state that a late answer can write needs a test for the answer arriving
+after the state was cleared. #308 split the Apply and Precheck notices and
+cleared the Precheck's when an Apply starts; the review found that a manual
+Precheck already in flight would write its failure after that. A `Ticket`
+checked only the Cluster and the buffer. When a rule says "X voids Y",
+write the `begin_x`, `finish_y` order as a test, not only the clear
+(#308 retro).
