@@ -441,6 +441,13 @@ scratchpad is not a git repository, so pass `-R jasonwun/Astrolabe --head
 <branch> --base main` there, or `gh` fails with "not a git repository"
 (#282 retro; its body came out right: two uploaded images, no `./` link).
 
+#313 hit it a third time: the body had `![alt](./shot.png)` lines, `--attach`
+took absolute scratchpad paths, and the body kept the four `./` lines and
+gained four uploaded images. The shortest way out: leave the `![...]`
+lines out of the body and pass `--attach <abs path>`; gh appends the
+uploaded images, each captioned with its file name. Delete any `./` line
+with `gh pr edit --body-file` before enabling auto-merge (#313 retro).
+
 From the shots' directory (outside the repo) `gh` finds no repository:
 push the branch first, then pass `-R jasonwun/Astrolabe --head <branch>
 --base main` (#166).
