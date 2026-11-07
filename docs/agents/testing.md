@@ -551,3 +551,11 @@ Evidence stale. #313's Spec review changed Forward's empty reason after
 the kind captures; the PR said so, but the `crashy` Forward capture still
 showed the old text. Redo the capture for any view whose text the review
 fix touched (#313 retro).
+
+When a rule moves into the model layer, the window test that checked it
+usually stays as a wiring check, and finds the element by its id too.
+#304's `workload_views` asserted `Stream failed: stream reset` by label
+alone, so nothing in the app tests found `logs-status` or `exec-status`;
+the id was covered only by the model's `Notice` equality, which cannot show
+it renders. Keep the text assert, say in a comment that the text is the
+model's, and add `try_find("<id>")` (#304 retro).

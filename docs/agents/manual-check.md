@@ -259,6 +259,22 @@ path of `<name>.png`, shrunk to one pixel per window point.
 - In an Exec terminal, `orca computer type-text` arrives garbled
   (`seq 1 200` types `aaa a aaa`). Send each key with `press-key`
   (`space`, `Return` for the specials) (#73).
+  Through `dev/shot.sh` the key goes after `--key`: `dev/shot.sh "$D" k
+  press-key --key Return`; `press-key Return` fails with `Unknown command:
+  computer press-key Return` (#304 retro).
+- Logs and Exec status lines on `kind-astrolabe-dev`, Pods > `multi` (1000x1000
+  window), each reachable without waiting: the detail row (480,288), then
+  Logs (472,146) or Exec (530,146), then the picker button at y=195. Logs
+  `setup` (645) is a finished init container: `Stream ended`; Logs `app`
+  (702): `Streaming…`. Exec `app` (638) then `sh` (646): `Session running`;
+  `press-key --key` `e x i t Return` then `Exited with code 0`; `bash` (703)
+  is not in busybox: the red `Session failed: ... "bash": executable file
+  not found`. A second tab needs the detail re-opened: click Namespaces
+  (278,138), then Pods (252,204), then the row, because the Pods list tab is
+  replaced by the Logs or Exec tab. Crop `440,85,560,300`. The Exec crops read
+  `DIFF` against a baseline for terminal content only (an extra prompt line,
+  the container id in the failed text): compare the status bar by eye and
+  say so in the PR (#304 retro).
 - To fill the YAML editor, put the text on the clipboard and paste it:
   `pbcopy < file.yaml`, then `dev/shot.sh "$D" pasted hotkey --key cmd+v`.
   `press-key` takes no modifier chord; `hotkey` does (#172).
