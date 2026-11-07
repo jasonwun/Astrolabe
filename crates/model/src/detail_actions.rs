@@ -188,13 +188,11 @@ impl DetailActions {
     }
 
     fn pick_container(&mut self, action: PodAction, subject: &Subject) -> Effect {
-        match subject.containers_for(action) {
-            [only] => self.choose_container(action, only.clone(), subject),
-            _ => {
-                self.ask(action, None);
-                Effect::None
-            }
+        if let [only] = subject.containers_for(action) {
+            return self.choose_container(action, only.clone(), subject);
         }
+        self.ask(action, None);
+        Effect::None
     }
 
     fn ask(&mut self, action: PodAction, container: Option<String>) {

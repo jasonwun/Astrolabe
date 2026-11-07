@@ -25,7 +25,7 @@ fn object() -> ObjectRef {
 }
 
 fn names(names: &[&str]) -> Vec<String> {
-    names.iter().map(|name| name.to_string()).collect()
+    names.iter().map(ToString::to_string).collect()
 }
 
 fn pod(all: &[&str], running: &[&str]) -> Subject {
