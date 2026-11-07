@@ -14,12 +14,13 @@ use astrolabe_kube::kube::runtime::watcher::Event;
 use astrolabe_kube::object::{ObjectKey, ObjectRef};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::detail::{
-    DetailOutcome, DetailTarget, NeededWatch, ReferenceError, RelatedOutcome, Resolved, resolve,
-    watches,
+    DetailOutcome, DetailTarget, NeededWatch, OpenRowError, ReferenceError, RelatedOutcome,
+    Resolved, resolve, watches,
 };
 use astrolabe_model::notice::{Intent, Notice};
 use astrolabe_model::projection::ResourceTable;
-use astrolabe_model::session_state::SessionState;
+use astrolabe_model::session::CustomKindId;
+use astrolabe_model::session_state::{SessionState, Viewing};
 use support::object;
 
 mod support;
@@ -546,4 +547,146 @@ fn a_related_section_without_rows_says_why() {
         RelatedOutcome::Rows(ResourceTable::default()).notice(),
         None
     );
+}
+
+fn row(namespace: Option<&str>, name: &str) -> ObjectKey {
+    ObjectKey::new(namespace.map(str::to_string), name)
+}
+
+#[test]
+fn a_namespaces_row_opens_that_namespace() {
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    assert_eq!(
+        DetailTarget::from_row(&Viewing::Namespaces, &row(None, "team-a"), &state),
+        Ok(DetailTarget::Namespace {
+            name: "team-a".to_string()
+        })
+    );
+}
+
+#[test]
+fn a_builtin_row_opens_that_object() {
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    let key = row(Some("default"), "web");
+    assert_eq!(
+        DetailTarget::from_row(&Viewing::Builtin(BuiltinKind::Pods), &key, &state),
+        Ok(DetailTarget::Builtin {
+            kind: BuiltinKind::Pods,
+            key
+        })
+    );
+}
+
+#[test]
+fn a_definitions_row_opens_that_definition() {
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    assert_eq!(
+        DetailTarget::from_row(
+            &Viewing::Definitions,
+            &row(None, "widgets.example.com"),
+            &state
+        ),
+        Ok(DetailTarget::Definition {
+            name: "widgets.example.com".to_string()
+        })
+    );
+}
+
+#[test]
+fn a_custom_row_opens_that_object() {
+    let state = SessionState::new(ClusterId::named("kind-a"), "default");
+    let id = CustomKindId {
+        group: "example.com".to_string(),
+        kind: "Widget".to_string(),
+    };
+    let key = row(Some("default"), "w");
+    assert_eq!(
+        DetailTarget::from_row(&Viewing::Custom(id.clone()), &key, &state),
+        Ok(DetailTarget::Custom { id, key })
+    );
+}
+
+fn event(involved: &serde_json::Value) -> DynamicObject {
+    object(serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "Event",
+        "metadata": {"name": "e1", "namespace": "default"},
+        "involvedObject": involved,
+    }))
+}
+
+fn state_with_event(event: DynamicObject) -> SessionState {
+    let mut state = SessionState::new(ClusterId::named("kind-a"), "default");
+    snapshot(&mut state, BuiltinKind::Events, vec![event]);
+    state
+}
+
+#[test]
+fn an_event_row_opens_the_object_it_involves() {
+    let state = state_with_event(event(
+        &serde_json::json!({"apiVersion": "v1", "kind": "Pod", "name": "web"}),
+    ));
+    assert_eq!(
+        DetailTarget::from_row(
+            &Viewing::Builtin(BuiltinKind::Events),
+            &row(Some("default"), "e1"),
+            &state
+        ),
+        Ok(DetailTarget::Builtin {
+            kind: BuiltinKind::Pods,
+            key: row(Some("default"), "web")
+        })
+    );
+}
+
+#[test]
+fn an_event_row_whose_reference_cannot_open_is_a_reference_error() {
+    let state = state_with_event(event(&serde_json::json!({"kind": "Pod"})));
+    assert_eq!(
+        DetailTarget::from_row(
+            &Viewing::Builtin(BuiltinKind::Events),
+            &row(Some("default"), "e1"),
+            &state
+        ),
+        Err(OpenRowError::Reference(ReferenceError::MissingName {
+            kind: "Pod".to_string()
+        }))
+    );
+}
+
+#[test]
+fn an_event_row_whose_object_left_its_watch_is_unavailable() {
+    let state = state_with_event(event(
+        &serde_json::json!({"apiVersion": "v1", "kind": "Pod", "name": "web"}),
+    ));
+    let gone = row(Some("default"), "gone");
+    assert_eq!(
+        DetailTarget::from_row(&Viewing::Builtin(BuiltinKind::Events), &gone, &state),
+        Err(OpenRowError::ObjectUnavailable {
+            kind: "Event".to_string(),
+            key: gone
+        })
+    );
+}
+
+#[test]
+fn an_unavailable_object_names_its_kind_and_key() {
+    let error = OpenRowError::ObjectUnavailable {
+        kind: "Event".to_string(),
+        key: row(Some("default"), "e1"),
+    };
+    assert_eq!(
+        error.to_string(),
+        "Cannot open Event default/e1: object is unavailable"
+    );
+}
+
+#[test]
+fn a_reference_error_shows_its_own_text() {
+    let reference = ReferenceError::MissingName {
+        kind: "Pod".to_string(),
+    };
+    let error = OpenRowError::from(reference.clone());
+    assert_eq!(error, OpenRowError::Reference(reference.clone()));
+    assert_eq!(error.to_string(), reference.to_string());
 }

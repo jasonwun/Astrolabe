@@ -12,6 +12,7 @@ mod notice_view;
 pub mod perf;
 mod resource_detail;
 mod resource_list;
+mod rows_table;
 pub mod session;
 mod session_view;
 pub mod workspace;

@@ -27,7 +27,8 @@ use gpui_kit::*;
 use crate::clock;
 use crate::notice_view::notice_view;
 use crate::perf;
-use crate::resource_list::{OpenDetail, RowsTable, fitted_table, open_row_with, rows_table_state};
+use crate::resource_list::OpenDetail;
+use crate::rows_table::{RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
 use astrolabe_model::detail::{
     self, DetailOutcome, DetailTarget, RelatedOutcome, RelatedRows, Resolved, watches,

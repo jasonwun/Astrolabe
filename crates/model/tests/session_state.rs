@@ -14,7 +14,7 @@ use astrolabe_model::session::{
     ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey,
 };
 use astrolabe_model::session_state::{
-    ActiveForward, Command, RESIDENT_WATCH_CAP, SessionState, custom_kind,
+    ActiveForward, Command, RESIDENT_WATCH_CAP, SessionState, Viewing, custom_kind,
 };
 use std::time::Duration;
 
@@ -1668,4 +1668,25 @@ fn the_namespaces_watch_also_restarts_discovery_when_the_connect_recovers() {
 
     assert!(run_of(&commands) > 1);
     assert!(state.namespaces_message(Ok(Event::InitDone)).1.is_empty());
+}
+
+#[test]
+fn crd_groups_are_the_distinct_groups_of_the_definitions() {
+    let mut state = state();
+    assert!(state.crd_groups().is_empty());
+    list_crontab_crd(&mut state, "Namespaced");
+    assert_eq!(
+        state.crd_groups().into_iter().collect::<Vec<_>>(),
+        ["stable.example.com"]
+    );
+}
+
+#[test]
+fn each_list_is_named_by_its_tab_label() {
+    let state = state();
+    let label = |viewing: Viewing| viewing.label(&state);
+    assert_eq!(label(Viewing::Namespaces), "Namespaces");
+    assert_eq!(label(Viewing::Builtin(BuiltinKind::Pods)), "Pods");
+    assert_eq!(label(Viewing::Definitions), "Definitions");
+    assert_eq!(label(Viewing::Custom(crontab_id())), "CronTab");
 }

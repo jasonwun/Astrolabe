@@ -14,7 +14,7 @@ use gpui_kit::*;
 use crate::exec::ExecPanel;
 use crate::logs::LogsPanel;
 use crate::resource_detail::{EditorPanel, OpenEditor, OpenExec, OpenLogs, ResourceDetailPanel};
-use crate::resource_list::{ListView, OpenDetail, ResourceListPanel};
+use crate::resource_list::{OpenDetail, ResourceListPanel};
 use crate::session::{ScriptedCluster, Session};
 use crate::workspace::LaunchTab;
 use crate::yaml_editor::YamlEditorView;
@@ -22,6 +22,7 @@ use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::list::CRD_DENIED;
 use astrolabe_model::notice::Notice;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId};
+use astrolabe_model::session_state::Viewing;
 
 /// Key context around the session dock: `cmd-w` closes its active tab.
 pub const DOCK_KEY_CONTEXT: &str = "SessionDock";
@@ -105,7 +106,7 @@ impl SessionView {
         let namespace = self.session.read(cx).state().namespace().to_string();
         for tab in tabs {
             match tab {
-                LaunchTab::List(kind) => self.show(ListView::Builtin(kind), window, cx),
+                LaunchTab::List(kind) => self.show(Viewing::Builtin(kind), window, cx),
                 LaunchTab::Detail(kind, name) => {
                     let key = ObjectKey::new(Some(namespace.clone()), name);
                     self.open_detail(DetailTarget::Builtin { kind, key }, window, cx);
@@ -114,7 +115,7 @@ impl SessionView {
         }
     }
 
-    fn show(&mut self, view: ListView, window: &mut Window, cx: &mut Context<Self>) {
+    fn show(&mut self, view: Viewing, window: &mut Window, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| list.show(view, cx));
         self.select(PanelId::from(self.list.entity_id()), window, cx);
         cx.notify();
@@ -286,7 +287,7 @@ impl SessionView {
 
     fn render_nav(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let current = self.list.read(cx).view().clone();
+        let current = self.session.read(cx).state().viewing().clone();
         let session = self.session.read(cx);
         let item = |id: SharedString, label: String, depth: usize, selected: bool| {
             div()
@@ -341,10 +342,10 @@ impl SessionView {
                     "nav-namespaces".into(),
                     "Namespaces".to_string(),
                     0,
-                    current == ListView::Namespaces,
+                    current == Viewing::Namespaces,
                 )
                 .on_click(
-                    cx.listener(|this, _, window, cx| this.show(ListView::Namespaces, window, cx)),
+                    cx.listener(|this, _, window, cx| this.show(Viewing::Namespaces, window, cx)),
                 ),
             )
             .children(
@@ -357,10 +358,10 @@ impl SessionView {
                                     kind.nav_id().into(),
                                     kind.registration().label.to_string(),
                                     0,
-                                    current == ListView::Builtin(kind),
+                                    current == Viewing::Builtin(kind),
                                 )
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show(ListView::Builtin(kind), window, cx)
+                                    this.show(Viewing::Builtin(kind), window, cx)
                                 }))
                                 .into_any_element()
                             }),
@@ -374,10 +375,10 @@ impl SessionView {
                     "nav-definitions".into(),
                     "Definitions".to_string(),
                     0,
-                    current == ListView::Definitions,
+                    current == Viewing::Definitions,
                 )
                 .on_click(
-                    cx.listener(|this, _, window, cx| this.show(ListView::Definitions, window, cx)),
+                    cx.listener(|this, _, window, cx| this.show(Viewing::Definitions, window, cx)),
                 ),
             );
 
@@ -418,7 +419,7 @@ impl SessionView {
             }
             for kind in &group.kinds {
                 let id = CustomKindId::of(kind);
-                let selected = current == ListView::Custom(id.clone());
+                let selected = current == Viewing::Custom(id.clone());
                 nav = nav.child(
                     item(
                         format!("nav-kind-{}-{}", kind.group, kind.kind).into(),
@@ -427,7 +428,7 @@ impl SessionView {
                         selected,
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.show(ListView::Custom(id.clone()), window, cx)
+                        this.show(Viewing::Custom(id.clone()), window, cx)
                     })),
                 );
             }
