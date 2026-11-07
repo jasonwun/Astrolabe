@@ -225,6 +225,13 @@ path of `<name>.png`, shrunk to one pixel per window point.
   matters, pass `--crop` with the rectangle read off an earlier shrunk
   copy: a whole window still reads at 120-170KB, a cropped table at about
   16KB (#68).
+- A `--crop` capture is offset: a button seen at (x, y) in a cropped
+  image is at (x + crop x, y + crop y) in the window. #300 read the Logs
+  picker's `app` button off a `--crop 440,120,...` shot and clicked its
+  crop coordinates, which hit nothing; the second try added the origin
+  (702,195). To fill an input again, Cancel the form and reopen it:
+  `press-key BackSpace` left the old text in place (its error output was
+  discarded, cause not checked) (#300 retro).
 - Resize the window, and bring it to the front, with:
 
   ```sh
