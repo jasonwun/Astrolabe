@@ -29,6 +29,9 @@ pub enum Severity {
 pub struct Ticket {
     cluster_version: u64,
     buffer_version: u64,
+    /// How many Applies had started; a Precheck answered after another
+    /// Apply started is void.
+    apply_count: u64,
 }
 
 /// The buffer version an edit produced, for the debounced Precheck.
@@ -103,6 +106,8 @@ pub struct EditLoop {
     /// Bumped by each edit; a Precheck answer for an older buffer is
     /// dropped.
     buffer_version: u64,
+    /// Bumped when an Apply starts.
+    apply_count: u64,
     applying: bool,
     /// The buffer being applied; errors are mapped on it, since it is what
     /// the server saw.
@@ -138,6 +143,7 @@ impl EditLoop {
             cluster: None,
             cluster_version: 0,
             buffer_version: 0,
+            apply_count: 0,
             applying: false,
             pending_snapshot: None,
             panel: Vec::new(),
@@ -169,6 +175,10 @@ impl EditLoop {
         // The next Apply replaces the whole previous result: panel, line
         // marks and the global error bar alike.
         self.clear_apply_result();
+        // An Apply starting voids the Precheck's rehearsal, notices
+        // included; a Precheck still in flight is dropped (see `Ticket`).
+        self.precheck_notices.clear();
+        self.apply_count += 1;
         self.status = match mode {
             ApplyMode::Normal => "applying…".to_string(),
             ApplyMode::Force => "force applying…".to_string(),
@@ -264,9 +274,6 @@ impl EditLoop {
         self.conflict_managers.clear();
         self.force_apply_available = false;
         self.apply_notices.clear();
-        // An Apply starting (or the Cluster changing) voids the Precheck's
-        // rehearsal, notices included.
-        self.precheck_notices.clear();
     }
 
     // ------------------------------------------------------------ precheck
@@ -290,11 +297,11 @@ impl EditLoop {
     /// there is no Cluster: a `manual` one says so in a notice, the
     /// debounced one stays silent since the status already says it.
     pub fn begin_precheck(&mut self, buffer: &str, manual: bool) -> Option<Ticket> {
-        if buffer.trim().is_empty() {
-            return None;
-        }
         if manual {
             self.precheck_notices.clear();
+        }
+        if buffer.trim().is_empty() {
+            return None;
         }
         if self.cluster.is_none() {
             if manual {
@@ -321,6 +328,10 @@ impl EditLoop {
         self.precheck_status = PrecheckStatus::Idle;
         // The buffer moved on; the debounce re-checks.
         if ticket.buffer_version != self.buffer_version {
+            return;
+        }
+        // An Apply started since: its answer voids this rehearsal.
+        if ticket.apply_count != self.apply_count {
             return;
         }
         let report = match result {
@@ -394,6 +405,7 @@ impl EditLoop {
         self.applying = false;
         self.pending_snapshot = None;
         self.clear_apply_result();
+        self.precheck_notices.clear();
         self.clear_precheck();
     }
 
@@ -467,6 +479,7 @@ impl EditLoop {
         Ticket {
             cluster_version: self.cluster_version,
             buffer_version: self.buffer_version,
+            apply_count: self.apply_count,
         }
     }
 }
@@ -1031,9 +1044,10 @@ mod tests {
 
         assert!(edit.begin_precheck(BUFFER, true).is_none());
 
-        let notices = edit.projection().notices;
-        assert_eq!(notices.len(), 2);
-        assert_eq!(notices[0], "apply broke");
+        assert_eq!(
+            edit.projection().notices,
+            ["apply broke", &no_cluster_notice("precheck")[..]]
+        );
     }
 
     #[test]
@@ -1053,6 +1067,27 @@ mod tests {
         manual_precheck(&mut edit, Err(ClusterError::new("first")));
 
         edit.begin_precheck(BUFFER, true).unwrap();
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_manual_precheck_in_flight_when_an_apply_starts_leaves_no_notice() {
+        let mut edit = ready();
+        let ticket = edit.begin_precheck(BUFFER, true).unwrap();
+        edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
+
+        edit.finish_precheck(ticket, true, Err(ClusterError::new("precheck broke")));
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_manual_precheck_of_a_blank_buffer_clears_the_earlier_precheck_notices() {
+        let mut edit = ready();
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
+
+        assert!(edit.begin_precheck("  ", true).is_none());
 
         assert_eq!(edit.projection().notices, Vec::<String>::new());
     }
