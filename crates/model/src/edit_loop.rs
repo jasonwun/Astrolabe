@@ -29,6 +29,9 @@ pub enum Severity {
 pub struct Ticket {
     cluster_version: u64,
     buffer_version: u64,
+    /// How many Applies had started; a Precheck answered after another
+    /// Apply started is void.
+    apply_count: u64,
 }
 
 /// The buffer version an edit produced, for the debounced Precheck.
@@ -57,7 +60,8 @@ pub struct Panel {
 /// Everything the editor draws, as final values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Projection {
-    /// Global notices, one line each; a click dismisses them.
+    /// Global notices, one line each: the Apply's, then the manual
+    /// Precheck's. A click dismisses them all.
     pub notices: Vec<String>,
     pub panel: Option<Panel>,
     pub status: String,
@@ -102,6 +106,8 @@ pub struct EditLoop {
     /// Bumped by each edit; a Precheck answer for an older buffer is
     /// dropped.
     buffer_version: u64,
+    /// Bumped when an Apply starts.
+    apply_count: u64,
     applying: bool,
     /// The buffer being applied; errors are mapped on it, since it is what
     /// the server saw.
@@ -110,14 +116,18 @@ pub struct EditLoop {
     panel: Vec<Problem>,
     conflict_managers: Vec<String>,
     force_apply_available: bool,
-    /// The global error bar: one line per failure (a multi-document Apply
-    /// can fail several documents).
-    global_notices: Vec<String>,
+    /// The Apply's global error lines: one per failure (a multi-document
+    /// Apply can fail several documents). Replaced when the next Apply
+    /// starts; a Precheck never touches them.
+    apply_notices: Vec<String>,
     status: String,
     // The Precheck result: voided by an edit.
     precheck_status: PrecheckStatus,
     precheck_note: Option<String>,
     precheck_marks: Vec<(usize, Severity)>,
+    /// The notices of a manual Precheck (failure, no Cluster, a Global
+    /// outcome). Replaced when the next manual Precheck or an Apply starts.
+    precheck_notices: Vec<String>,
 }
 
 impl Default for EditLoop {
@@ -133,16 +143,18 @@ impl EditLoop {
             cluster: None,
             cluster_version: 0,
             buffer_version: 0,
+            apply_count: 0,
             applying: false,
             pending_snapshot: None,
             panel: Vec::new(),
             conflict_managers: Vec::new(),
             force_apply_available: false,
-            global_notices: Vec::new(),
+            apply_notices: Vec::new(),
             status: "no cluster".to_string(),
             precheck_status: PrecheckStatus::Idle,
             precheck_note: None,
             precheck_marks: Vec::new(),
+            precheck_notices: Vec::new(),
         }
     }
 
@@ -155,7 +167,7 @@ impl EditLoop {
             return None;
         }
         if self.cluster.is_none() {
-            self.global_notices = vec![no_cluster_notice("apply")];
+            self.apply_notices = vec![no_cluster_notice("apply")];
             return None;
         }
         self.applying = true;
@@ -163,6 +175,10 @@ impl EditLoop {
         // The next Apply replaces the whole previous result: panel, line
         // marks and the global error bar alike.
         self.clear_apply_result();
+        // An Apply starting voids the Precheck's rehearsal, notices
+        // included; a Precheck still in flight is dropped (see `Ticket`).
+        self.precheck_notices.clear();
+        self.apply_count += 1;
         self.status = match mode {
             ApplyMode::Normal => "applying…".to_string(),
             ApplyMode::Force => "force applying…".to_string(),
@@ -191,7 +207,7 @@ impl EditLoop {
             Ok(report) => report,
             Err(e) => {
                 self.pending_snapshot = None;
-                self.global_notices = vec![failure_notice("apply", &e)];
+                self.apply_notices = vec![failure_notice("apply", &e)];
                 self.status = "apply failed".to_string();
                 return;
             }
@@ -213,7 +229,7 @@ impl EditLoop {
             };
             match &error.error {
                 ApplyError::Global { message, .. } => {
-                    self.global_notices
+                    self.apply_notices
                         .push(format!("{}: {message}", outcome.doc));
                 }
                 ApplyError::Validation(_) => {
@@ -231,7 +247,7 @@ impl EditLoop {
                     if conflicts.is_empty() {
                         // The message failed to parse: degrade to the
                         // global bar.
-                        self.global_notices.push(format!(
+                        self.apply_notices.push(format!(
                             "{}: apply conflicted (unparsable details); force apply available",
                             outcome.doc
                         ));
@@ -257,7 +273,7 @@ impl EditLoop {
         self.panel.clear();
         self.conflict_managers.clear();
         self.force_apply_available = false;
-        self.global_notices.clear();
+        self.apply_notices.clear();
     }
 
     // ------------------------------------------------------------ precheck
@@ -281,12 +297,15 @@ impl EditLoop {
     /// there is no Cluster: a `manual` one says so in a notice, the
     /// debounced one stays silent since the status already says it.
     pub fn begin_precheck(&mut self, buffer: &str, manual: bool) -> Option<Ticket> {
+        if manual {
+            self.precheck_notices.clear();
+        }
         if buffer.trim().is_empty() {
             return None;
         }
         if self.cluster.is_none() {
             if manual {
-                self.global_notices = vec![no_cluster_notice("precheck")];
+                self.precheck_notices = vec![no_cluster_notice("precheck")];
             }
             return None;
         }
@@ -311,11 +330,15 @@ impl EditLoop {
         if ticket.buffer_version != self.buffer_version {
             return;
         }
+        // An Apply started since: its answer voids this rehearsal.
+        if ticket.apply_count != self.apply_count {
+            return;
+        }
         let report = match result {
             Ok(report) => report,
             Err(e) => {
                 if manual {
-                    self.global_notices = vec![failure_notice("precheck", &e)];
+                    self.precheck_notices = vec![failure_notice("precheck", &e)];
                 } else {
                     self.precheck_status = PrecheckStatus::Unavailable;
                 }
@@ -354,9 +377,7 @@ impl EditLoop {
             .then(|| format!("{warnings} unknown/duplicate field(s) — apply will ignore them"));
         self.precheck_marks = marks;
         if !unavailable.is_empty() && manual {
-            // Replaces the notices the last Apply left, although they
-            // belong to the Apply result (see #308).
-            self.global_notices = unavailable;
+            self.precheck_notices = unavailable;
         } else if !unavailable.is_empty() {
             self.precheck_status = PrecheckStatus::Unavailable;
         }
@@ -384,14 +405,16 @@ impl EditLoop {
         self.applying = false;
         self.pending_snapshot = None;
         self.clear_apply_result();
+        self.precheck_notices.clear();
         self.clear_precheck();
     }
 
     // ------------------------------------------------------------ display
 
-    /// A click on the global notice.
+    /// A click on the global notice: clears both groups.
     pub fn dismiss_notices(&mut self) {
-        self.global_notices.clear();
+        self.apply_notices.clear();
+        self.precheck_notices.clear();
     }
 
     /// What the editor draws.
@@ -404,7 +427,12 @@ impl EditLoop {
             PrecheckStatus::Unavailable => "● precheck unavailable".to_string(),
         };
         Projection {
-            notices: self.global_notices.clone(),
+            notices: self
+                .apply_notices
+                .iter()
+                .chain(&self.precheck_notices)
+                .cloned()
+                .collect(),
             panel,
             status: self.status.clone(),
             precheck,
@@ -451,6 +479,7 @@ impl EditLoop {
         Ticket {
             cluster_version: self.cluster_version,
             buffer_version: self.buffer_version,
+            apply_count: self.apply_count,
         }
     }
 }
@@ -968,24 +997,142 @@ mod tests {
         assert_eq!(edit.projection().notices, ["v1 ConfigMap/a: denied"]);
     }
 
-    /// Frozen as-is: the field's comment says the notices belong to the
-    /// Apply result, yet a manual Precheck failure replaces them.
-    #[test]
-    fn a_manual_precheck_failure_replaces_the_notices_the_last_apply_left() {
-        let mut edit = ready();
-        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
-        assert_eq!(edit.projection().notices, ["apply broke"]);
+    fn global_outcome() -> Result<ApplyReport, ClusterError> {
+        report(vec![failed(
+            "v1 ConfigMap/a",
+            ApplyError::Global {
+                message: "denied".to_string(),
+                kind: ClusterErrorKind::Forbidden,
+            },
+            Vec::new(),
+        )])
+    }
 
+    fn manual_precheck(edit: &mut EditLoop, result: Result<ApplyReport, ClusterError>) {
         let ticket = edit.begin_precheck(BUFFER, true).unwrap();
-        edit.finish_precheck(ticket, true, Err(ClusterError::new("precheck broke")));
-
-        assert_eq!(edit.projection().notices, ["precheck broke"]);
+        edit.finish_precheck(ticket, true, result);
     }
 
     #[test]
-    fn dismissing_the_notices_clears_only_them() {
+    fn a_failing_manual_precheck_leaves_the_apply_notices() {
         let mut edit = ready();
         apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
+
+        assert_eq!(edit.projection().notices, ["apply broke", "precheck broke"]);
+    }
+
+    #[test]
+    fn a_global_outcome_of_a_manual_precheck_leaves_the_apply_notices() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+
+        manual_precheck(&mut edit, global_outcome());
+
+        assert_eq!(
+            edit.projection().notices,
+            ["apply broke", "v1 ConfigMap/a: denied"]
+        );
+    }
+
+    #[test]
+    fn a_manual_precheck_with_no_cluster_leaves_the_apply_notices() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+        edit.cluster = None;
+
+        assert!(edit.begin_precheck(BUFFER, true).is_none());
+
+        assert_eq!(
+            edit.projection().notices,
+            ["apply broke", &no_cluster_notice("precheck")[..]]
+        );
+    }
+
+    #[test]
+    fn a_successful_manual_precheck_clears_the_earlier_precheck_notices_only() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
+
+        manual_precheck(&mut edit, report(Vec::new()));
+
+        assert_eq!(edit.projection().notices, ["apply broke"]);
+    }
+
+    #[test]
+    fn a_manual_precheck_replaces_the_earlier_precheck_notices_when_it_starts() {
+        let mut edit = ready();
+        manual_precheck(&mut edit, Err(ClusterError::new("first")));
+
+        edit.begin_precheck(BUFFER, true).unwrap();
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_manual_precheck_in_flight_when_an_apply_starts_leaves_no_notice() {
+        let mut edit = ready();
+        let ticket = edit.begin_precheck(BUFFER, true).unwrap();
+        edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
+
+        edit.finish_precheck(ticket, true, Err(ClusterError::new("precheck broke")));
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_manual_precheck_of_a_blank_buffer_clears_the_earlier_precheck_notices() {
+        let mut edit = ready();
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
+
+        assert!(edit.begin_precheck("  ", true).is_none());
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_next_apply_clears_both_groups() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
+        assert_eq!(edit.projection().notices.len(), 2);
+
+        edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn cluster_changed_clears_both_groups() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
+
+        edit.cluster_changed("other");
+
+        assert_eq!(edit.projection().notices, Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_automatic_precheck_writes_no_notices_and_keeps_the_apply_ones() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+
+        let ticket = edit.begin_precheck(BUFFER, false).unwrap();
+        edit.finish_precheck(ticket, false, Err(ClusterError::new("precheck broke")));
+        let ticket = edit.begin_precheck(BUFFER, false).unwrap();
+        edit.finish_precheck(ticket, false, global_outcome());
+
+        assert_eq!(edit.projection().notices, ["apply broke"]);
+    }
+
+    #[test]
+    fn dismissing_the_notices_clears_both_groups_and_nothing_else() {
+        let mut edit = ready();
+        apply_with(&mut edit, Err(ClusterError::new("apply broke")));
+        manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
         edit.dismiss_notices();
         let shown = edit.projection();
         assert_eq!(shown.notices, Vec::<String>::new());
