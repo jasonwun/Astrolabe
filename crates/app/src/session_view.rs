@@ -13,6 +13,7 @@ use gpui_kit::*;
 use crate::exec::ExecPanel;
 use crate::launch::LaunchTab;
 use crate::logs::LogsPanel;
+use crate::open_tab::OpenTab;
 use crate::resource_detail::{EditorPanel, ResourceDetailPanel};
 use crate::resource_list::ResourceListPanel;
 use crate::session::{ScriptedCluster, Session};
@@ -23,9 +24,6 @@ use astrolabe_model::notice::Notice;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId};
 use astrolabe_model::session_state::Viewing;
 use astrolabe_model::tab::{TabKey, TabRequest};
-
-/// A panel asks for a tab.
-pub struct OpenTab(pub TabRequest);
 
 /// A tab a request may reuse. Only a Logs or Exec tab is restarted, so
 /// only those keep their panel.
