@@ -54,6 +54,30 @@ Reference: `crates/app/src/session_view.rs`.
 
 Reference: `crates/app/src/resource_list.rs`.
 
+## Command palette (`Command` / `CommandState`)
+
+- `on_confirm` and `on_cancel` run deferred (`window.defer`): the callback
+  gets the `window` and a plain `&mut App`, with no current window.
+  `WeakEntity::update_in(cx, ..)` returns `Err("entity has no current
+  window")` there, and a trailing `.ok()` hid it: Enter and a row click did
+  nothing and Esc never closed the palette. Call
+  `view.update(cx, |this, cx| ..)` and pass the callback's `window` into
+  the method (#317).
+- An `Err` from `WeakEntity::update` means only that the entity is gone,
+  which a deferred callback can meet when its tab closes in the same
+  frame. Ignore it with `.ok()` and a comment saying so; `.expect(..)`
+  turns a harmless race into a crash (#317 review).
+- A palette row has no label, only `Role::ListBoxOption` and an id that is
+  its `IndexPath`. A test finds rows with
+  `window.find_all_by_role(Role::ListBoxOption)` (rows in order) and
+  clicks with `simulate_mouse_down` / `simulate_mouse_up` at the row's
+  `bounds().center()`; `window.click` needs an id (#317).
+- A test that confirms a command counts what the command does (a
+  scripted Cluster's Precheck closure), not that the palette closed: on
+  screen the editor's automatic Precheck masks the manual one (#317).
+
+Reference: `crates/app/tests/yaml_editor.rs`.
+
 ## UI tests (`gpui_kit::test`)
 
 - `try_find_by_label` panics on a label that matches more than one element
