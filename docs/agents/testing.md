@@ -514,3 +514,12 @@ found`: quote the glob (`--include='*.rs'`) (#275 retro).
 `ApplyReport::failed`. A dependent enables it under its own
 `[dev-dependencies]` only (resolver 3 keeps it out of a plain build), as
 `astrolabe` does (#278).
+
+A ticket's "reproduce first" step starts at the field that decides the
+state, not at the app. #307 assumed a crash-looping Pod has an empty
+`Containers.running`; `running_containers` reads the Pod spec, never its
+status, so a real Pod never has it empty. The window test written for the
+ticket could not show the reason, which is how it came out. Read the
+projection that builds the list, and say in the ticket what drives it,
+before writing a rule or an AC that depends on the list being empty
+(#307 retro; the status-driven version is #313).
