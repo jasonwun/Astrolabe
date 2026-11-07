@@ -275,6 +275,13 @@ path of `<name>.png`, shrunk to one pixel per window point.
   `DIFF` against a baseline for terminal content only (an extra prompt line,
   the container id in the failed text): compare the status bar by eye and
   say so in the PR (#304 retro).
+- A tab count cannot be read off a capture: tab titles carry the object's
+  namespace (`astrolabe-demo-<worktree>`), so with two or three tabs open the
+  tab bar overflows a 1000-wide window and shows only the active title. The
+  `...` at its right end offers only Zoom In and Close, not a tab list.
+  Prove "one detail tab, two Logs tabs" with the `dock_tabs.rs` window tests
+  (`dock-tab-N` selectors), and say in the PR that the screenshots show the
+  Logs tab streaming and nothing about the count (#303 retro).
 - To fill the YAML editor, put the text on the clipboard and paste it:
   `pbcopy < file.yaml`, then `dev/shot.sh "$D" pasted hotkey --key cmd+v`.
   `press-key` takes no modifier chord; `hotkey` does (#172).
