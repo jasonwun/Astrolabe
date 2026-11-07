@@ -3,7 +3,7 @@
 
 use astrolabe_kube::pod::ForwardTarget;
 use astrolabe_model::detail_actions::{
-    ForwardTone, Picking, PodAction, SHELLS, containers, forward_row, no_containers,
+    ForwardTone, Picking, PodAction, SHELLS, containers, forward_row, picker_empty,
 };
 use astrolabe_model::projection::{DetailModel, Forward};
 use gpui_kit::component::ActiveTheme as _;
@@ -41,7 +41,7 @@ impl ResourceDetailPanel {
     ) -> impl IntoElement {
         let border = cx.theme().border;
         let prompt = picking.prompt();
-        let reason = no_containers(model, &picking);
+        let reason = picker_empty(model, &picking);
         let Picking { action, container } = picking;
         let choices: Vec<AnyElement> = match (action, container) {
             (PodAction::Forward, _) => model
@@ -49,10 +49,7 @@ impl ResourceDetailPanel {
                 .as_ref()
                 .map(|forward| self.render_ports(forward, cx))
                 .unwrap_or_default(),
-            (_, None) if reason.is_some() => reason
-                .map(|text| self.render_empty(text, cx))
-                .into_iter()
-                .collect(),
+            (_, None) if let Some(text) = reason => vec![self.render_empty(text, cx)],
             (_, None) => containers(model, action)
                 .into_iter()
                 .map(|container| {

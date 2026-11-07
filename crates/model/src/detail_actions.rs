@@ -129,7 +129,7 @@ pub fn containers(model: &DetailModel, action: PodAction) -> Vec<String> {
 /// Why the container picker has nothing to offer, when it has none: Exec
 /// needs a running container. Logs reads every container and a Pod always
 /// has one; Forward's reasons come with its ports.
-pub fn no_containers(model: &DetailModel, picking: &Picking) -> Option<&'static str> {
+pub fn picker_empty(model: &DetailModel, picking: &Picking) -> Option<&'static str> {
     let asks_container = picking.action == PodAction::Exec && picking.container.is_none();
     (asks_container && containers(model, picking.action).is_empty())
         .then_some("No running container")
