@@ -277,7 +277,13 @@ path of `<name>.png`, shrunk to one pixel per window point.
   leave that one to the `EditLoop` test (#299).
 - `press-key` sends no function keys: `F6` fails with `unsupported
   key 'F6'`. Reach the action another way: the YAML editor's Precheck
-  also runs on its own about a second after an edit (#160).
+  also runs on its own about a second after an edit (#160). That
+  automatic run writes no notices, so a *manual* Precheck (the notice
+  paths) needs F6 itself: `osascript -e 'tell application "System Events"
+  to key code 97'` reaches the focused editor, and #314's check used it.
+  The command palette's "Run dry-run precheck now" did not confirm under
+  `orca` (click, Return and Enter all left it open; #317), so do not
+  spend a run on it (#308 retro).
 - An edit made *while* an Apply is in flight (the line marks re-mapped
   onto the newer buffer) cannot be driven by hand: on `kind-astrolabe-dev`
   the 422 comes back before `orca computer` can send a second key. Drive
