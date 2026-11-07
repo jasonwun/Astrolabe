@@ -313,3 +313,27 @@ fn opening_logs_for_two_containers_shows_two_tabs(cx: &mut TestAppContext) {
         )
     });
 }
+
+#[gpui_kit::test]
+fn a_closed_logs_tab_reopens_as_a_fresh_tab(cx: &mut TestAppContext) {
+    let (mut pods, pod_events) = mpsc::channel(32);
+    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+    ui.frame(|window, cx| window.press("cmd-w", cx));
+    ui.settle();
+    assert!(bounds(&mut ui, CHILD_TAB).is_none());
+
+    ui.frame(|window, cx| window.click("detail-logs", cx));
+    ui.settle();
+
+    assert!(bounds(&mut ui, CHILD_TAB).is_some(), "the Logs tab is back");
+    ui.frame(|window, _| {
+        assert!(
+            window
+                .try_find_by_label("Logs default/web-1 (app)")
+                .is_some()
+        )
+    });
+}
