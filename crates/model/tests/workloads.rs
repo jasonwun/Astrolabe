@@ -787,3 +787,44 @@ fn a_last_termination_without_restarts_shows_no_age() {
         "0"
     );
 }
+
+/// The Forward picker's empty reason for a Pod with `spec` and no running
+/// container.
+fn forward_empty_reason(spec: serde_json::Value) -> &'static str {
+    let pod = pod(spec, serde_json::json!({}));
+    detail(BuiltinKind::Pods, pod, now()).forward.unwrap().empty
+}
+
+#[test]
+fn forward_tells_nothing_declared_from_nothing_running() {
+    let declared = serde_json::json!([{"containerPort": 80}]);
+    assert_eq!(
+        forward_empty_reason(serde_json::json!({"containers": [{"name": "app"}]})),
+        "No declared ports"
+    );
+    assert_eq!(
+        forward_empty_reason(serde_json::json!({"containers": [{"name": "app", "ports": []}]})),
+        "No declared ports"
+    );
+    assert_eq!(
+        forward_empty_reason(
+            serde_json::json!({"containers": [{"name": "app", "ports": declared}]})
+        ),
+        "No running container with a declared port"
+    );
+    // A sidecar's port counts; a run-once init container's does not.
+    assert_eq!(
+        forward_empty_reason(serde_json::json!({
+            "initContainers": [{"name": "proxy", "restartPolicy": "Always", "ports": declared}],
+            "containers": [{"name": "app"}]
+        })),
+        "No running container with a declared port"
+    );
+    assert_eq!(
+        forward_empty_reason(serde_json::json!({
+            "initContainers": [{"name": "migrate", "ports": declared}],
+            "containers": [{"name": "app"}]
+        })),
+        "No declared ports"
+    );
+}
