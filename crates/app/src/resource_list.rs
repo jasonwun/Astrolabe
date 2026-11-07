@@ -116,10 +116,7 @@ impl ResourceListPanel {
             cx.background_executor().timer(next_tick).await;
             panel.update(cx, |panel, cx| panel.refresh(cx)).ok();
         });
-        let open_all_cells = match data.viewing() {
-            Viewing::Builtin(kind) => kind.registration().open_all_cells,
-            _ => false,
-        };
+        let open_all_cells = data.viewing().opens_from_every_cell();
         self.table.update(cx, |state, cx| {
             let rows = state.delegate_mut();
             rows.open_all_cells = open_all_cells;
@@ -193,6 +190,10 @@ impl Panel for ResourceListPanel {
 impl Render for ResourceListPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let showing_definitions = matches!(
+            self.session.read(cx).state().viewing(),
+            Viewing::Definitions
+        );
         v_flex()
             // The dock focuses the displayed panel; `cmd-w` dispatches from
             // here.
@@ -221,13 +222,9 @@ impl Render for ResourceListPanel {
                         .child(text),
                 )
             })
-            .when(
-                matches!(
-                    self.session.read(cx).state().viewing(),
-                    Viewing::Definitions
-                ),
-                |this| this.child(self.render_group_filter(cx)),
-            )
+            .when(showing_definitions, |this| {
+                this.child(self.render_group_filter(cx))
+            })
             .map(|this| match self.outcome_notice.clone() {
                 Some(notice) => this.child(notice_view(notice, cx).p_4()),
                 None => this.child(fitted_table(&self.table, "list-table").flex_1().min_h_0()),

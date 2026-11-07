@@ -287,8 +287,8 @@ impl SessionView {
 
     fn render_nav(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let current = self.session.read(cx).state().viewing().clone();
-        let session = self.session.read(cx);
+        let state = self.session.read(cx).state();
+        let current = state.viewing().clone();
         let item = |id: SharedString, label: String, depth: usize, selected: bool| {
             div()
                 .id(id)
@@ -340,7 +340,7 @@ impl SessionView {
             .child(
                 item(
                     "nav-namespaces".into(),
-                    "Namespaces".to_string(),
+                    Viewing::Namespaces.label(state),
                     0,
                     current == Viewing::Namespaces,
                 )
@@ -356,7 +356,7 @@ impl SessionView {
                             kinds.iter().map(|&kind| {
                                 item(
                                     kind.nav_id().into(),
-                                    kind.registration().label.to_string(),
+                                    Viewing::Builtin(kind).label(state),
                                     0,
                                     current == Viewing::Builtin(kind),
                                 )
@@ -373,7 +373,7 @@ impl SessionView {
             .child(
                 item(
                     "nav-definitions".into(),
-                    "Definitions".to_string(),
+                    Viewing::Definitions.label(state),
                     0,
                     current == Viewing::Definitions,
                 )
@@ -382,7 +382,7 @@ impl SessionView {
                 ),
             );
 
-        if session.state().status().crd_access_denied {
+        if state.status().crd_access_denied {
             return nav.child(
                 div()
                     .id("nav-crd-denied")
@@ -395,7 +395,7 @@ impl SessionView {
                     .child(CRD_DENIED),
             );
         }
-        for group in session.state().catalog() {
+        for group in state.catalog() {
             let collapsed = self.collapsed.contains(&group.group);
             let toggled = group.group.clone();
             nav = nav.child(

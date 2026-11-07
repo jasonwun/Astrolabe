@@ -690,3 +690,21 @@ fn a_reference_error_shows_its_own_text() {
     assert_eq!(error, OpenRowError::Reference(reference.clone()));
     assert_eq!(error.to_string(), reference.to_string());
 }
+
+#[test]
+fn an_event_row_whose_object_is_of_an_unregistered_kind_is_a_reference_error() {
+    let state = state_with_event(event(
+        &serde_json::json!({"apiVersion": "example.com/v1", "kind": "Gadget", "name": "g1"}),
+    ));
+    assert_eq!(
+        DetailTarget::from_row(
+            &Viewing::Builtin(BuiltinKind::Events),
+            &row(Some("default"), "e1"),
+            &state
+        ),
+        Err(OpenRowError::Reference(ReferenceError::UnregisteredKind {
+            kind: "Gadget".to_string(),
+            name: "g1".to_string()
+        }))
+    );
+}

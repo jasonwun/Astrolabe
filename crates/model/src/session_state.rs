@@ -138,7 +138,8 @@ pub enum Viewing {
 }
 
 impl Viewing {
-    /// The list's tab name.
+    /// The list's tab name. `_state` is part of the signature for a label
+    /// that reads the state; none does yet.
     #[must_use]
     pub fn label(&self, _state: &SessionState) -> String {
         match self {
@@ -146,6 +147,15 @@ impl Viewing {
             Self::Builtin(kind) => kind.registration().label.to_string(),
             Self::Definitions => "Definitions".to_string(),
             Self::Custom(id) => id.kind.clone(),
+        }
+    }
+
+    /// Whether every cell of a row opens its detail, not only the first.
+    #[must_use]
+    pub fn opens_from_every_cell(&self) -> bool {
+        match self {
+            Self::Builtin(kind) => kind.registration().open_all_cells,
+            Self::Namespaces | Self::Definitions | Self::Custom(_) => false,
         }
     }
 }

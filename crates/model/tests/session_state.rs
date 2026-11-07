@@ -1690,3 +1690,12 @@ fn each_list_is_named_by_its_tab_label() {
     assert_eq!(label(Viewing::Definitions), "Definitions");
     assert_eq!(label(Viewing::Custom(crontab_id())), "CronTab");
 }
+
+#[test]
+fn only_the_events_list_opens_from_every_cell() {
+    assert!(Viewing::Builtin(BuiltinKind::Events).opens_from_every_cell());
+    assert!(!Viewing::Builtin(BuiltinKind::Pods).opens_from_every_cell());
+    assert!(!Viewing::Namespaces.opens_from_every_cell());
+    assert!(!Viewing::Definitions.opens_from_every_cell());
+    assert!(!Viewing::Custom(crontab_id()).opens_from_every_cell());
+}
