@@ -104,23 +104,26 @@ impl Subject {
     }
 
     fn containers_for(&self, action: PodAction) -> &[String] {
-        match action {
-            PodAction::Logs => &self.containers.all,
-            PodAction::Exec | PodAction::Forward => &self.containers.running,
-        }
+        targets(&self.containers, action)
     }
 }
 
 /// The containers `action` can target: Logs reads every container, init
 /// containers first; Exec and Forward need one still running.
-pub fn containers(model: &DetailModel, action: PodAction) -> Vec<String> {
-    let Some(containers) = &model.containers else {
-        return Vec::new();
-    };
+fn targets(containers: &Containers, action: PodAction) -> &[String] {
     match action {
-        PodAction::Logs => containers.all.clone(),
-        PodAction::Exec | PodAction::Forward => containers.running.clone(),
+        PodAction::Logs => &containers.all,
+        PodAction::Exec | PodAction::Forward => &containers.running,
     }
+}
+
+/// The containers `action` can target in the detail `model`.
+pub fn containers(model: &DetailModel, action: PodAction) -> Vec<String> {
+    model
+        .containers
+        .as_ref()
+        .map(|containers| targets(containers, action).to_vec())
+        .unwrap_or_default()
 }
 
 /// What Port Forward reaches from the detail of the object at `key`.
@@ -141,7 +144,7 @@ pub struct DetailActions {
 }
 
 impl DetailActions {
-    pub fn confirming_delete(&self) -> bool {
+    pub fn delete_confirmation_open(&self) -> bool {
         self.confirm_delete
     }
 

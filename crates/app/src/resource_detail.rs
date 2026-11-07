@@ -163,7 +163,7 @@ impl ResourceDetailPanel {
 
     fn press(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         let effect = self.actions.press(action, &self.subject(cx));
-        if self.actions.scale_open() && self.scale.is_none() {
+        if action == Action::Scale {
             self.open_scale(window, cx);
         }
         self.carry_out(effect, cx);
@@ -790,7 +790,7 @@ impl Render for ResourceDetailPanel {
             .when_some(self.scale.clone(), |this, input| {
                 this.child(self.render_scale(&input, replicas, cx))
             })
-            .when(self.actions.confirming_delete(), |this| {
+            .when(self.actions.delete_confirmation_open(), |this| {
                 this.child(self.render_confirm(resolved.cascade, cx))
             })
             .children(forwards.and_then(|target| self.render_forwards(target, cx)))

@@ -206,13 +206,13 @@ fn delete_runs_only_after_confirmation() {
     let subject = pod(&[], &[]);
     let mut actions = DetailActions::default();
     assert_eq!(actions.press(Action::Delete, &subject), Effect::None);
-    assert!(actions.confirming_delete());
+    assert!(actions.delete_confirmation_open());
     assert_eq!(actions.notice(), None);
     assert_eq!(
         actions.confirm_delete(&subject),
         Effect::Run(Operation::Delete { object: object() })
     );
-    assert!(!actions.confirming_delete());
+    assert!(!actions.delete_confirmation_open());
     assert_eq!(actions.notice(), Some("Deleting…"));
 }
 
@@ -221,7 +221,7 @@ fn cancelling_delete_runs_nothing() {
     let mut actions = DetailActions::default();
     actions.press(Action::Delete, &pod(&[], &[]));
     actions.cancel_delete();
-    assert!(!actions.confirming_delete());
+    assert!(!actions.delete_confirmation_open());
     assert_eq!(actions.notice(), None);
 }
 
