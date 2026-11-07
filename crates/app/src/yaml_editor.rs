@@ -510,20 +510,22 @@ impl YamlEditorView {
                         Command::new(palette)
                             .placeholder("YAML editor command…")
                             .group(group)
-                            .on_confirm(move |index, _window, cx| {
-                                view.update_in(cx, |this, window, cx| {
+                            .on_confirm(move |index, window, cx| {
+                                // `update`, not `update_in`: a deferred callback has no
+                                // current window, so `update_in` fails there (#317).
+                                view.update(cx, |this, cx| {
                                     this.on_palette_confirm(&index, window, cx);
                                 })
-                                .ok();
+                                .expect("the editor outlives its palette");
                             })
-                            .on_cancel(move |_window, cx| {
+                            .on_cancel(move |window, cx| {
                                 cancel_view
-                                    .update_in(cx, |this, window, cx| {
+                                    .update(cx, |this, cx| {
                                         this.palette = None;
                                         this.state.focus_handle(cx).focus(window, cx);
                                         cx.notify();
                                     })
-                                    .ok();
+                                    .expect("the editor outlives its palette");
                             }),
                     ),
                 ),

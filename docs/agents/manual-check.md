@@ -298,8 +298,11 @@ path of `<name>.png`, shrunk to one pixel per window point.
   paths) needs F6 itself: `osascript -e 'tell application "System Events"
   to key code 97'` reaches the focused editor, and #314's check used it.
   The command palette's "Run dry-run precheck now" did not confirm under
-  `orca` (click, Return and Enter all left it open; #317), so do not
-  spend a run on it (#308 retro).
+  `orca` until #317 (a deferred callback used `update_in`, which fails
+  without a current window): since then `cmd+shift+p`, `Down`, `Return`
+  and a click on the row both close the palette. The auto-run Precheck
+  masks the result on screen, so the closed palette is the evidence and
+  the `yaml_editor` UI tests count the Prechecks (#317).
 - An edit made *while* an Apply is in flight (the line marks re-mapped
   onto the newer buffer) cannot be driven by hand: on `kind-astrolabe-dev`
   the 422 comes back before `orca computer` can send a second key. Drive
