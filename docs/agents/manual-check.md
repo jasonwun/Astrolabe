@@ -383,6 +383,14 @@ path of `<name>.png`, shrunk to one pixel per window point.
   it lists namespaces alphabetically, and a click at a remembered position
   lands on another namespace once the list changes (#95).
 
+A test-only change (#305: only `crates/app/tests` and docs) has no
+production diff to compare against `origin/main`: the launch view and one
+list (Pods) on `kind-astrolabe-dev` are the check, and the PR says the
+screenshots prove only that. The first `cargo run` took about 90 s to
+open its window. `gh pr create --attach` appends the images to the body:
+a `![..](./start.png)` placeholder of your own in the body shows a broken
+image beside them, so leave the images out of the body text (#305 retro).
+
 ### A change that must leave the UI as it was
 
 A refactor proves "unchanged" by comparing pixels against `origin/main`,

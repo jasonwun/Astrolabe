@@ -140,7 +140,12 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   Force Apply, `precheck: PrecheckAnswer::UnknownField`,
   `logs: LogsAnswer::Resets`, `scale`/`exec` as ordered lists,
   `forward` per port). The harness has no branch on a port, shell or
-  replica value (#305). A Global error on a document is a rule of `EditLoop`: test it
+  replica value (#305). Flipping a default (#305 made Apply answer
+  cleanly, where it used to answer 409) breaks the tests that never
+  named the failure they relied on, and grep cannot find them: run every
+  binary that calls `open`, and declare the failure in each one that
+  fails (`dock_tabs`' Edit YAML test was the one #305 missed)
+  (#305 retro). A Global error on a document is a rule of `EditLoop`: test it
   there with a plain `#[test]` (#299).
 - The line tints of the YAML editor are not elements, so `try_find`
   cannot see them. Build the view over a scripted Session
