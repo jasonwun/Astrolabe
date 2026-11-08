@@ -58,6 +58,38 @@ pub struct ScriptedCluster {
     /// Whether a failed connect leaves the watches open, so that they
     /// deliver their events once it is cleared, as a live Cluster's do.
     recovers: bool,
+    /// Where the senders of the Logs streams and Exec sessions go, when
+    /// they should stay open; see [`OpenStreams`].
+    open_streams: Option<OpenStreams>,
+}
+
+/// The senders behind the Logs streams and Exec sessions of a
+/// [`ScriptedCluster`] that keeps them open: dropping a sender is what ends
+/// a stream, so the test holds them and calls [`OpenStreams::close`].
+#[derive(Clone, Default)]
+pub struct OpenStreams(Rc<RefCell<HeldSenders>>);
+
+#[derive(Default)]
+struct HeldSenders {
+    logs: Vec<mpsc::UnboundedSender<LogChunk>>,
+    execs: Vec<mpsc::UnboundedSender<ExecOutput>>,
+}
+
+impl OpenStreams {
+    fn hold_log(&self, sender: mpsc::UnboundedSender<LogChunk>) {
+        self.0.borrow_mut().logs.push(sender);
+    }
+
+    fn hold_exec(&self, sender: mpsc::UnboundedSender<ExecOutput>) {
+        self.0.borrow_mut().execs.push(sender);
+    }
+
+    /// End every stream and session held open so far.
+    pub fn close(&self) {
+        let mut held = self.0.borrow_mut();
+        held.logs.clear();
+        held.execs.clear();
+    }
 }
 
 /// Clears the connect failure of a [`ScriptedCluster`] that recovers, as a
@@ -89,6 +121,7 @@ impl ScriptedCluster {
             port_forward: Box::new(|_| Vec::new()),
             connect_failure: Rc::default(),
             recovers: false,
+            open_streams: None,
         }
     }
 
@@ -201,6 +234,13 @@ impl ScriptedCluster {
         exec: impl FnMut(&ExecRequest, mpsc::UnboundedReceiver<ExecInput>) -> Vec<ExecOutput> + 'static,
     ) -> Self {
         self.exec = Box::new(exec);
+        self
+    }
+
+    /// Keep the Logs streams and Exec sessions open after their scripted
+    /// chunks are sent, until `open_streams` is closed.
+    pub fn keep_streams_open(mut self, open_streams: &OpenStreams) -> Self {
+        self.open_streams = Some(open_streams.clone());
         self
     }
 
@@ -347,13 +387,16 @@ impl ClusterIo {
     }
 
     /// Follow one container's log; a scripted cluster's chunks are all
-    /// sent at once.
+    /// sent at once, and the stream closes unless it is kept open.
     pub(crate) fn logs(&mut self, request: LogRequest) -> LogStream {
         match self {
             Self::Scripted(cluster) => {
                 let (sender, chunks) = mpsc::unbounded();
                 for chunk in (cluster.logs)(&request) {
                     let _ = sender.unbounded_send(chunk);
+                }
+                if let Some(open) = &cluster.open_streams {
+                    open.hold_log(sender);
                 }
                 LogStream::new(chunks)
             }
@@ -370,6 +413,9 @@ impl ClusterIo {
                 let (sender, output) = mpsc::unbounded();
                 for item in (cluster.exec)(&request, inputs) {
                     let _ = sender.unbounded_send(item);
+                }
+                if let Some(open) = &cluster.open_streams {
+                    open.hold_exec(sender);
                 }
                 ExecSession::new(input, output)
             }

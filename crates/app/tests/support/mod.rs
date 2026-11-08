@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use astrolabe::clock::Clock;
 use astrolabe::launch::Preselection;
-use astrolabe::session::ScriptedCluster;
+use astrolabe::session::{OpenStreams, ScriptedCluster};
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::apply::{ApplyMode, ApplyReport, DocError, DocOutcome};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
@@ -90,12 +90,32 @@ pub struct Ui<'a> {
     pub execed: Execed,
     pub forwarded: Forwarded,
     pub applied: Applied,
+    /// The streams [`open_streaming`] keeps open.
+    pub open_streams: OpenStreams,
 }
 
 pub fn open(
     cx: &mut TestAppContext,
     watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
 ) -> Ui<'_> {
+    open_with(cx, watches, false)
+}
+
+/// Like [`open`], but a Logs stream and an Exec session stay open (no
+/// failure, no exit) until `ui.open_streams.close()`.
+pub fn open_streaming(
+    cx: &mut TestAppContext,
+    watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
+) -> Ui<'_> {
+    open_with(cx, watches, true)
+}
+
+fn open_with(
+    cx: &mut TestAppContext,
+    watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
+    streaming: bool,
+) -> Ui<'_> {
+    let open_streams = OpenStreams::default();
     let (namespaces, namespace_events) = mpsc::channel(32);
     let deleted: Deleted = Rc::default();
     let operated: Operated = Rc::default();
@@ -134,6 +154,9 @@ pub fn open(
             let logged = logged.clone();
             move |request: &LogRequest| {
                 logged.borrow_mut().push(request.clone());
+                if streaming {
+                    return vec![Ok(b"starting\n".to_vec())];
+                }
                 vec![
                     Ok(b"starting\n".to_vec()),
                     Err(ClusterError::new("stream reset")),
@@ -144,6 +167,9 @@ pub fn open(
             let execed = execed.clone();
             move |request: &ExecRequest, input| {
                 execed.borrow_mut().push((request.clone(), input));
+                if streaming {
+                    return vec![ExecOutput::Bytes(b"/ # ".to_vec())];
+                }
                 let exit = match request.shell.as_str() {
                     "bash" => Ok(0),
                     _ => Err(ClusterError::new("container not found (\"app\")")),
@@ -174,6 +200,9 @@ pub fn open(
                 events
             }
         });
+    if streaming {
+        cluster = cluster.keep_streams_open(&open_streams);
+    }
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
@@ -187,6 +216,7 @@ pub fn open(
         execed,
         forwarded,
         applied,
+        open_streams,
     }
 }
 

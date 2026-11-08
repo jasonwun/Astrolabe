@@ -17,7 +17,7 @@ use futures::{FutureExt as _, StreamExt, channel::mpsc};
 use gpui_kit::{Context, Task};
 
 use crate::cluster_io::ClusterIo;
-pub use crate::cluster_io::{ConnectRecovery, ScriptedCluster};
+pub use crate::cluster_io::{ConnectRecovery, OpenStreams, ScriptedCluster};
 use crate::perf;
 
 /// CRD add/update/delete → rediscovery debounce (#16). Updates count too: a
