@@ -6,26 +6,11 @@ use std::sync::Arc;
 use astrolabe_kube::pod::LogStream;
 use astrolabe_model::terminal_status::LogState;
 use astrolabe_terminal::backend::display_only;
-use astrolabe_terminal::{TerminalBackend, TerminalView};
+use astrolabe_terminal::{TerminalBackend, TerminalView, terminal_bytes};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::*;
 
 use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_tab};
-
-/// Log bytes as a terminal must receive them: a bare `\n` only moves the
-/// cursor down, so each gets the carriage return a TTY would add. A `\r`
-/// ending one chunk before the next chunk's `\n` gains a harmless second
-/// `\r`.
-pub fn terminal_bytes(chunk: &[u8]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(chunk.len() + chunk.len() / 16);
-    for (index, byte) in chunk.iter().enumerate() {
-        if *byte == b'\n' && (index == 0 || chunk[index - 1] != b'\r') {
-            bytes.push(b'\r');
-        }
-        bytes.push(*byte);
-    }
-    bytes
-}
 
 pub struct LogsPanel {
     title: String,

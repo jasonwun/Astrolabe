@@ -1683,8 +1683,7 @@ fn crd_groups_are_the_distinct_groups_of_the_definitions() {
 
 #[test]
 fn each_list_is_named_by_its_tab_label() {
-    let state = state();
-    let label = |viewing: Viewing| viewing.label(&state);
+    let label = |viewing: Viewing| viewing.label();
     assert_eq!(label(Viewing::Namespaces), "Namespaces");
     assert_eq!(label(Viewing::Builtin(BuiltinKind::Pods)), "Pods");
     assert_eq!(label(Viewing::Definitions), "Definitions");

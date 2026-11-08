@@ -44,6 +44,12 @@ pub enum ExecState {
 }
 
 impl ExecState {
+    /// The session ended without an exit status.
+    #[must_use]
+    pub fn dropped() -> Self {
+        Self::Failed(ClusterError::new("session dropped"))
+    }
+
     /// The shell has exited or failed: reopening starts a new one.
     pub fn is_finished(&self) -> bool {
         !matches!(self, Self::Running)

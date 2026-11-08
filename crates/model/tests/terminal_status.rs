@@ -43,3 +43,11 @@ fn only_a_live_stream_or_shell_is_unfinished() {
     assert!(ExecState::Exited(0).is_finished());
     assert!(ExecState::Failed(ClusterError::new("boom")).is_finished());
 }
+
+#[test]
+fn a_dropped_exec_session_is_a_failure() {
+    assert_eq!(
+        ExecState::dropped(),
+        ExecState::Failed(ClusterError::new("session dropped"))
+    );
+}

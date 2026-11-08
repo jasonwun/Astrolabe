@@ -397,7 +397,7 @@ impl SessionView {
             .child(
                 item(
                     "nav-namespaces".into(),
-                    Viewing::Namespaces.label(state),
+                    Viewing::Namespaces.label(),
                     0,
                     current == Viewing::Namespaces,
                 )
@@ -413,7 +413,7 @@ impl SessionView {
                             kinds.iter().map(|&kind| {
                                 item(
                                     kind.nav_id().into(),
-                                    Viewing::Builtin(kind).label(state),
+                                    Viewing::Builtin(kind).label(),
                                     0,
                                     current == Viewing::Builtin(kind),
                                 )
@@ -430,7 +430,7 @@ impl SessionView {
             .child(
                 item(
                     "nav-definitions".into(),
-                    Viewing::Definitions.label(state),
+                    Viewing::Definitions.label(),
                     0,
                     current == Viewing::Definitions,
                 )

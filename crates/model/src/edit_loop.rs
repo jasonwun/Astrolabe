@@ -50,7 +50,7 @@ pub struct ProblemRow {
 /// The problem panel: shown while the last Apply left problems or named
 /// the managers it conflicted with.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Panel {
+pub struct ProblemPanel {
     pub header: String,
     pub rows: Vec<ProblemRow>,
     /// Whether the Force Apply button is offered (a 409 context).
@@ -63,7 +63,7 @@ pub struct Projection {
     /// Global notices, one line each: the Apply's, then the manual
     /// Precheck's. A click dismisses them all.
     pub notices: Vec<String>,
-    pub panel: Option<Panel>,
+    pub panel: Option<ProblemPanel>,
     pub status: String,
     /// The Precheck text of the status bar: empty when there is nothing to
     /// say.
@@ -441,7 +441,7 @@ impl EditLoop {
         }
     }
 
-    fn panel_projection(&self) -> Panel {
+    fn panel_projection(&self) -> ProblemPanel {
         let mut header = format!("{} problem(s) from last apply", self.panel.len());
         if !self.conflict_managers.is_empty() {
             let _ = write!(
@@ -468,7 +468,7 @@ impl EditLoop {
                 }
             })
             .collect();
-        Panel {
+        ProblemPanel {
             header,
             rows,
             force_apply: self.force_apply_available,
