@@ -275,6 +275,16 @@ path of `<name>.png`, shrunk to one pixel per window point.
   `DIFF` against a baseline for terminal content only (an extra prompt line,
   the container id in the failed text): compare the status bar by eye and
   say so in the PR (#304 retro).
+- Edit YAML on that detail is at (714,146); the Editor tab's header and
+  first lines crop as `440,85,560,130`. A move-only ticket whose criterion
+  says "opening a Detail, Logs, Exec and Editor tab still works" still runs
+  the pixel comparison below: #331 first shipped with a smoke walk and a
+  note that no comparison was made, and the user asked for it. The
+  comparison, with the clicks above in one `actions.sh`, read `same` on
+  Detail, Logs (`setup`, `app`), Exec (`app`, `sh`) and Editor. Pods read
+  `DIFF` for the `crashy` Pod's Restarts alone (`2 (19s ago)` against
+  `3 (56s)`, it crash-loops on purpose): crop the Pods list to the left of
+  Restarts or read that cell as the cluster, not the view (#331 retro).
 - A tab count cannot be read off a capture: tab titles carry the object's
   namespace (`astrolabe-demo-<worktree>`), so with two or three tabs open the
   tab bar overflows a 1000-wide window and shows only the active title. The
