@@ -366,6 +366,10 @@ path of `<name>.png`, shrunk to one pixel per window point.
   moves a focus call from a click handler into `render`, the capture
   shows it: the caret is in the input and `type-text` lands without a
   click (#343 retro).
+- The Pods crop `440,85,470,320` still holds the Restarts column, so the
+  `crashy` Pod reads `DIFF` (`3` against `4`) on every refactor check.
+  #346 saw it again and read the pair by eye. Crop Pods to `440,85,230,320`
+  (Name to Status) when Restarts is not under test (#346 retro).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - A view that changes with time (ages): `dev/demo.yaml` objects keep
