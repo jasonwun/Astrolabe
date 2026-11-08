@@ -26,11 +26,12 @@ use astrolabe_model::session_state::Viewing;
 use astrolabe_model::tab::{TabKey, TabRequest};
 
 /// A tab a request may reuse. Only a Logs or Exec tab is restarted, so
-/// only those keep their panel.
+/// only those keep their panel, and weakly: the dock owns a panel, and a
+/// closed tab must release its stream or shell (#341).
 #[derive(Clone)]
 enum OpenedTab {
-    Logs(Entity<LogsPanel>),
-    Exec(Entity<ExecPanel>),
+    Logs(WeakEntity<LogsPanel>),
+    Exec(WeakEntity<ExecPanel>),
     Other(PanelId),
 }
 
@@ -54,7 +55,8 @@ pub struct SessionView {
     dock: Entity<DockArea>,
     list: Entity<ResourceListPanel>,
     /// The open tabs a request may reuse; a closed tab's entry stays until
-    /// replaced.
+    /// replaced (a Logs or Exec entry is weak, so it no longer keeps the
+    /// panel).
     tabs: HashMap<TabKey, OpenedTab>,
     collapsed: BTreeSet<String>,
     namespace_menu: bool,
@@ -168,12 +170,15 @@ impl SessionView {
         if let Some(key) = &key
             && let Some(opened) = self.reusable(key, cx)
         {
+            // `reusable` found the panel in the dock, so a Logs or Exec
+            // handle upgrades; a failed upgrade would only skip the restart.
             // Only a finished Logs or Exec tab is restarted; any other
             // reused tab is just selected. Keys are disjoint per kind, so
             // the request is of the tab's kind.
             match &opened {
                 OpenedTab::Logs(panel) => {
                     if let TabRequest::Logs { request, .. } = request
+                        && let Some(panel) = panel.upgrade()
                         && panel.read(cx).is_finished()
                     {
                         let stream = self.session.update(cx, |session, _| session.logs(request));
@@ -182,6 +187,7 @@ impl SessionView {
                 }
                 OpenedTab::Exec(panel) => {
                     if let TabRequest::Exec { request, .. } = request
+                        && let Some(panel) = panel.upgrade()
                         && panel.read(cx).is_finished()
                     {
                         let session = self.session.update(cx, |session, _| session.exec(request));
@@ -205,13 +211,13 @@ impl SessionView {
                 let stream = self.session.update(cx, |session, _| session.logs(request));
                 let panel = cx.new(|cx| LogsPanel::new(title, stream, window, cx));
                 self.add_tab(panel_handle(panel.clone()), window, cx);
-                OpenedTab::Logs(panel)
+                OpenedTab::Logs(panel.downgrade())
             }
             TabRequest::Exec { title, request } => {
                 let session = self.session.update(cx, |session, _| session.exec(request));
                 let panel = cx.new(|cx| ExecPanel::new(title, session, window, cx));
                 self.add_tab(panel_handle(panel.clone()), window, cx);
-                OpenedTab::Exec(panel)
+                OpenedTab::Exec(panel.downgrade())
             }
             TabRequest::Editor { title, yaml, .. } => {
                 let session = self.session.clone();
