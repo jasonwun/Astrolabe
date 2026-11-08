@@ -6,12 +6,11 @@ use std::sync::Arc;
 use astrolabe_kube::pod::LogStream;
 use astrolabe_model::terminal_status::LogState;
 use astrolabe_terminal::backend::display_only;
-use astrolabe_terminal::{TerminalBackend, TerminalView};
+use astrolabe_terminal::{TerminalBackend, TerminalView, terminal_bytes};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::*;
 
 use crate::terminal_panel::{COLS, ROWS, SCROLLBACK, terminal_tab};
-use astrolabe_terminal::terminal_bytes;
 
 pub struct LogsPanel {
     title: String,

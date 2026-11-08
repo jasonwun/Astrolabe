@@ -45,6 +45,7 @@ pub enum ExecState {
 
 impl ExecState {
     /// The session ended without an exit status.
+    #[must_use]
     pub fn dropped() -> Self {
         Self::Failed(ClusterError::new("session dropped"))
     }

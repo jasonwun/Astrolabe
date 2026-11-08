@@ -31,3 +31,9 @@ fn a_lone_line_feed_gains_a_carriage_return() {
 fn a_chunk_ending_in_a_carriage_return_is_unchanged() {
     assert_eq!(terminal_bytes(b"a\r"), b"a\r");
 }
+
+#[test]
+fn a_carriage_return_ending_one_chunk_gains_a_second_before_the_next_chunks_line_feed() {
+    let joined = [terminal_bytes(b"a\r"), terminal_bytes(b"\nb")].concat();
+    assert_eq!(joined, b"a\r\r\nb");
+}

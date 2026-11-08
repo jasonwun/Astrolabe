@@ -1,3 +1,5 @@
+//! Bytes as a terminal must receive them.
+
 /// Log bytes as a terminal must receive them: a bare `\n` only moves the
 /// cursor down, so each gets the carriage return a TTY would add. A `\r`
 /// ending one chunk before the next chunk's `\n` gains a harmless second
