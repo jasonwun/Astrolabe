@@ -167,9 +167,7 @@ impl SessionView {
     /// itself.
     fn open_tab(&mut self, request: TabRequest, window: &mut Window, cx: &mut Context<Self>) {
         let key = request.key();
-        if let Some(key) = &key
-            && let Some(opened) = self.reusable(key, cx)
-        {
+        if let Some(opened) = self.reusable(&key, cx) {
             // `reusable` found the panel in the dock, so a Logs or Exec
             // handle upgrades; a failed upgrade would only skip the restart.
             // Only a finished Logs or Exec tab is restarted; any other
@@ -227,9 +225,7 @@ impl SessionView {
                 OpenedTab::Other(id)
             }
         };
-        if let Some(key) = key {
-            self.tabs.insert(key, opened);
-        }
+        self.tabs.insert(key, opened);
     }
 
     /// The open tab for `key`, checked against the dock: a closed tab's

@@ -44,11 +44,11 @@ pub struct ContainerRef {
 }
 
 impl TabRequest {
-    /// The key of the tab this request reuses: `Some` shows the open tab
-    /// with this key if there is one, `None` always opens a new tab. Every
-    /// request has one: a target has at most one tab of each kind.
-    pub fn key(&self) -> Option<TabKey> {
-        Some(match self {
+    /// The key of the tab this request opens or reuses: a target has at
+    /// most one tab of each kind, so an open tab with this key is shown
+    /// instead of opening another.
+    pub fn key(&self) -> TabKey {
+        match self {
             Self::Detail(target) => TabKey::Detail(target.clone()),
             Self::Logs { request, .. } => TabKey::Logs(ContainerRef {
                 pod: request.pod.clone(),
@@ -59,6 +59,6 @@ impl TabRequest {
                 container: request.container.clone(),
             }),
             Self::Editor { target, .. } => TabKey::Editor(target.clone()),
-        })
+        }
     }
 }
