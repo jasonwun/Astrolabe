@@ -146,11 +146,8 @@ impl ResourceDetailPanel {
         Subject::of(&self.target, self.state(cx), resolved.as_ref())
     }
 
-    fn press(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+    fn press(&mut self, action: Action, cx: &mut Context<Self>) {
         let effect = self.actions.press(action, &self.subject(cx));
-        if action == Action::Scale {
-            self.open_scale(window, cx);
-        }
         self.carry_out(effect, cx);
     }
 
@@ -238,9 +235,6 @@ impl ResourceDetailPanel {
                 .detach();
             }
         }
-        if !self.actions.scale_open() {
-            self.scale = None;
-        }
         cx.notify();
     }
 
@@ -276,11 +270,11 @@ impl ResourceDetailPanel {
                 } else {
                     button
                 };
-                button.on_click(cx.listener(move |panel, _, window, cx| {
+                button.on_click(cx.listener(move |panel, _, _, cx| {
                     if action == Action::Edit {
                         panel.edit(cx);
                     } else {
-                        panel.press(action, window, cx);
+                        panel.press(action, cx);
                     }
                 }))
             }))
@@ -632,7 +626,8 @@ impl Panel for ResourceDetailPanel {
 }
 
 impl Render for ResourceDetailPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_scale(window, cx);
         let _cost = perf::time(perf::Work::DetailRender);
         let now = clock::now(cx);
         let (resolved, next_tick) = track_ages(now, || {

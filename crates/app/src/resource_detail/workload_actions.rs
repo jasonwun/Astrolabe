@@ -9,17 +9,24 @@ use gpui_kit::*;
 use super::{ResourceDetailPanel, button};
 
 impl ResourceDetailPanel {
-    pub(super) fn open_scale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let input = cx.new(|cx| InputState::new(window, cx));
-        cx.subscribe_in(&input, window, |panel, _, event: &InputEvent, _, cx| {
-            if let InputEvent::PressEnter { .. } = event {
-                panel.apply_scale(cx);
+    /// The one place the Scale input follows `DetailActions::scale_open`:
+    /// created (and focused) when the form opens, dropped when it closes.
+    pub(super) fn sync_scale(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match (self.actions.scale_open(), self.scale.is_some()) {
+            (true, false) => {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                cx.subscribe_in(&input, window, |panel, _, event: &InputEvent, _, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        panel.apply_scale(cx);
+                    }
+                })
+                .detach();
+                input.update(cx, |input, cx| input.focus(window, cx));
+                self.scale = Some(input);
             }
-        })
-        .detach();
-        input.update(cx, |input, cx| input.focus(window, cx));
-        self.scale = Some(input);
-        cx.notify();
+            (false, true) => self.scale = None,
+            _ => {}
+        }
     }
 
     fn apply_scale(&mut self, cx: &mut Context<Self>) {
@@ -66,7 +73,6 @@ impl ResourceDetailPanel {
             .child(
                 button("scale-cancel", "Cancel").on_click(cx.listener(|panel, _, _, cx| {
                     panel.actions.cancel_scale();
-                    panel.scale = None;
                     cx.notify();
                 })),
             )
