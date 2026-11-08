@@ -119,8 +119,9 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   is a `CODING_STANDARDS.md` finding (#306).
 - `ScriptedCluster`'s `logs` and `exec` closures return a fixed list, and
   the stream or session ends as soon as it is sent: every Logs or Exec tab
-  in a UI test is already finished (`Stream failed`, `Exited`). For a
-  still-live one, build the window with `support::open_streaming`: its
+  in a UI test is already finished (`Stream ended`, `Exited`). For a
+  still-live one, declare `logs: LogsAnswer::StaysOpen` or
+  `exec: vec![ExecAnswer::StaysOpen]` in the test's `Scenario`: the
   streams stay open (`Streaming…`, `Session running`) until
   `ui.open_streams.close()`. It is the way to test a branch for a live
   stream, such as "reopening does not restart it" (#332).
@@ -130,12 +131,16 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   `support::open` calls `support::label(cx, id)` (#161).
 - A Workspace over several scripted Clusters:
   `support::open_workspace(cx, clusters)`; `support::open` builds its
-  one Cluster on it (#161).
-- The report of a plain Apply that `kubectl` refuses with a 409 on
-  `metadata.name`, which offers Force Apply:
-  `support::conflict_report(snapshot)`; a Precheck's that notes the
-  unknown field `spec.bogus`: `support::unknown_field_report(snapshot)`
-  (#161). A Global error on a document is a rule of `EditLoop`: test it
+  one Cluster on it (#161). Build each Cluster with
+  `Scenario::cluster(namespace_events, &open_streams)`, which also
+  returns what it was asked (`Recorded`).
+- Every test passes `open` a `support::Scenario`: the default answers
+  every operation successfully, and a failure is declared by the test
+  (`apply: ApplyAnswer::Conflict` for a 409 from `kubectl` that offers
+  Force Apply, `precheck: PrecheckAnswer::UnknownField`,
+  `logs: LogsAnswer::Resets`, `scale`/`exec` as ordered lists,
+  `forward` per port). The harness has no branch on a port, shell or
+  replica value (#305). A Global error on a document is a rule of `EditLoop`: test it
   there with a plain `#[test]` (#299).
 - The line tints of the YAML editor are not elements, so `try_find`
   cannot see them. Build the view over a scripted Session

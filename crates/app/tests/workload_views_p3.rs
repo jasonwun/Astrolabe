@@ -8,7 +8,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{key, object, open, open_detail, snapshot};
+use support::{Scenario, key, object, open, open_detail, snapshot};
 
 /// Synthetic objects (plausible shapes, not captured from a server).
 fn pod() -> DynamicObject {
@@ -43,6 +43,7 @@ fn global_event_rows_open_the_involved_object(cx: &mut TestAppContext) {
             (key(BuiltinKind::Events, "default"), event_events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     ui.namespaces(&["default"]);
     ui.settle();
@@ -71,6 +72,7 @@ fn events_open_cluster_scoped_namespaces_without_a_namespace_key(cx: &mut TestAp
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Events, "default"), event_events)],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -88,6 +90,7 @@ fn an_unopenable_involved_object_reports_why(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Events, "default"), event_events)],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -118,6 +121,7 @@ fn a_custom_kind_with_a_builtin_name_is_not_opened_as_builtin(cx: &mut TestAppCo
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Events, "default"), event_events)],
+        Scenario::default(),
     );
     let mut custom = event("custom.job", "Job", "custom");
     custom.data["involvedObject"]["apiVersion"] = serde_json::json!("example.com/v1");
@@ -202,6 +206,7 @@ fn statefulsets_scale_restart_and_list_owned_pods(cx: &mut TestAppContext) {
             (key(BuiltinKind::StatefulSets, "default"), events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -251,6 +256,7 @@ fn replicasets_scale_without_a_restart_action(cx: &mut TestAppContext) {
             (key(BuiltinKind::ReplicaSets, "default"), events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -294,6 +300,7 @@ fn daemonsets_restart_without_a_scale_action(cx: &mut TestAppContext) {
             (key(BuiltinKind::DaemonSets, "default"), events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -333,6 +340,7 @@ fn jobs_list_owned_pods_and_warn_about_cascade(cx: &mut TestAppContext) {
             (key(BuiltinKind::Jobs, "default"), events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -376,6 +384,7 @@ fn cronjobs_suspend_trigger_and_list_owned_jobs(cx: &mut TestAppContext) {
             (key(BuiltinKind::CronJobs, "default"), events),
             (key(BuiltinKind::Jobs, "default"), job_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,

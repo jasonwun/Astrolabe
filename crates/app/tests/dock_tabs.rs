@@ -9,29 +9,16 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use gpui_kit::{Bounds, Pixels, TestAppContext};
-use support::{Ui, key, mouse_click, object, open, open_detail, open_streaming, reopen_detail};
+use support::{
+    ApplyAnswer, ExecAnswer, LogsAnswer, Scenario, Ui, detail_tab_shown, key, mouse_click, object,
+    open, open_detail, open_namespace_detail, reopen_detail,
+};
 
 /// gpui-component's debug selectors for a dock tab and its close button.
 const CLOSE_BUTTON: &str = "dock-tab-close-button";
 const DETAIL_TAB: &str = "dock-tab-1";
 /// A tab the detail opens: Logs, Exec or Edit YAML.
 const CHILD_TAB: &str = "dock-tab-2";
-
-/// Open the Namespaces list holding `old`, then `old`'s detail tab.
-fn open_namespace_detail(ui: &mut Ui<'_>) {
-    ui.namespaces(&["old"]);
-    ui.settle();
-    ui.frame(|window, cx| window.click("row-old", cx));
-    ui.settle();
-}
-
-fn detail_tab_shown(ui: &mut Ui<'_>) -> bool {
-    ui.frame(|window, _| {
-        window
-            .try_find("detail-tab")
-            .is_some_and(|tab| tab.label() == Some("Namespace old"))
-    })
-}
 
 /// Draw a frame and read a debug selector's bounds from it.
 fn bounds(ui: &mut Ui<'_>, selector: &'static str) -> Option<Bounds<Pixels>> {
@@ -41,7 +28,7 @@ fn bounds(ui: &mut Ui<'_>, selector: &'static str) -> Option<Bounds<Pixels>> {
 
 #[gpui_kit::test]
 fn the_close_button_removes_a_detail_tab(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(cx, Vec::new(), Scenario::default());
     open_namespace_detail(&mut ui);
     assert!(detail_tab_shown(&mut ui));
 
@@ -74,7 +61,7 @@ fn the_close_button_removes_a_detail_tab(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn cmd_w_closes_the_active_detail_tab_but_not_the_list(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(cx, Vec::new(), Scenario::default());
     open_namespace_detail(&mut ui);
     assert!(detail_tab_shown(&mut ui));
 
@@ -97,7 +84,7 @@ fn cmd_w_closes_the_active_detail_tab_but_not_the_list(cx: &mut TestAppContext) 
 
 #[gpui_kit::test]
 fn a_closed_detail_reopens_as_a_fresh_selected_tab(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(cx, Vec::new(), Scenario::default());
     open_namespace_detail(&mut ui);
     ui.frame(|window, cx| window.press("cmd-w", cx));
     ui.settle();
@@ -127,7 +114,11 @@ fn pod() -> DynamicObject {
 /// check the child tab carries the close button and `cmd-w` closes it alone.
 fn closes_a_child_tab(cx: &mut TestAppContext, open_child: impl FnOnce(&mut Ui<'_>), label: &str) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     open_child(&mut ui);
     ui.settle();
@@ -180,7 +171,7 @@ fn cmd_w_closes_an_editor_tab(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn opening_the_same_detail_twice_shows_one_tab(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(cx, Vec::new(), Scenario::default());
     open_namespace_detail(&mut ui);
     ui.frame(|window, cx| window.click("nav-namespaces", cx));
     ui.settle();
@@ -197,7 +188,14 @@ fn opening_logs_for_the_same_container_twice_shows_one_tab_with_a_new_stream(
     cx: &mut TestAppContext,
 ) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            logs: LogsAnswer::Resets,
+            ..Scenario::default()
+        },
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
@@ -223,7 +221,15 @@ fn opening_exec_again_after_the_shell_exited_starts_a_new_shell_in_the_same_tab(
     cx: &mut TestAppContext,
 ) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            // The first shell fails; the second exits cleanly.
+            exec: vec![ExecAnswer::Fails, ExecAnswer::Exits],
+            ..Scenario::default()
+        },
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-exec", cx));
     ui.frame(|window, cx| window.click("pick-shell-sh", cx));
@@ -250,7 +256,14 @@ fn opening_exec_again_after_the_shell_exited_starts_a_new_shell_in_the_same_tab(
 #[gpui_kit::test]
 fn opening_edit_yaml_twice_shows_one_editor_that_keeps_its_state(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            apply: ApplyAnswer::Conflict,
+            ..Scenario::default()
+        },
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-edit", cx));
     ui.settle();
@@ -275,7 +288,11 @@ fn opening_edit_yaml_twice_shows_one_editor_that_keeps_its_state(cx: &mut TestAp
 #[gpui_kit::test]
 fn opening_logs_for_two_containers_shows_two_tabs(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     let two = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
         "metadata": {"name": "web-1", "namespace": "default", "uid": "uid-pod"},
@@ -309,7 +326,11 @@ fn opening_logs_for_two_containers_shows_two_tabs(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_closed_logs_tab_reopens_as_a_fresh_tab(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
@@ -335,7 +356,15 @@ fn opening_logs_again_while_the_stream_is_live_selects_the_tab_and_keeps_the_str
     cx: &mut TestAppContext,
 ) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open_streaming(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            logs: LogsAnswer::StaysOpen,
+            exec: vec![ExecAnswer::StaysOpen],
+            ..Scenario::default()
+        },
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-logs", cx));
     ui.settle();
@@ -366,7 +395,15 @@ fn opening_exec_again_while_the_shell_is_live_selects_the_tab_and_keeps_the_shel
     cx: &mut TestAppContext,
 ) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open_streaming(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            logs: LogsAnswer::StaysOpen,
+            exec: vec![ExecAnswer::StaysOpen],
+            ..Scenario::default()
+        },
+    );
     open_detail(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()], "web-1");
     ui.frame(|window, cx| window.click("detail-exec", cx));
     ui.frame(|window, cx| window.click("pick-shell-sh", cx));

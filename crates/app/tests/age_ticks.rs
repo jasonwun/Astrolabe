@@ -12,7 +12,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use support::{Sender, Ui, follow_test_clock, key, object, open, open_list, snapshot};
+use support::{Scenario, Sender, Ui, follow_test_clock, key, object, open, open_list, snapshot};
 
 /// The HPA list's Age column.
 const AGE: &str = "cell-0-5";
@@ -57,7 +57,11 @@ fn open_clocked_list(
 ) -> (Ui<'_>, Sender<DynamicObject>) {
     follow_test_clock(cx, start());
     let (mut objects, events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(kind, "default"), events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(kind, "default"), events)],
+        Scenario::default(),
+    );
     open_list(&mut ui, kind, &mut objects, vec![object]);
     (ui, objects)
 }

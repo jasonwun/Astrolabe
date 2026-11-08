@@ -4,76 +4,39 @@
 
 mod support;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use astrolabe::session::ScriptedCluster;
-use astrolabe_kube::apply::{ApplyMode, ApplyReport};
+use astrolabe::session::{OpenStreams, ScriptedCluster};
+use astrolabe_kube::apply::ApplyMode;
 use astrolabe_kube::cluster::ClusterId;
 use astrolabe_kube::watch::NamespaceWatchMessage;
 use futures::channel::mpsc;
-use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, VisualTestContext};
-use support::{label, open_workspace};
+use support::{
+    ApplyAnswer, PrecheckAnswer, Recorded, Scenario, click, drawn, label, open_workspace,
+};
 
-/// Each Apply a scripted Cluster received: the Cluster, the snapshot and
-/// the mode.
-type Applied = Rc<RefCell<Vec<(&'static str, String, ApplyMode)>>>;
-
-/// How a scripted Cluster answers a plain Apply.
-#[derive(Clone, Copy)]
-enum Answer {
-    Applied,
-    /// A 409 from `kubectl`, which offers Force Apply; a Precheck notes
-    /// the unknown field `spec.bogus`.
-    Conflict,
-}
-
-/// Cluster `name`, whose Apply records into `applied` and answers with
-/// `answer`, and the sender that keeps its Namespace watch open.
+/// Cluster `name` answering as `scenario` declares, what it was asked, and
+/// the sender that keeps its Namespace watch open.
 fn cluster(
     name: &'static str,
-    applied: &Applied,
-    answer: Answer,
+    scenario: &Scenario,
 ) -> (
     (ClusterId, ScriptedCluster),
+    Recorded,
     mpsc::Sender<NamespaceWatchMessage>,
 ) {
     let (namespaces, events) = mpsc::channel(8);
-    let applied = applied.clone();
-    let clean = || ApplyReport::new(Vec::new());
-    let scripted = ScriptedCluster::new(events)
-        .apply(move |snapshot: &str, mode| {
-            applied
-                .borrow_mut()
-                .push((name, snapshot.to_string(), mode));
-            Ok(match (answer, mode) {
-                (Answer::Conflict, ApplyMode::Normal) => support::conflict_report(snapshot),
-                _ => clean(),
-            })
-        })
-        .precheck(move |snapshot: &str| {
-            Ok(match answer {
-                Answer::Conflict => support::unknown_field_report(snapshot),
-                Answer::Applied => clean(),
-            })
-        });
-    ((ClusterId::named(name), scripted), namespaces)
+    let (scripted, recorded) = scenario.cluster(events, &OpenStreams::default());
+    ((ClusterId::named(name), scripted), recorded, namespaces)
 }
 
-fn click(cx: &mut VisualTestContext, id: &'static str) {
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        window.click(id, cx);
-    });
-    cx.run_until_parked();
-}
-
-fn drawn(cx: &mut VisualTestContext, id: &'static str) -> bool {
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        window.try_find(id).is_some()
-    })
+/// A 409 on a plain Apply, which offers Force Apply, and a Precheck that
+/// notes an unknown field.
+fn conflicting() -> Scenario {
+    Scenario {
+        apply: ApplyAnswer::Conflict,
+        precheck: PrecheckAnswer::UnknownField,
+        ..Scenario::default()
+    }
 }
 
 /// Show the Workspace's YAML editor and type `text` into it.
@@ -90,9 +53,8 @@ fn apply(cx: &mut VisualTestContext) {
 
 #[gpui_kit::test]
 fn the_workspace_editor_applies_to_the_selected_cluster(cx: &mut TestAppContext) {
-    let applied = Applied::default();
-    let (a, _a_namespaces) = cluster("kind-a", &applied, Answer::Applied);
-    let (b, _b_namespaces) = cluster("kind-b", &applied, Answer::Applied);
+    let (a, a_recorded, _a_namespaces) = cluster("kind-a", &Scenario::default());
+    let (b, b_recorded, _b_namespaces) = cluster("kind-b", &Scenario::default());
     let cx = open_workspace(cx, vec![a, b]);
 
     click(cx, "cluster-kind-b");
@@ -100,10 +62,9 @@ fn the_workspace_editor_applies_to_the_selected_cluster(cx: &mut TestAppContext)
     assert_eq!(label(cx, "yaml-status"), "cluster kind-b");
     apply(cx);
 
-    assert_eq!(
-        *applied.borrow(),
-        [("kind-b", "kind: ConfigMap".to_string(), ApplyMode::Normal)]
-    );
+    assert_eq!(*b_recorded.applied.borrow(), [ApplyMode::Normal]);
+    assert_eq!(*b_recorded.applied_snapshots.borrow(), ["kind: ConfigMap"]);
+    assert!(a_recorded.applied.borrow().is_empty());
     assert_eq!(label(cx, "yaml-status"), "applied");
 
     // The editor keeps its buffer and follows the selection.
@@ -112,19 +73,17 @@ fn the_workspace_editor_applies_to_the_selected_cluster(cx: &mut TestAppContext)
     assert_eq!(label(cx, "yaml-status"), "cluster kind-a");
     apply(cx);
 
-    assert_eq!(
-        applied.borrow()[1..],
-        [("kind-a", "kind: ConfigMap".to_string(), ApplyMode::Normal)]
-    );
+    assert_eq!(*a_recorded.applied.borrow(), [ApplyMode::Normal]);
+    assert_eq!(*a_recorded.applied_snapshots.borrow(), ["kind: ConfigMap"]);
+    assert_eq!(b_recorded.applied.borrow().len(), 1, "kind-b applied once");
 }
 
 /// Force Apply offered for one Cluster's conflict would overwrite the
 /// other Cluster's fields, so selecting another Cluster drops it.
 #[gpui_kit::test]
 fn selecting_another_cluster_drops_the_last_apply_result(cx: &mut TestAppContext) {
-    let applied = Applied::default();
-    let (a, _a_namespaces) = cluster("kind-a", &applied, Answer::Conflict);
-    let (b, _b_namespaces) = cluster("kind-b", &applied, Answer::Applied);
+    let (a, _a_recorded, _a_namespaces) = cluster("kind-a", &conflicting());
+    let (b, _b_recorded, _b_namespaces) = cluster("kind-b", &Scenario::default());
     let cx = open_workspace(cx, vec![a, b]);
 
     edit(cx, "kind: ConfigMap");

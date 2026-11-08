@@ -8,7 +8,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{key, object, open, open_detail, open_list};
+use support::{Scenario, key, object, open, open_detail, open_list};
 
 /// How far down the detail each id renders, panicking on one that does
 /// not.
@@ -34,6 +34,7 @@ fn an_hpa_detail_shows_replicas_conditions_then_metrics(cx: &mut TestAppContext)
             key(BuiltinKind::HorizontalPodAutoscalers, "default"),
             hpa_events,
         )],
+        Scenario::default(),
     );
     let hpa = object(serde_json::json!({
         "apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler",
@@ -97,6 +98,7 @@ fn a_resource_quota_detail_shows_quotas_then_its_scope_selector(cx: &mut TestApp
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::ResourceQuotas, "default"), quota_events)],
+        Scenario::default(),
     );
     let quota = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ResourceQuota",
@@ -143,6 +145,7 @@ fn a_limit_range_detail_shows_a_section_per_limit_type(cx: &mut TestAppContext) 
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::LimitRanges, "default"), limit_events)],
+        Scenario::default(),
     );
     let limit_range = object(serde_json::json!({
         "apiVersion": "v1", "kind": "LimitRange",
@@ -202,6 +205,7 @@ fn the_hpa_list_fits_its_seven_columns_to_the_panel(cx: &mut TestAppContext) {
             key(BuiltinKind::HorizontalPodAutoscalers, "default"),
             hpa_events,
         )],
+        Scenario::default(),
     );
     ui.cx
         .simulate_resize(gpui_kit::size(gpui_kit::px(1300.), gpui_kit::px(800.)));
@@ -271,6 +275,7 @@ fn below_the_minimum_widths_the_hpa_list_scrolls_to_its_last_column(cx: &mut Tes
             key(BuiltinKind::HorizontalPodAutoscalers, "default"),
             hpa_events,
         )],
+        Scenario::default(),
     );
     ui.cx
         .simulate_resize(gpui_kit::size(gpui_kit::px(900.), gpui_kit::px(800.)));
