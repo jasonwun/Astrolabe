@@ -84,6 +84,16 @@ impl OpenStreams {
         self.0.borrow_mut().execs.push(sender);
     }
 
+    /// How many held streams and sessions still have a reader: a sender
+    /// whose receiver was dropped has no one left to follow it, which is
+    /// what a live Cluster ends the request on.
+    pub fn listened_to(&self) -> usize {
+        let held = self.0.borrow();
+        let logs = held.logs.iter().filter(|s| !s.is_closed()).count();
+        let execs = held.execs.iter().filter(|s| !s.is_closed()).count();
+        logs + execs
+    }
+
     /// End every stream and session held open so far.
     pub fn close(&self) {
         let mut held = self.0.borrow_mut();
