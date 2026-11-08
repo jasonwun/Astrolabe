@@ -332,8 +332,13 @@ impl DetailOutcome {
             Self::Unreadable => ("detail-unreadable", format!("Cannot read {name}")),
             Self::Gone => ("detail-gone", format!("{name} no longer exists")),
         };
-        // Every absent outcome is drawn muted, failures included.
-        Some(Notice::new(id, text, Intent::Muted))
+        // A failed load reads as an error, like a failed list; every other
+        // absent outcome is drawn muted.
+        let intent = match self {
+            Self::Failed(_) => Intent::Danger,
+            _ => Intent::Muted,
+        };
+        Some(Notice::new(id, text, intent))
     }
 }
 
@@ -345,7 +350,7 @@ impl RelatedOutcome {
             Self::Failed(error) => Notice::new(
                 "related-failed",
                 failed_message("object", error.as_ref()),
-                Intent::Muted,
+                Intent::Danger,
             ),
             Self::Forbidden(text) | Self::Empty(text) | Self::Loading(text) => {
                 Notice::new("related-empty", text.clone(), Intent::Muted)

@@ -492,7 +492,7 @@ fn a_builtin_detail_denied_after_a_snapshot_still_shows_its_object() {
 }
 
 #[test]
-fn every_absent_detail_is_drawn_muted_with_its_own_id() {
+fn every_absent_detail_has_its_own_id_and_only_a_failure_is_danger() {
     let outcomes = [
         (DetailOutcome::Loading, "detail-loading"),
         (DetailOutcome::Failed(None), "detail-failed"),
@@ -504,7 +504,12 @@ fn every_absent_detail_is_drawn_muted_with_its_own_id() {
     ];
     for (outcome, id) in outcomes {
         let notice = outcome.notice("Pod web").unwrap();
-        assert_eq!((notice.id, notice.intent), (id, Intent::Muted));
+        let intent = if id == "detail-failed" {
+            Intent::Danger
+        } else {
+            Intent::Muted
+        };
+        assert_eq!((notice.id, notice.intent), (id, intent));
     }
 }
 
@@ -541,7 +546,12 @@ fn a_related_section_without_rows_says_why() {
         ),
     ];
     for (outcome, id, text) in cases {
-        assert_eq!(outcome.notice(), Some(Notice::new(id, text, Intent::Muted)));
+        let intent = if id == "related-failed" {
+            Intent::Danger
+        } else {
+            Intent::Muted
+        };
+        assert_eq!(outcome.notice(), Some(Notice::new(id, text, intent)));
     }
     assert_eq!(
         RelatedOutcome::Rows(ResourceTable::default()).notice(),
