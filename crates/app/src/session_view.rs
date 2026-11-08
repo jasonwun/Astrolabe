@@ -170,6 +170,8 @@ impl SessionView {
         if let Some(key) = &key
             && let Some(opened) = self.reusable(key, cx)
         {
+            // `reusable` found the panel in the dock, so a Logs or Exec
+            // handle upgrades; a failed upgrade would only skip the restart.
             // Only a finished Logs or Exec tab is restarted; any other
             // reused tab is just selected. Keys are disjoint per kind, so
             // the request is of the tab's kind.

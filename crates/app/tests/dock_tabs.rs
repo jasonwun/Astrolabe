@@ -429,7 +429,7 @@ fn opening_exec_again_while_the_shell_is_live_selects_the_tab_and_keeps_the_shel
 /// Open a pod's detail on a Scenario that keeps streams open, open the
 /// child tab, check its stream is followed, close the tab, and check
 /// nothing follows the stream any more (#341).
-fn closing_a_child_tab_releases_its_stream(
+fn closing_a_child_tab_releases_what_it_follows(
     cx: &mut TestAppContext,
     open_child: impl FnOnce(&mut Ui<'_>),
 ) {
@@ -456,14 +456,14 @@ fn closing_a_child_tab_releases_its_stream(
 
 #[gpui_kit::test]
 fn closing_a_logs_tab_releases_its_stream(cx: &mut TestAppContext) {
-    closing_a_child_tab_releases_its_stream(cx, |ui| {
+    closing_a_child_tab_releases_what_it_follows(cx, |ui| {
         ui.frame(|window, cx| window.click("detail-logs", cx));
     });
 }
 
 #[gpui_kit::test]
 fn closing_an_exec_tab_releases_its_session(cx: &mut TestAppContext) {
-    closing_a_child_tab_releases_its_stream(cx, |ui| {
+    closing_a_child_tab_releases_what_it_follows(cx, |ui| {
         ui.frame(|window, cx| window.click("detail-exec", cx));
         ui.frame(|window, cx| window.click("pick-shell-sh", cx));
     });
