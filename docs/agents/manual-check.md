@@ -394,6 +394,19 @@ path of `<name>.png`, shrunk to one pixel per window point.
   it lists namespaces alphabetically, and a click at a remembered position
   lands on another namespace once the list changes (#95).
 
+Another worktree's retro or cleanup runs `pkill astrolabe`, which kills
+your app between two Bash calls (#341's first two runs died that way, and
+`dev/shot.sh --pid` then says `found 0`). Launch with
+`(nohup target/debug/astrolabe > "$S/app.log" 2>&1 &)` after a separate
+`cargo build`, not a backgrounded `cargo run &` (it died with its Bash
+call), and put launch, resize and every click and capture of one check in
+a single call. "A closed Logs tab stops its stream" has no screenshot
+form: count the app's connections with
+`lsof -nP -a -p "$(dev/shot.sh --pid)" -iTCP -sTCP:ESTABLISHED | tail -n +2 | wc -l`
+before opening Logs `app` (3), with it open (5) and after `cmd+w` (4);
+without `-a` lsof reads `-iTCP` as a pid. Say in the PR the captures show
+the tab and the detail, not the count (#341 retro).
+
 A test-only change (#305: only `crates/app/tests` and docs) has no
 production diff to compare against `origin/main`: the launch view and one
 list (Pods) on `kind-astrolabe-dev` are the check, and the PR says the
