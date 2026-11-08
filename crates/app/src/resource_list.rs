@@ -178,7 +178,7 @@ impl BasePanel for ResourceListPanel {
 impl Panel for ResourceListPanel {
     fn tab_name(&self, cx: &App) -> Option<SharedString> {
         let state = self.session.read(cx).state();
-        Some(state.viewing().label(state).into())
+        Some(state.viewing().label().into())
     }
 
     fn title(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -8,7 +8,9 @@
 //! same way and sends input to a far end (`kubectl exec`).
 
 pub mod backend;
+mod bytes;
 pub mod view;
 
 pub use backend::TerminalBackend;
+pub use bytes::terminal_bytes;
 pub use view::TerminalView;

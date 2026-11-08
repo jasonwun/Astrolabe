@@ -1,6 +1,6 @@
 //! Log bytes as a terminal displays them (#17).
 
-use astrolabe::logs::terminal_bytes;
+use astrolabe_terminal::terminal_bytes;
 
 #[test]
 fn line_feeds_return_the_carriage() {
@@ -15,4 +15,19 @@ fn existing_carriage_returns_are_kept_once() {
 #[test]
 fn ansi_sequences_pass_through() {
     assert_eq!(terminal_bytes(b"\x1b[31merr\x1b[0m"), b"\x1b[31merr\x1b[0m");
+}
+
+#[test]
+fn an_empty_chunk_stays_empty() {
+    assert_eq!(terminal_bytes(b""), b"");
+}
+
+#[test]
+fn a_lone_line_feed_gains_a_carriage_return() {
+    assert_eq!(terminal_bytes(b"\n"), b"\r\n");
+}
+
+#[test]
+fn a_chunk_ending_in_a_carriage_return_is_unchanged() {
+    assert_eq!(terminal_bytes(b"a\r"), b"a\r");
 }

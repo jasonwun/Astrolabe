@@ -138,10 +138,9 @@ pub enum Viewing {
 }
 
 impl Viewing {
-    /// The list's tab name. `_state` is part of the signature for a label
-    /// that reads the state; none does yet.
+    /// The list's tab name.
     #[must_use]
-    pub fn label(&self, _state: &SessionState) -> String {
+    pub fn label(&self) -> String {
         match self {
             Self::Namespaces => "Namespaces".to_string(),
             Self::Builtin(kind) => kind.registration().label.to_string(),

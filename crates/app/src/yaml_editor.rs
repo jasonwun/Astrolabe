@@ -23,7 +23,7 @@ use gpui_kit::component::input::{
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
-use astrolabe_model::edit_loop::{EditLoop, Panel, Severity};
+use astrolabe_model::edit_loop::{EditLoop, ProblemPanel, Severity};
 
 use crate::session::Session;
 
@@ -397,7 +397,7 @@ impl YamlEditorView {
 
     // ------------------------------------------------------------ rendering
 
-    fn render_panel(&mut self, panel: Panel, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_panel(&mut self, panel: ProblemPanel, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let rows = panel
             .rows

@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use astrolabe_kube::cluster::ClusterError;
 use astrolabe_kube::pod::{ExecInput, ExecOutput, ExecSession};
 use astrolabe_model::terminal_status::ExecState;
 use astrolabe_terminal::backend::{AlacrittyBackend, ExitStatus, RemoteSink, remote};
@@ -98,7 +97,7 @@ impl ExecPanel {
                     Some(ExecOutput::Exited(Err(error))) => {
                         break ExecState::Failed(error);
                     }
-                    None => break ExecState::Failed(ClusterError::new("session dropped")),
+                    None => break ExecState::dropped(),
                 }
             };
             panel
