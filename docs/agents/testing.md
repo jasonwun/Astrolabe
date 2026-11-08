@@ -92,6 +92,11 @@ of merging silently. #225's `build-test` failed twice on
 `dropping_a_port_forward_stops_its_listener_and_connections` before it
 passed (#226).
 
+A CI job that fails before any test runs (#343's `e2e`: `kind-action`
+printed `sha256sum: ... no properly formatted checksum lines found` while
+installing kind) is the same case: rerun with `gh run rerun <id> --failed`,
+and file the issue with both run links (#354) (#343 retro).
+
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
 an unbackticked type name in a doc comment trips `doc_markdown`. Return

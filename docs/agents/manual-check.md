@@ -355,6 +355,17 @@ path of `<name>.png`, shrunk to one pixel per window point.
   by a probe click): its tab bar then differs from the fresh `after`
   launch. Relaunch the baseline before the scripted run, not only the
   exploration's dropdowns (#302 retro).
+  #343 (the Scale input derived from the model) hit it again: the baseline
+  was explored to find coordinates, the script ran on it, and all ten
+  pairs read `DIFF` for the tab bar alone. Explore on the branch build,
+  and launch the baseline fresh only for the scripted run (#343 retro).
+- A crop must hold the control under test: #343's first `--crop` was 100
+  tall and cut the Scale form (y 195) off, so the pairs said nothing
+  about it. Open the form once at full window size, then pick the crop
+  (`440,85,560,140` holds the toolbar and the Scale form). When a change
+  moves a focus call from a click handler into `render`, the capture
+  shows it: the caret is in the input and `type-text` lands without a
+  click (#343 retro).
 - To hover (tooltips), click the element and read the screenshot about
   two seconds later; the pointer stays where it clicked.
 - A view that changes with time (ages): `dev/demo.yaml` objects keep
