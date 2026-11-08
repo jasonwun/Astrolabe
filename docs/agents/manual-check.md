@@ -275,6 +275,14 @@ path of `<name>.png`, shrunk to one pixel per window point.
   `DIFF` against a baseline for terminal content only (an extra prompt line,
   the container id in the failed text): compare the status bar by eye and
   say so in the PR (#304 retro).
+  Reopening a live tab (#332): the same clicks again select the open tab.
+  `app`'s Logs print nothing, so a restart would look the same; prove
+  "not restarted" with Exec: `press-key --key` `l` `s` `Return` after `sh`,
+  reopen, pick `sh` again, and the `ls` output is still in the terminal
+  (a restart gives a blank one). `--crop` goes before the action:
+  `dev/shot.sh "$D" name --crop 440,85,560,300 click --x 702 --y 195`;
+  after the action it fails with `Unknown flag --crop for command: computer
+  click` (#332 retro).
 - Edit YAML on that detail is at (714,146); the Editor tab's header and
   first lines crop as `440,85,560,130`. A move-only ticket whose criterion
   says "opening a Detail, Logs, Exec and Editor tab still works" still runs
@@ -487,6 +495,10 @@ the uploaded images at the bottom. Read the body back with
 scratchpad is not a git repository, so pass `-R jasonwun/Astrolabe --head
 <branch> --base main` there, or `gh` fails with "not a git repository"
 (#282 retro; its body came out right: two uploaded images, no `./` link).
+#332 wrote the absolute scratchpad path into the body's `![alt](...)` lines
+and passed the same path to `--attach` (the path the body names, as above):
+the body came back with the four uploaded images in place and no
+duplicates (#332 retro).
 
 #313 hit it a third time: the body had `![alt](./shot.png)` lines, `--attach`
 took absolute scratchpad paths, and the body kept the four `./` lines and
