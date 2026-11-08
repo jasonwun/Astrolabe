@@ -125,6 +125,10 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   streams stay open (`Streaming…`, `Session running`) until
   `ui.open_streams.close()`. It is the way to test a branch for a live
   stream, such as "reopening does not restart it" (#332).
+  `ui.open_streams.listened_to()` counts the held streams whose reader is
+  still alive: it drops when the panel is released, which `close()` (the
+  sender side) cannot show. A test that a closed tab let go of its stream
+  asserts it goes from 1 to 0 (#341).
 - An element's accessible label, as the frame draws it:
   `ui.label(id)` (`crates/app/tests/support`); it panics when `id` is
   not rendered (#160). A test that builds its window without

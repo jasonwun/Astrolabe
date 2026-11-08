@@ -95,7 +95,11 @@ passed (#226).
 A CI job that fails before any test runs (#343's `e2e`: `kind-action`
 printed `sha256sum: ... no properly formatted checksum lines found` while
 installing kind) is the same case: rerun with `gh run rerun <id> --failed`,
-and file the issue with both run links (#354) (#343 retro).
+and file the issue with both run links (#354) (#343 retro). #353 hit it
+twice in a row (`e2e`, then `e2e-legacy-discovery`, as `kind-linux-amd64:
+FAILED`): the failed job's log has the line, and one more `--failed`
+rerun each passed. Comment the run links on #354 instead of a new issue
+(#341 retro).
 
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
