@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use astrolabe::clock::Clock;
 use astrolabe::launch::Preselection;
-use astrolabe::session::{OpenStreams, ScriptedCluster};
+use astrolabe::session::{CRD_DEBOUNCE, OpenStreams, ScriptedCluster};
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::apply::{ApplyMode, ApplyReport, DocError, DocOutcome};
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
@@ -22,7 +22,7 @@ use astrolabe_kube::object::{ObjectRef, Operation};
 use astrolabe_kube::pod::{
     ExecInput, ExecOutput, ExecRequest, ForwardEvent, ForwardRequest, LogRequest,
 };
-use astrolabe_kube::watch::ObjectWatchMessage;
+use astrolabe_kube::watch::{NamespaceWatchMessage, ObjectWatchMessage};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::session::{ResourceKind, WatchKey};
 use futures::channel::mpsc;
@@ -56,14 +56,6 @@ pub fn object(value: serde_json::Value) -> DynamicObject {
     serde_json::from_value(value).unwrap()
 }
 
-/// Forwarding this port reports `LONG_ERROR` as a failed connection.
-pub const LONG_ERROR_PORT: u16 = 7001;
-/// Forwarding this port ends in a `Failed` state with `LONG_ERROR`.
-pub const FAILED_PORT: u16 = 7002;
-/// Synthetic (modelled on a kubelet/CNI message, not captured): an error
-/// far wider than any window, with no break but spaces.
-pub const LONG_ERROR: &str = "error forwarding port 7001: an error occurred forwarding 18080 -> 8080: error forwarding port 8080 to pod 0123456789abcdef, uid : failed to execute portforward in network namespace \"/var/run/netns/cni-0123456789\": failed to connect to localhost:8080 inside namespace: dial tcp4 127.0.0.1:8080: connect: connection refused";
-
 pub type Deleted = Rc<RefCell<Vec<(String, Option<String>, String)>>>;
 
 /// What `Deleted` records of a Delete: `apiVersion/Kind`, namespace, name.
@@ -79,6 +71,7 @@ pub type Operated = Rc<RefCell<Vec<Operation>>>;
 pub type Logged = Rc<RefCell<Vec<LogRequest>>>;
 pub type Forwarded = Rc<RefCell<Vec<ForwardRequest>>>;
 pub type Applied = Rc<RefCell<Vec<ApplyMode>>>;
+pub type Snapshots = Rc<RefCell<Vec<String>>>;
 pub type Execed = Rc<RefCell<Vec<(ExecRequest, mpsc::UnboundedReceiver<ExecInput>)>>>;
 
 pub struct Ui<'a> {
@@ -90,119 +83,107 @@ pub struct Ui<'a> {
     pub execed: Execed,
     pub forwarded: Forwarded,
     pub applied: Applied,
-    /// The streams [`open_streaming`] keeps open.
+    /// The snapshot of each Apply, in step with `applied`.
+    pub applied_snapshots: Snapshots,
+    /// The streams a [`LogsAnswer::StaysOpen`] or [`ExecAnswer::StaysOpen`]
+    /// keeps open.
     pub open_streams: OpenStreams,
+}
+
+/// How the scripted Cluster answers the operations a test triggers. The
+/// default answers every one of them successfully; a test that needs a
+/// failure declares it here, so the cluster's behaviour reads from the
+/// test and not from a value the harness happens to branch on.
+///
+/// Where a knob is a list, the n-th such operation takes the n-th answer
+/// and the last answer repeats; an empty list answers like the default.
+#[derive(Clone, Default)]
+pub struct Scenario {
+    /// Each Scale operation, in order.
+    pub scale: Vec<ScaleAnswer>,
+    /// A plain Apply (a Force Apply always goes through).
+    pub apply: ApplyAnswer,
+    /// Every Precheck.
+    pub precheck: PrecheckAnswer,
+    /// Every Logs stream.
+    pub logs: LogsAnswer,
+    /// Each Exec session, in order.
+    pub exec: Vec<ExecAnswer>,
+    /// A Forward of a listed port; any other port just listens.
+    pub forward: Vec<(u16, ForwardAnswer)>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum ScaleAnswer {
+    #[default]
+    Scaled,
+    /// The cluster refuses with `scale refused`.
+    Refused,
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum ApplyAnswer {
+    #[default]
+    Applied,
+    /// A plain Apply answers 409 from `kubectl`, which offers Force Apply.
+    Conflict,
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum PrecheckAnswer {
+    #[default]
+    Clean,
+    /// Notes the unknown field `spec.bogus`.
+    UnknownField,
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum LogsAnswer {
+    /// One line, then the stream ends.
+    #[default]
+    Ends,
+    /// One line, then the stream fails with `stream reset`.
+    Resets,
+    /// One line, then the stream stays open until `open_streams.close()`.
+    StaysOpen,
+}
+
+#[derive(Clone, Copy, Default)]
+pub enum ExecAnswer {
+    /// A prompt, then the shell exits with code 0.
+    #[default]
+    Exits,
+    /// A prompt, then the exec fails with `container not found`.
+    Fails,
+    /// A prompt, then the session stays open until `open_streams.close()`.
+    StaysOpen,
+}
+
+#[derive(Clone, Copy)]
+pub enum ForwardAnswer {
+    /// Listening, then a connection fails with the message.
+    ConnectionFails(&'static str),
+    /// The forward fails with the message and never listens.
+    Fails(&'static str),
+}
+
+/// The `n`-th of `answers`, the last one repeating.
+fn nth<T: Copy + Default>(answers: &[T], n: usize) -> T {
+    answers
+        .get(n)
+        .or(answers.last())
+        .copied()
+        .unwrap_or_default()
 }
 
 pub fn open(
     cx: &mut TestAppContext,
     watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
+    scenario: Scenario,
 ) -> Ui<'_> {
-    open_with(cx, watches, false)
-}
-
-/// Like [`open`], but a Logs stream and an Exec session stay open (no
-/// failure, no exit) until `ui.open_streams.close()`.
-pub fn open_streaming(
-    cx: &mut TestAppContext,
-    watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
-) -> Ui<'_> {
-    open_with(cx, watches, true)
-}
-
-fn open_with(
-    cx: &mut TestAppContext,
-    watches: Vec<(WatchKey, mpsc::Receiver<ObjectWatchMessage>)>,
-    streaming: bool,
-) -> Ui<'_> {
-    let open_streams = OpenStreams::default();
     let (namespaces, namespace_events) = mpsc::channel(32);
-    let deleted: Deleted = Rc::default();
-    let operated: Operated = Rc::default();
-    let logged: Logged = Rc::default();
-    let execed: Execed = Rc::default();
-    let forwarded: Forwarded = Rc::default();
-    let applied: Applied = Rc::default();
-    let mut cluster = ScriptedCluster::new(namespace_events)
-        .operate({
-            let deleted = deleted.clone();
-            let operated = operated.clone();
-            move |operation: &Operation| {
-                if let Operation::Delete { object } = operation {
-                    deleted.borrow_mut().push(deletion(object));
-                    return Ok(());
-                }
-                operated.borrow_mut().push(operation.clone());
-                match operation {
-                    Operation::Scale { replicas: 0, .. } => Err(ClusterError::new("scale refused")),
-                    _ => Ok(()),
-                }
-            }
-        })
-        .apply({
-            let applied = applied.clone();
-            move |snapshot: &str, mode| {
-                applied.borrow_mut().push(mode);
-                Ok(match mode {
-                    ApplyMode::Normal => conflict_report(snapshot),
-                    ApplyMode::Force => ApplyReport::new(vec![outcome(Ok(()))]),
-                })
-            }
-        })
-        .precheck(|snapshot: &str| Ok(unknown_field_report(snapshot)))
-        .logs({
-            let logged = logged.clone();
-            move |request: &LogRequest| {
-                logged.borrow_mut().push(request.clone());
-                if streaming {
-                    return vec![Ok(b"starting\n".to_vec())];
-                }
-                vec![
-                    Ok(b"starting\n".to_vec()),
-                    Err(ClusterError::new("stream reset")),
-                ]
-            }
-        })
-        .exec({
-            let execed = execed.clone();
-            move |request: &ExecRequest, input| {
-                execed.borrow_mut().push((request.clone(), input));
-                if streaming {
-                    return vec![ExecOutput::Bytes(b"/ # ".to_vec())];
-                }
-                let exit = match request.shell.as_str() {
-                    "bash" => Ok(0),
-                    _ => Err(ClusterError::new("container not found (\"app\")")),
-                };
-                vec![
-                    ExecOutput::Bytes(b"/ # ".to_vec()),
-                    ExecOutput::Exited(exit),
-                ]
-            }
-        })
-        .port_forward({
-            let forwarded = forwarded.clone();
-            move |request: &ForwardRequest| {
-                forwarded.borrow_mut().push(request.clone());
-                let mut events = vec![ForwardEvent::Listening(request.port + 10_000)];
-                match request.port {
-                    9901 => events.push(ForwardEvent::ConnectionFailed(ClusterError::new(
-                        "error forwarding port 9901: connection refused",
-                    ))),
-                    LONG_ERROR_PORT => events.push(ForwardEvent::ConnectionFailed(
-                        ClusterError::new(LONG_ERROR),
-                    )),
-                    FAILED_PORT => {
-                        events = vec![ForwardEvent::Failed(ClusterError::new(LONG_ERROR))];
-                    }
-                    _ => {}
-                }
-                events
-            }
-        });
-    if streaming {
-        cluster = cluster.keep_streams_open(&open_streams);
-    }
+    let open_streams = OpenStreams::default();
+    let (mut cluster, recorded) = scenario.cluster(namespace_events, &open_streams);
     for (key, events) in watches {
         cluster = cluster.watch(key, events);
     }
@@ -210,13 +191,141 @@ fn open_with(
     Ui {
         cx,
         namespaces,
-        deleted,
-        operated,
-        logged,
-        execed,
-        forwarded,
-        applied,
+        deleted: recorded.deleted,
+        operated: recorded.operated,
+        logged: recorded.logged,
+        execed: recorded.execed,
+        forwarded: recorded.forwarded,
+        applied: recorded.applied,
+        applied_snapshots: recorded.applied_snapshots,
         open_streams,
+    }
+}
+
+/// What a scripted Cluster was asked to do.
+#[derive(Default)]
+pub struct Recorded {
+    pub deleted: Deleted,
+    pub operated: Operated,
+    pub logged: Logged,
+    pub execed: Execed,
+    pub forwarded: Forwarded,
+    pub applied: Applied,
+    pub applied_snapshots: Snapshots,
+}
+
+impl Scenario {
+    /// A scripted Cluster that answers as declared and records what it is
+    /// asked, for tests that open several Clusters through
+    /// [`open_workspace`]. It has no watches yet. Streams that stay open
+    /// are held by `open_streams`.
+    pub fn cluster(
+        &self,
+        namespace_events: mpsc::Receiver<NamespaceWatchMessage>,
+        open_streams: &OpenStreams,
+    ) -> (ScriptedCluster, Recorded) {
+        let recorded = Recorded::default();
+        let mut scales = 0;
+        let mut execs = 0;
+        let scale = self.scale.clone();
+        let apply = self.apply;
+        let precheck = self.precheck;
+        let logs = self.logs;
+        let exec = self.exec.clone();
+        let forward = self.forward.clone();
+        let mut cluster = ScriptedCluster::new(namespace_events)
+            .operate({
+                let deleted = recorded.deleted.clone();
+                let operated = recorded.operated.clone();
+                move |operation: &Operation| {
+                    if let Operation::Delete { object } = operation {
+                        deleted.borrow_mut().push(deletion(object));
+                        return Ok(());
+                    }
+                    operated.borrow_mut().push(operation.clone());
+                    if let Operation::Scale { .. } = operation {
+                        let answer = nth(&scale, scales);
+                        scales += 1;
+                        if let ScaleAnswer::Refused = answer {
+                            return Err(ClusterError::new("scale refused"));
+                        }
+                    }
+                    Ok(())
+                }
+            })
+            .apply({
+                let applied = recorded.applied.clone();
+                let snapshots = recorded.applied_snapshots.clone();
+                move |snapshot: &str, mode| {
+                    applied.borrow_mut().push(mode);
+                    snapshots.borrow_mut().push(snapshot.to_string());
+                    Ok(match (apply, mode) {
+                        (ApplyAnswer::Conflict, ApplyMode::Normal) => conflict_report(snapshot),
+                        _ => ApplyReport::new(Vec::new()),
+                    })
+                }
+            })
+            .precheck(move |snapshot: &str| {
+                Ok(match precheck {
+                    PrecheckAnswer::UnknownField => unknown_field_report(snapshot),
+                    PrecheckAnswer::Clean => ApplyReport::new(Vec::new()),
+                })
+            })
+            .logs({
+                let logged = recorded.logged.clone();
+                move |request: &LogRequest| {
+                    logged.borrow_mut().push(request.clone());
+                    let mut chunks = vec![Ok(b"starting\n".to_vec())];
+                    if let LogsAnswer::Resets = logs {
+                        chunks.push(Err(ClusterError::new("stream reset")));
+                    }
+                    chunks
+                }
+            })
+            .exec({
+                let execed = recorded.execed.clone();
+                move |request: &ExecRequest, input| {
+                    execed.borrow_mut().push((request.clone(), input));
+                    let answer = nth(&exec, execs);
+                    execs += 1;
+                    let mut output = vec![ExecOutput::Bytes(b"/ # ".to_vec())];
+                    match answer {
+                        ExecAnswer::Exits => output.push(ExecOutput::Exited(Ok(0))),
+                        ExecAnswer::Fails => output.push(ExecOutput::Exited(Err(
+                            ClusterError::new("container not found (\"app\")"),
+                        ))),
+                        ExecAnswer::StaysOpen => {}
+                    }
+                    output
+                }
+            })
+            .port_forward({
+                let forwarded = recorded.forwarded.clone();
+                move |request: &ForwardRequest| {
+                    forwarded.borrow_mut().push(request.clone());
+                    let listening = ForwardEvent::Listening(request.port + 10_000);
+                    let answer = forward
+                        .iter()
+                        .find(|(port, _)| *port == request.port)
+                        .map(|(_, answer)| *answer);
+                    match answer {
+                        None => vec![listening],
+                        Some(ForwardAnswer::ConnectionFails(message)) => vec![
+                            listening,
+                            ForwardEvent::ConnectionFailed(ClusterError::new(message)),
+                        ],
+                        Some(ForwardAnswer::Fails(message)) => {
+                            vec![ForwardEvent::Failed(ClusterError::new(message))]
+                        }
+                    }
+                }
+            });
+        let keeps_open = matches!(self.logs, LogsAnswer::StaysOpen)
+            || self.exec.iter().any(|a| matches!(a, ExecAnswer::StaysOpen));
+        if keeps_open {
+            cluster = cluster.keep_streams_open(open_streams);
+        }
+        (cluster, recorded)
     }
 }
 
@@ -325,6 +434,40 @@ pub fn reopen_detail(ui: &mut Ui<'_>, kind: BuiltinKind, name: &str) {
     ui.settle();
 }
 
+/// Open the Namespaces list holding `old`, then `old`'s detail tab.
+pub fn open_namespace_detail(ui: &mut Ui<'_>) {
+    ui.namespaces(&["old"]);
+    ui.settle();
+    ui.frame(|window, cx| window.click("row-old", cx));
+    ui.settle();
+}
+
+/// Whether the detail tab of Namespace `old` is drawn.
+pub fn detail_tab_shown(ui: &mut Ui<'_>) -> bool {
+    ui.frame(|window, _| {
+        window
+            .try_find("detail-tab")
+            .is_some_and(|tab| tab.label() == Some("Namespace old"))
+    })
+}
+
+/// Click `id` in a freshly drawn frame, then run until parked.
+pub fn click(cx: &mut VisualTestContext, id: &'static str) {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.click(id, cx);
+    });
+    cx.run_until_parked();
+}
+
+/// Whether `id` is drawn in a fresh frame.
+pub fn drawn(cx: &mut VisualTestContext, id: &'static str) -> bool {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.try_find(id).is_some()
+    })
+}
+
 /// Projects ages from `start` plus the test scheduler's elapsed time, so
 /// `advance_clock` ages every object (#70). Like the system time, no two
 /// reads return the same instant (each adds a nanosecond), so a panel that
@@ -341,9 +484,10 @@ pub fn follow_test_clock(cx: &mut TestAppContext, start: Timestamp) {
 }
 
 impl Ui<'_> {
+    /// Runs until parked, past the CRD debounce, and parked again.
     pub fn settle(&mut self) {
         self.cx.run_until_parked();
-        self.cx.executor().advance_clock(Duration::from_millis(400));
+        self.cx.executor().advance_clock(CRD_DEBOUNCE);
         self.cx.run_until_parked();
     }
 

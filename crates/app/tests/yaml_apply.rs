@@ -8,7 +8,7 @@ mod support;
 use astrolabe_kube::apply::ApplyMode;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use support::{Ui, open};
+use support::{ApplyAnswer, PrecheckAnswer, Scenario, Ui, open};
 
 /// Open the Namespace `old`'s detail, then its Edit YAML tab.
 fn open_editor(ui: &mut Ui<'_>) {
@@ -22,7 +22,14 @@ fn open_editor(ui: &mut Ui<'_>) {
 
 #[gpui_kit::test]
 fn a_conflicting_apply_offers_force_apply_which_goes_through(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(
+        cx,
+        Vec::new(),
+        Scenario {
+            apply: ApplyAnswer::Conflict,
+            ..Scenario::default()
+        },
+    );
     open_editor(&mut ui);
 
     ui.cx.simulate_keystrokes("cmd-shift-enter");
@@ -46,7 +53,14 @@ fn a_conflicting_apply_offers_force_apply_which_goes_through(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn a_precheck_notes_the_fields_apply_will_ignore(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(
+        cx,
+        Vec::new(),
+        Scenario {
+            precheck: PrecheckAnswer::UnknownField,
+            ..Scenario::default()
+        },
+    );
     open_editor(&mut ui);
 
     ui.cx.simulate_keystrokes("f6");

@@ -12,7 +12,7 @@ use astrolabe_model::projection::{MIN_COLUMN_WIDTH, column_widths};
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{Bounds, Pixels, TestAppContext, Window, point, px, size};
-use support::{Ui, key, object, open, open_detail, snapshot};
+use support::{Scenario, Ui, key, object, open, open_detail, snapshot};
 
 /// The Pods list's columns: Name, Ready, Status, Restarts, IP, Node, Age.
 const POD_COLUMNS: usize = 7;
@@ -51,6 +51,7 @@ fn deployment_with_a_pod(cx: &mut TestAppContext, width: f32) -> Ui<'_> {
             (key(BuiltinKind::Deployments, "default"), deployment_events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     ui.cx.simulate_resize(size(px(width), px(1600.)));
     open_detail(

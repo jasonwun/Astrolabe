@@ -12,9 +12,17 @@ use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
 use support::{
-    FAILED_PORT, LONG_ERROR, LONG_ERROR_PORT, Ui, key, object, open, open_detail, open_list,
-    snapshot,
+    ForwardAnswer, LogsAnswer, ScaleAnswer, Scenario, Ui, key, object, open, open_detail,
+    open_list, snapshot,
 };
+
+/// Forwarding this port reports `LONG_ERROR` as a failed connection.
+pub const LONG_ERROR_PORT: u16 = 7001;
+/// Forwarding this port ends in a `Failed` state with `LONG_ERROR`.
+pub const FAILED_PORT: u16 = 7002;
+/// Synthetic (modelled on a kubelet/CNI message, not captured): an error
+/// far wider than any window, with no break but spaces.
+pub const LONG_ERROR: &str = "error forwarding port 7001: an error occurred forwarding 18080 -> 8080: error forwarding port 8080 to pod 0123456789abcdef, uid : failed to execute portforward in network namespace \"/var/run/netns/cni-0123456789\": failed to connect to localhost:8080 inside namespace: dial tcp4 127.0.0.1:8080: connect: connection refused";
 
 /// Synthetic Pod (plausible shape, not captured from a server).
 fn crashing_pod(namespace: &str) -> DynamicObject {
@@ -55,7 +63,11 @@ fn web_deployment() -> DynamicObject {
 #[gpui_kit::test]
 fn pods_list_and_detail_use_the_generic_pipeline(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_list(
         &mut ui,
         BuiltinKind::Pods,
@@ -124,6 +136,7 @@ fn deployments_show_a_replica_bar(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Deployments, "default"), deployment_events)],
+        Scenario::default(),
     );
     open_list(
         &mut ui,
@@ -167,6 +180,7 @@ fn the_pods_list_follows_the_namespace_selection(cx: &mut TestAppContext) {
             (key(BuiltinKind::Pods, "default"), default_events),
             (key(BuiltinKind::Pods, "web"), web_events),
         ],
+        Scenario::default(),
     );
     ui.namespaces(&["default", "web"]);
     ui.settle();
@@ -190,6 +204,11 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Deployments, "default"), deployment_events)],
+        Scenario {
+            // The second Scale is refused.
+            scale: vec![ScaleAnswer::Scaled, ScaleAnswer::Refused],
+            ..Scenario::default()
+        },
     );
     open_detail(
         &mut ui,
@@ -257,7 +276,11 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -276,7 +299,11 @@ fn pods_have_no_deployment_actions(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn deleting_a_bare_pod_warns_of_nothing_else(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -332,6 +359,7 @@ fn a_pod_detail_lists_its_events(cx: &mut TestAppContext) {
             (key(BuiltinKind::Pods, "default"), pod_events),
             (key(BuiltinKind::Events, "default"), event_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -401,6 +429,7 @@ fn a_deployment_detail_lists_its_pods(cx: &mut TestAppContext) {
             (key(BuiltinKind::Deployments, "default"), deployment_events),
             (key(BuiltinKind::Pods, "default"), pod_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -450,7 +479,14 @@ fn sidecar_pod() -> DynamicObject {
 #[gpui_kit::test]
 fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            logs: LogsAnswer::Resets,
+            ..Scenario::default()
+        },
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -501,7 +537,11 @@ fn pod_logs_stream_the_chosen_container_into_a_tab(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn pod_exec_runs_the_chosen_shell_in_the_chosen_container(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -582,7 +622,17 @@ fn forward(ui: &mut Ui<'_>, port: u16) {
 #[gpui_kit::test]
 fn pod_ports_forward_from_localhost_until_stopped(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            forward: vec![(
+                9901,
+                ForwardAnswer::ConnectionFails("error forwarding port 9901: connection refused"),
+            )],
+            ..Scenario::default()
+        },
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -672,7 +722,17 @@ fn long_error_pod() -> DynamicObject {
 fn forward_in_narrow_window(cx: &mut TestAppContext, port: u16, ids: &[String]) {
     let width = 900.;
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            forward: vec![
+                (LONG_ERROR_PORT, ForwardAnswer::ConnectionFails(LONG_ERROR)),
+                (FAILED_PORT, ForwardAnswer::Fails(LONG_ERROR)),
+            ],
+            ..Scenario::default()
+        },
+    );
     ui.cx
         .simulate_resize(gpui_kit::size(gpui_kit::px(width), gpui_kit::px(1600.)));
     open_detail(
@@ -715,7 +775,17 @@ fn a_long_failed_error_keeps_stop_inside_the_window(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_long_forward_error_stays_readable(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario {
+            forward: vec![
+                (LONG_ERROR_PORT, ForwardAnswer::ConnectionFails(LONG_ERROR)),
+                (FAILED_PORT, ForwardAnswer::Fails(LONG_ERROR)),
+            ],
+            ..Scenario::default()
+        },
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -737,7 +807,11 @@ fn a_long_forward_error_stays_readable(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn exec_on_a_crash_looping_pod_says_there_is_no_running_container(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,
@@ -766,7 +840,11 @@ fn exec_on_a_crash_looping_pod_says_there_is_no_running_container(cx: &mut TestA
 #[gpui_kit::test]
 fn a_pod_without_declared_ports_has_nothing_to_forward(cx: &mut TestAppContext) {
     let (mut pods, pod_events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), pod_events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), pod_events)],
+        Scenario::default(),
+    );
     open_detail(
         &mut ui,
         BuiltinKind::Pods,

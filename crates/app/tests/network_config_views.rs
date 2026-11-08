@@ -13,7 +13,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
-use support::{Sender, Ui, key, object, open, open_detail, open_list, snapshot};
+use support::{Scenario, Sender, Ui, key, object, open, open_detail, open_list, snapshot};
 
 fn web_service(selector: Option<serde_json::Value>) -> DynamicObject {
     let mut spec = serde_json::json!({
@@ -45,7 +45,7 @@ fn db_secret() -> DynamicObject {
 
 #[gpui_kit::test]
 fn navigation_groups_the_built_in_kinds(cx: &mut TestAppContext) {
-    let mut ui = open(cx, Vec::new());
+    let mut ui = open(cx, Vec::new(), Scenario::default());
     ui.namespaces(&["default"]);
     ui.settle();
 
@@ -94,6 +94,7 @@ fn a_service_detail_renders_freelens_sections_tables_and_external_links(cx: &mut
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Services, "default"), service_events)],
+        Scenario::default(),
     );
     let service = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Service",
@@ -165,6 +166,7 @@ fn a_service_forwards_one_of_its_tcp_ports(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Services, "default"), service_events)],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -218,6 +220,7 @@ fn a_service_with_only_udp_ports_has_none_to_forward(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Services, "default"), service_events)],
+        Scenario::default(),
     );
     let mut dns = web_service(Some(serde_json::json!({"app": "web"})));
     dns.data["spec"]["ports"] = serde_json::json!([{"name": "dns", "port": 53, "protocol": "UDP"}]);
@@ -241,6 +244,7 @@ fn delete_warning(selector: Option<serde_json::Value>, cx: &mut TestAppContext) 
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Services, "default"), service_events)],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -303,6 +307,7 @@ fn open_service_with_slices(cx: &mut TestAppContext) -> (Ui<'_>, Sender<DynamicO
             (key(BuiltinKind::Services, "default"), service_events),
             (key(BuiltinKind::EndpointSlices, "default"), slice_events),
         ],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,
@@ -426,6 +431,7 @@ fn an_ingress_detail_maps_rules_to_backends(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Ingresses, "default"), ingress_events)],
+        Scenario::default(),
     );
     let ingress = object(serde_json::json!({
         "apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
@@ -459,6 +465,7 @@ fn a_config_map_detail_previews_its_data(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::ConfigMaps, "default"), config_events)],
+        Scenario::default(),
     );
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
@@ -495,6 +502,7 @@ fn a_secret_value_shows_only_once_revealed(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Secrets, "default"), secret_events)],
+        Scenario::default(),
     );
     open_list(
         &mut ui,
@@ -542,6 +550,7 @@ fn editing_a_secret_opens_its_real_manifest(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::Secrets, "default"), secret_events)],
+        Scenario::default(),
     );
     open_detail(
         &mut ui,

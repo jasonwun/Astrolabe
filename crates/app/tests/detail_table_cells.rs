@@ -9,7 +9,7 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{TestAppContext, Window, px};
-use support::{key, object, open, open_detail, snapshot};
+use support::{Scenario, key, object, open, open_detail, snapshot};
 
 /// A cell's right padding (`pr_2` in a summary table, the table's own cell
 /// padding in a Related table): the gap its text keeps from the next.
@@ -40,6 +40,7 @@ fn a_summary_table_cell_stops_short_of_the_next_column(cx: &mut TestAppContext) 
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::ConfigMaps, "default"), config_events)],
+        Scenario::default(),
     );
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
@@ -72,6 +73,7 @@ fn summary_table_cell_ids_are_unique_within_the_table(cx: &mut TestAppContext) {
     let mut ui = open(
         cx,
         vec![(key(BuiltinKind::ConfigMaps, "default"), config_events)],
+        Scenario::default(),
     );
     let config = object(serde_json::json!({
         "apiVersion": "v1", "kind": "ConfigMap",
@@ -123,6 +125,7 @@ fn a_pod_event_message_stops_short_of_the_count_column(cx: &mut TestAppContext) 
             (key(BuiltinKind::Pods, "default"), pod_events),
             (key(BuiltinKind::Events, "default"), event_events),
         ],
+        Scenario::default(),
     );
     let pod = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",
@@ -167,6 +170,7 @@ fn related_cell_ids_are_unique_within_the_table(cx: &mut TestAppContext) {
             (key(BuiltinKind::Pods, "default"), pod_events),
             (key(BuiltinKind::Events, "default"), event_events),
         ],
+        Scenario::default(),
     );
     let pod = object(serde_json::json!({
         "apiVersion": "v1", "kind": "Pod",

@@ -13,7 +13,9 @@ use astrolabe_model::builtin::BuiltinKind;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use support::{LogCapture, Sender, Ui, key, mouse_click, object, open, open_detail, snapshot};
+use support::{
+    LogCapture, Scenario, Sender, Ui, key, mouse_click, object, open, open_detail, snapshot,
+};
 
 const REPORT: &str = "main-thread cost";
 
@@ -76,6 +78,7 @@ fn a_report_counts_the_list_refreshes_an_unrelated_watch_triggers(cx: &mut TestA
                 (key(BuiltinKind::Secrets, "default"), secret_events),
                 (key(BuiltinKind::ConfigMaps, "default"), config_map_events),
             ],
+            Scenario::default(),
         );
         ui.cx.update(|_, cx| astrolabe::perf::start(cx));
         open_detail(
@@ -120,6 +123,7 @@ fn nothing_is_reported_below_trace(cx: &mut TestAppContext) {
         let mut ui = open(
             cx,
             vec![(key(BuiltinKind::Secrets, "default"), secret_events)],
+            Scenario::default(),
         );
         ui.cx.update(|_, cx| astrolabe::perf::start(cx));
         open_detail(

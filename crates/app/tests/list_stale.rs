@@ -9,7 +9,7 @@ use astrolabe_model::session::{DENIED_STALE_MESSAGE, STALE_MESSAGE};
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
-use support::{key, object, open, open_list};
+use support::{Scenario, key, object, open, open_list};
 
 fn pod() -> astrolabe_kube::kube::core::DynamicObject {
     object(serde_json::json!({
@@ -22,7 +22,11 @@ fn pod() -> astrolabe_kube::kube::core::DynamicObject {
 #[gpui_kit::test]
 fn a_list_denied_after_a_snapshot_keeps_its_rows_under_the_denial_banner(cx: &mut TestAppContext) {
     let (mut pods, events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), events)],
+        Scenario::default(),
+    );
     open_list(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()]);
 
     pods.try_send(Err(ClusterError::forbidden("pods is forbidden")))
@@ -41,7 +45,11 @@ fn a_list_denied_after_a_snapshot_keeps_its_rows_under_the_denial_banner(cx: &mu
 #[gpui_kit::test]
 fn a_list_that_lost_its_connection_keeps_the_connection_banner(cx: &mut TestAppContext) {
     let (mut pods, events) = mpsc::channel(32);
-    let mut ui = open(cx, vec![(key(BuiltinKind::Pods, "default"), events)]);
+    let mut ui = open(
+        cx,
+        vec![(key(BuiltinKind::Pods, "default"), events)],
+        Scenario::default(),
+    );
     open_list(&mut ui, BuiltinKind::Pods, &mut pods, vec![pod()]);
 
     pods.try_send(Err(ClusterError::unreachable("refused")))
