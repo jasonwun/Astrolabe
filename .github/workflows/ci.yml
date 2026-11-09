@@ -45,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: e2e
-      - uses: helm/kind-action@v1
+      - uses: ./.github/actions/setup-kind
       - run: cargo test -p astrolabe-kube --locked --test e2e_cluster -- --ignored --test-threads=1
 
   mutants:
@@ -77,7 +77,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: e2e
-      - uses: helm/kind-action@v1
+      - uses: ./.github/actions/setup-kind
         with:
           node_image: kindest/node:v1.25.16
       - run: cargo test -p astrolabe-kube --locked --test e2e_cluster -- --ignored --test-threads=1 crd_
