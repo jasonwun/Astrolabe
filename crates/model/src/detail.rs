@@ -365,13 +365,6 @@ impl RelatedOutcome {
     }
 }
 
-impl Resolved {
-    /// What deleting the object takes with it, shown in the confirmation.
-    pub fn cascade_notice(&self) -> Notice {
-        Notice::new("delete-cascade", self.cascade.clone(), Intent::Warning)
-    }
-}
-
 /// The object as of `now`, with what its actions need.
 #[derive(Debug)]
 pub struct Resolved {
@@ -381,6 +374,13 @@ pub struct Resolved {
     pub actions: &'static [Action],
     /// `None` when the kind has no Related section or hides it.
     pub related: Option<RelatedRows>,
+}
+
+impl Resolved {
+    /// What deleting the object takes with it, shown in the confirmation.
+    pub fn cascade_notice(&self) -> Notice {
+        Notice::new("delete-cascade", self.cascade.clone(), Intent::Warning)
+    }
 }
 
 /// A shown Related section as of `now`.

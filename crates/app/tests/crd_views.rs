@@ -412,6 +412,8 @@ fn rbac_denied_crd_list_shows_an_empty_state_hint(cx: &mut TestAppContext) {
                 .try_find_by_label("No permission to list CustomResourceDefinitions")
                 .is_some()
         );
+        // The text is the model's; the id is the view's wiring (#347).
+        assert!(window.try_find("nav-crd-denied").is_some());
         assert!(window.try_find("namespace-stale").is_none());
     });
 }

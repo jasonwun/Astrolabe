@@ -31,7 +31,8 @@ pub(crate) fn notice_view(notice: Notice, cx: &App) -> Observed<Stateful<Div>> {
         .child(notice.text)
 }
 
-/// The warning banner of `notice`: the element tests find it by, and the
+/// The warning banner of `notice` (its intent is not read: every banner is
+/// a warning): the element tests find it by, and the
 /// `Alert` inside it. The wrapper carries `Role::Alert` for screen readers.
 /// The alert's own id is `(id, 0)`: a tuple id needs a number.
 pub(crate) fn banner_view(notice: Notice) -> Observed<Stateful<Div>> {

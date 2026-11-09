@@ -138,6 +138,8 @@ fn a_custom_kind_with_a_builtin_name_is_not_opened_as_builtin(cx: &mut TestAppCo
                 .try_find_by_label("Cannot open involved object Job/custom: kind is not registered")
                 .is_some()
         );
+        // The text is the model's; the id is the view's wiring (#347).
+        assert!(window.try_find("list-notice").is_some());
         assert!(window.try_find_by_label("Job default/custom").is_none());
     });
 }
