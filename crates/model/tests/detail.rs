@@ -750,3 +750,33 @@ fn the_delete_cascade_is_a_warning_notice() {
     );
     assert_ne!(resolved.cascade, "");
 }
+
+#[test]
+fn a_detail_title_names_the_kind_and_object() {
+    assert_eq!(target(BuiltinKind::Pods, "web").title(), "Pod default/web");
+    assert_eq!(
+        DetailTarget::Namespace {
+            name: "team-a".into()
+        }
+        .title(),
+        "Namespace team-a"
+    );
+    assert_eq!(
+        DetailTarget::Definition {
+            name: "widgets.example.com".into()
+        }
+        .title(),
+        "widgets.example.com"
+    );
+    assert_eq!(
+        DetailTarget::Custom {
+            id: CustomKindId {
+                group: "example.com".to_string(),
+                kind: "Widget".to_string(),
+            },
+            key: ObjectKey::new(None, "w"),
+        }
+        .title(),
+        "Widget w"
+    );
+}

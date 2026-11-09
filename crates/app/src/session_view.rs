@@ -260,12 +260,7 @@ impl SessionView {
         let theme = cx.theme();
         let session = self.session.read(cx);
         let current = session.state().namespace().to_string();
-        let names: Vec<String> = session
-            .state()
-            .namespaces()
-            .objects()
-            .filter_map(|namespace| namespace.metadata.name.clone())
-            .collect();
+        let names = session.state().namespace_names();
         let label = format!("Namespace: {current}");
         v_flex()
             .relative()

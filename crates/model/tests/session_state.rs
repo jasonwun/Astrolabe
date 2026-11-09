@@ -1698,3 +1698,19 @@ fn only_the_events_list_opens_from_every_cell() {
     assert!(!Viewing::Definitions.opens_from_every_cell());
     assert!(!Viewing::Custom(crontab_id()).opens_from_every_cell());
 }
+
+#[test]
+fn namespace_names_list_the_watched_namespaces() {
+    let mut state = state();
+    assert_eq!(state.namespace_names(), Vec::<String>::new());
+
+    state.namespaces_message(Ok(Event::Init));
+    state.namespaces_message(Ok(Event::InitApply(namespace("default"))));
+    state.namespaces_message(Ok(Event::InitApply(Namespace::default())));
+    state.namespaces_message(Ok(Event::InitApply(namespace("team-a"))));
+    state.namespaces_message(Ok(Event::InitDone));
+
+    let mut names = state.namespace_names();
+    names.sort();
+    assert_eq!(names, ["default", "team-a"]);
+}
