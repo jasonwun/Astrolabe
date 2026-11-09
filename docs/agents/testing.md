@@ -576,3 +576,12 @@ alone, so nothing in the app tests found `logs-status` or `exec-status`;
 the id was covered only by the model's `Notice` equality, which cannot show
 it renders. Keep the text assert, say in a comment that the text is the
 model's, and add `try_find("<id>")` (#304 retro).
+#347 moved eight more texts to `Notice` and added the model-side tests
+first; the window tests still found `list-notice`, `detail-notice`,
+`delete-cascade`, `picker-empty` and `nav-crd-denied` by label alone until
+the Standards review pointed at this rule. Grep `crates/app/tests` for each
+moved text's label and add `try_find("<id>")` beside it before the first
+push (#347 retro).
+
+A new `assert!(!x.is_empty())` fails `dev/pre-push.sh`'s clippy step
+(`assert_is_empty`); write `assert_ne!(x, "")` (#347 retro).

@@ -387,6 +387,24 @@ path of `<name>.png`, shrunk to one pixel per window point.
   click opened an HPA in one run and a Pod in the next, so a before/after
   of an Events click needs one seeding for both runs, and the notices are
   the comparable shots (#302 retro).
+- Texts a change moves between layers (#347: Scale, delete cascade, Events
+  row-open and YAML apply notices, the session banner) run as one
+  `actions.sh <binary> <outdir>` per binary, each launch fresh, with
+  `sleep 10` before `dev/resize.sh 1000 1000`. Coordinates at 1000x1000:
+  Pods (252,204), row (480,288), Delete (794,146) shows the cascade;
+  Deployments (278,237), row (480,170), Scale (475,147), then
+  `type-text --text x` and Apply (718,195) shows `Replicas must be a whole
+  number...` beside Delete (`press-key --key Return` does not submit the
+  form); Events (258,760), `dev/scroll.sh 700 600 down 90`, the nameless
+  event (700,899). Run the baseline binary from inside this worktree:
+  `dev/shot.sh` finds the app by its working directory, so a baseline built
+  in `$SCRATCH/base` still launches from the repo root. Ages read `DIFF`
+  (`2m42s` against `3m34s`), cascade, Scale notice, YAML error and banner
+  read `same`. A dead-port kubeconfig (above) with no
+  `ASTROLABE_NAMESPACE` shows the session banner on the launch view. In
+  this build a two-document paste (`---`) gave one `document 1: missing or
+  non-string metadata.name` line, so a multi-line `global-notice` was not
+  reachable by hand; say so in the PR (#347 retro).
 - A baseline app that was explored by hand keeps its tabs (a detail opened
   by a probe click): its tab bar then differs from the fresh `after`
   launch. Relaunch the baseline before the scripted run, not only the
