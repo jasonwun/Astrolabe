@@ -405,6 +405,16 @@ path of `<name>.png`, shrunk to one pixel per window point.
   this build a two-document paste (`---`) gave one `document 1: missing or
   non-string metadata.name` line, so a multi-line `global-notice` was not
   reachable by hand; say so in the PR (#347 retro).
+- Texts a change moves out of a detail view and the namespace menu (#345:
+  condition lines, replica summary, tab title, namespace names) reuse that
+  script. At 1000x1000: Deployments (278,237), row (480,170); the Delete
+  button is at (754,146) there (Pods' is (794,146)) and its question shows
+  in crop `440,85,560,140`; the Status section with the replica summary
+  and both conditions is crop `440,570,560,250`; the namespace selector is
+  (480,57) and its open menu crop `228,40,520,420`. That last crop reaches
+  the detail's `Created ... ago` under the menu, so it read `DIFF` for the
+  age alone while the menu was identical by eye: crop `228,40,520,320` to
+  stop above it. Tab bar, Status and Delete read `same` (#345 retro).
 - A baseline app that was explored by hand keeps its tabs (a detail opened
   by a probe click): its tab bar then differs from the fresh `after`
   launch. Relaunch the baseline before the scripted run, not only the
