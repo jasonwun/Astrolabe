@@ -20,7 +20,6 @@ fn key() -> ObjectKey {
 #[test]
 fn a_detail_request_has_a_key_equal_for_equal_targets() {
     let first = TabRequest::Detail(pod("web-0")).key();
-    assert!(first.is_some());
     assert_eq!(first, TabRequest::Detail(pod("web-0")).key());
     assert_ne!(first, TabRequest::Detail(pod("web-1")).key());
 }
@@ -56,21 +55,18 @@ fn editor(name: &str, yaml: &str) -> TabRequest {
 
 #[test]
 fn logs_requests_share_a_key_per_container() {
-    assert!(logs("app").key().is_some());
     assert_eq!(logs("app").key(), logs("app").key());
     assert_ne!(logs("app").key(), logs("sidecar").key());
 }
 
 #[test]
 fn exec_requests_share_a_key_per_container_whatever_the_shell() {
-    assert!(exec("app", "sh").key().is_some());
     assert_eq!(exec("app", "sh").key(), exec("app", "bash").key());
     assert_ne!(exec("app", "sh").key(), exec("sidecar", "sh").key());
 }
 
 #[test]
 fn editor_requests_share_a_key_per_object_whatever_the_text() {
-    assert!(editor("web-0", "a: 1").key().is_some());
     assert_eq!(editor("web-0", "a: 1").key(), editor("web-0", "a: 2").key());
     assert_ne!(editor("web-0", "a: 1").key(), editor("web-1", "a: 1").key());
 }
