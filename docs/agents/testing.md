@@ -107,7 +107,9 @@ rerun each passed. Comment the run links on #354 instead of a new issue
 (#341 retro). #344 hit it again on
 `e2e-legacy-discovery`, twice in a row on two pushes: one `gh run rerun
 <id> --failed` each passed, and the three failed runs are on #354 (#344
-retro).
+retro). #354 fixed it: both e2e jobs install a
+pinned kind through `.github/actions/setup-kind` with a bounded retry, so a
+recurrence is a bug in that action.
 
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and

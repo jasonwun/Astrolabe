@@ -1,0 +1,43 @@
+name: Set up kind
+description: >
+  Install a pinned kind with a bounded retry on download or checksum failure,
+  then create a cluster. Replaces helm/kind-action, whose single unretried
+  download intermittently failed its sha256 check (#354).
+inputs:
+  node_image:
+    description: kindest/node image; empty uses the kind default.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install kind
+      shell: bash
+      env:
+        KIND_VERSION: v0.31.0
+        KIND_SHA256: eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa
+      run: |
+        set -euo pipefail
+        url="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
+        for attempt in 1 2 3 4 5; do
+          if curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 -o kind "$url" \
+            && echo "${KIND_SHA256}  kind" | sha256sum --check --status; then
+            sudo install -m 0755 kind /usr/local/bin/kind
+            kind version
+            exit 0
+          fi
+          echo "kind download or checksum failed (attempt ${attempt}/5)" >&2
+          rm -f kind
+          sleep $((attempt * 5))
+        done
+        echo "could not install kind ${KIND_VERSION}" >&2
+        exit 1
+    - name: Create cluster
+      shell: bash
+      env:
+        NODE_IMAGE: ${{ inputs.node_image }}
+      run: |
+        set -euo pipefail
+        args=(--wait 120s)
+        if [ -n "$NODE_IMAGE" ]; then args+=(--image "$NODE_IMAGE"); fi
+        kind create cluster "${args[@]}"
