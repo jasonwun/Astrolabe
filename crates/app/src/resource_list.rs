@@ -14,12 +14,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::clock;
-use crate::notice_view::notice_view;
+use crate::notice_view::{banner_view, notice_view};
 use crate::open_tab::OpenTab;
 use crate::perf;
 use crate::rows_table::{RowsTable, fitted_table, open_row_with, rows_table_state};
 use crate::session::Session;
 use astrolabe_model::detail::DetailTarget;
+use astrolabe_model::list::open_row_notice;
 use astrolabe_model::list::{self, ListOutcome};
 use astrolabe_model::notice::Notice;
 use astrolabe_model::session::StaleCause;
@@ -33,7 +34,7 @@ pub struct ResourceListPanel {
     outcome_notice: Option<Notice>,
     stale: Option<StaleCause>,
     group_filter: BTreeSet<String>,
-    notice: Option<String>,
+    notice: Option<Notice>,
     /// Re-projects when the youngest shown age next changes (#70);
     /// replaced on every refresh, and dropped with the panel.
     tick: Task<()>,
@@ -84,7 +85,7 @@ impl ResourceListPanel {
                 cx.emit(OpenTab(TabRequest::Detail(target)));
             }
             Err(error) => {
-                self.notice = Some(error.to_string());
+                self.notice = Some(open_row_notice(&error));
                 cx.notify();
             }
         }
@@ -188,7 +189,6 @@ impl Panel for ResourceListPanel {
 
 impl Render for ResourceListPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
         let showing_definitions = matches!(
             self.session.read(cx).state().viewing(),
             Viewing::Definitions
@@ -199,27 +199,11 @@ impl Render for ResourceListPanel {
             .track_focus(&self.focus_handle)
             .size_full()
             .when_some(self.stale, |this, cause| {
-                // Distinct ids and texts per cause keep `try_find`
-                // unambiguous; the alert takes `(id, 0)`: a tuple id needs a
-                // number.
-                let Notice { id, text, .. } = cause.notice();
-                this.child(
-                    div().id(id).aria_label(text.clone()).test_support().child(
-                        gpui_kit::component::alert::Alert::warning((id, 0usize), text).banner(),
-                    ),
-                )
+                // Distinct ids and texts per cause keep `try_find` unambiguous.
+                this.child(banner_view(cause.notice()))
             })
-            .when_some(self.notice.clone(), |this, text| {
-                this.child(
-                    div()
-                        .id("list-notice")
-                        .aria_label(text.clone())
-                        .test_support()
-                        .p_2()
-                        .text_sm()
-                        .text_color(theme.warning)
-                        .child(text),
-                )
+            .when_some(self.notice.clone(), |this, notice| {
+                this.child(notice_view(notice, cx).p_2().text_sm())
             })
             .when(showing_definitions, |this| {
                 this.child(self.render_group_filter(cx))

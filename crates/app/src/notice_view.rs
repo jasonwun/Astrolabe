@@ -3,6 +3,7 @@
 
 use astrolabe_model::notice::{Intent, Notice};
 use gpui_kit::base::test_support::Observed;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::{ActiveTheme as _, Theme};
 use gpui_kit::*;
 
@@ -28,6 +29,19 @@ pub(crate) fn notice_view(notice: Notice, cx: &App) -> Observed<Stateful<Div>> {
         .test_support()
         .text_color(color)
         .child(notice.text)
+}
+
+/// The warning banner of `notice`: the element tests find it by, and the
+/// `Alert` inside it. The wrapper carries `Role::Alert` for screen readers.
+/// The alert's own id is `(id, 0)`: a tuple id needs a number.
+pub(crate) fn banner_view(notice: Notice) -> Observed<Stateful<Div>> {
+    let Notice { id, text, .. } = notice;
+    div()
+        .id(id)
+        .role(Role::Alert)
+        .aria_label(text.clone())
+        .test_support()
+        .child(Alert::warning((id, 0usize), text).banner())
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@ use std::collections::{BTreeSet, HashMap};
 use astrolabe_kube::cluster::ClusterId;
 use astrolabe_model::builtin::BuiltinKind;
 use gpui_kit::component::ActiveTheme as _;
-use gpui_kit::component::alert::Alert;
 use gpui_kit::component::dock::{DockArea, DockPlacement, DockSkin, PanelId, panel_handle};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -12,13 +11,13 @@ use gpui_kit::*;
 use crate::exec::ExecPanel;
 use crate::launch::{LaunchOpening, LaunchTab};
 use crate::logs::LogsPanel;
+use crate::notice_view::{banner_view, notice_view};
 use crate::open_tab::OpenTab;
 use crate::resource_detail::{EditorPanel, ResourceDetailPanel};
 use crate::resource_list::ResourceListPanel;
 use crate::session::{ScriptedCluster, Session};
 use crate::yaml_editor::YamlEditorView;
-use astrolabe_model::list::CRD_DENIED;
-use astrolabe_model::notice::Notice;
+use astrolabe_model::list::crd_denied_notice;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId};
 use astrolabe_model::session_state::Viewing;
 use astrolabe_model::tab::{TabKey, TabRequest};
@@ -427,17 +426,7 @@ impl SessionView {
             );
 
         if state.status().crd_access_denied {
-            return nav.child(
-                div()
-                    .id("nav-crd-denied")
-                    .aria_label(CRD_DENIED)
-                    .test_support()
-                    .px_2()
-                    .py_1()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(CRD_DENIED),
-            );
+            return nav.child(notice_view(crd_denied_notice(), cx).px_2().py_1().text_xs());
         }
         for group in state.catalog() {
             let collapsed = self.collapsed.contains(&group.group);
@@ -489,16 +478,7 @@ impl Render for SessionView {
         let border = cx.theme().border;
         v_flex()
             .size_full()
-            .when_some(banner, |this, Notice { id, text, .. }| {
-                this.child(
-                    div()
-                        .id(id)
-                        .role(Role::Alert)
-                        .aria_label(text.clone())
-                        .test_support()
-                        .child(Alert::warning("namespace-stale-alert", text).banner()),
-                )
-            })
+            .when_some(banner, |this, notice| this.child(banner_view(notice)))
             .child(
                 h_flex()
                     .p_2()

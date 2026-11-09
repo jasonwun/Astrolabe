@@ -167,7 +167,7 @@ fn scale_rejects_what_is_not_a_whole_number_of_zero_or_more() {
         actions.press(Action::Scale, &pod(&[], &[]));
         assert_eq!(actions.submit_scale(text, &pod(&[], &[])), Effect::None);
         assert_eq!(
-            actions.notice(),
+            actions.notice().map(|notice| notice.text).as_deref(),
             Some("Replicas must be a whole number, 0 or more"),
             "{text:?}"
         );
@@ -190,7 +190,10 @@ fn scale_accepts_zero_and_closes_the_form() {
         })
     );
     assert!(!actions.scale_open());
-    assert_eq!(actions.notice(), Some("Scaling…"));
+    assert_eq!(
+        actions.notice().map(|notice| notice.text).as_deref(),
+        Some("Scaling…")
+    );
 }
 
 #[test]
@@ -215,7 +218,10 @@ fn delete_runs_only_after_confirmation() {
         Effect::Run(Operation::Delete { object: object() })
     );
     assert!(!actions.delete_confirmation_open());
-    assert_eq!(actions.notice(), Some("Deleting…"));
+    assert_eq!(
+        actions.notice().map(|notice| notice.text).as_deref(),
+        Some("Deleting…")
+    );
 }
 
 #[test]
@@ -291,9 +297,15 @@ fn a_finished_operation_shows_its_done_or_failed_notice() {
     };
     let mut actions = DetailActions::default();
     actions.finished(&operation, Ok::<(), ClusterError>(()));
-    assert_eq!(actions.notice(), Some("Scaled to 3"));
+    assert_eq!(
+        actions.notice().map(|notice| notice.text).as_deref(),
+        Some("Scaled to 3")
+    );
     actions.finished(&operation, Err("boom"));
-    assert_eq!(actions.notice(), Some("Scale failed: boom"));
+    assert_eq!(
+        actions.notice().map(|notice| notice.text).as_deref(),
+        Some("Scale failed: boom")
+    );
 }
 
 #[test]
@@ -477,4 +489,21 @@ fn cancelling_scale_closes_the_form() {
     actions.press(Action::Scale, &Subject::default());
     actions.cancel_scale();
     assert!(!actions.scale_open());
+}
+
+#[test]
+fn the_action_notice_is_a_muted_detail_notice() {
+    use astrolabe_model::notice::{Intent, Notice};
+
+    let mut actions = DetailActions::default();
+    actions.press(Action::Scale, &pod(&[], &[]));
+    actions.submit_scale("x", &pod(&[], &[]));
+    assert_eq!(
+        actions.notice(),
+        Some(Notice::new(
+            "detail-notice",
+            "Replicas must be a whole number, 0 or more",
+            Intent::Muted
+        ))
+    );
 }

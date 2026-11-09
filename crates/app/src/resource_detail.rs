@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use astrolabe_kube::object::ObjectKey;
 use astrolabe_model::builtin::Action;
 use astrolabe_model::detail_actions::{DetailActions, Effect, Subject, forward_target};
+use astrolabe_model::notice::Notice;
 use astrolabe_model::projection::config::{HIDDEN, SecretKey};
 use astrolabe_model::projection::{
     DetailField, DetailItem, DetailModel, ReplicaCounts, SummaryTable, track_ages,
@@ -278,16 +279,8 @@ impl ResourceDetailPanel {
                     }
                 }))
             }))
-            .when_some(self.actions.notice().map(str::to_string), |bar, notice| {
-                bar.child(
-                    div()
-                        .id("detail-notice")
-                        .aria_label(notice.clone())
-                        .test_support()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(notice),
-                )
+            .when_some(self.actions.notice(), |bar, notice| {
+                bar.child(notice_view(notice, cx).text_sm())
             })
     }
 
@@ -343,7 +336,7 @@ impl ResourceDetailPanel {
             .into_any_element()
     }
 
-    fn render_confirm(&self, cascade: String, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_confirm(&self, cascade: Notice, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let question = format!("Delete {}?", self.display_name());
         let action = |id: &'static str, label: &'static str| {
@@ -370,15 +363,7 @@ impl ResourceDetailPanel {
             .border_color(theme.danger)
             .bg(theme.background)
             .child(div().child(question))
-            .child(
-                div()
-                    .id("delete-cascade")
-                    .aria_label(cascade.clone())
-                    .test_support()
-                    .text_sm()
-                    .text_color(theme.warning)
-                    .child(cascade),
-            )
+            .child(notice_view(cascade, cx).text_sm())
             .child(
                 h_flex()
                     .gap_2()
@@ -651,6 +636,7 @@ impl Render for ResourceDetailPanel {
                     .into_any_element();
             }
         };
+        let cascade = resolved.cascade_notice();
         let model = resolved.model;
         let replicas = model.replicas;
         let forwards = forward_target(&model, &resolved.object.key);
@@ -752,7 +738,7 @@ impl Render for ResourceDetailPanel {
                 this.child(self.render_scale(&input, replicas, cx))
             })
             .when(self.actions.delete_confirmation_open(), |this| {
-                this.child(self.render_confirm(resolved.cascade, cx))
+                this.child(self.render_confirm(cascade, cx))
             })
             .children(forwards.and_then(|target| self.render_forwards(target, cx)))
             .child(
