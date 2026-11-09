@@ -243,3 +243,18 @@ Reference: `crates/app/tests/yaml_editor.rs`.
   (#78).
 
 Reference: `crates/app/tests/crd_views.rs`.
+
+## Colours in tests
+
+`ElementSnapshot` exposes role, label, value, bounds and the checked /
+focused / disabled flags, not the text colour: a `gpui_kit::test` cannot
+assert that a notice is red (#348). Test the mapping instead: a unit test
+on `notice_view::intent_color` with a `Theme` whose five intent colours
+differ (`Theme { colors: ThemeColor { danger: .., ..ThemeColor::default() },
+..Theme::default() }`; assigning fields on `Theme::default()` trips
+`field_reassign_with_default`), plus a model test for which intent an
+outcome carries. Prove it fails by pointing one arm at the wrong colour.
+In a `#[cfg(test)]` module under a file that imports `gpui_kit::*`, import
+by name: `use super::*` brings gpui's `test` attribute macro in and
+`#[test]` fails with `recursion limit reached while expanding #[test]`.
+The kind screenshot is what shows the colour on screen (#348 retro).
