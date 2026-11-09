@@ -748,5 +748,5 @@ fn the_delete_cascade_is_a_warning_notice() {
         resolved.cascade_notice(),
         Notice::new("delete-cascade", resolved.cascade.clone(), Intent::Warning)
     );
-    assert!(!resolved.cascade.is_empty());
+    assert_ne!(resolved.cascade, "");
 }
