@@ -144,6 +144,36 @@ the new coordinates off it. A live list with no objects needs a namespace
 with none of the kind, such as `kube-public`'s Pods; the demo namespace
 has every kind.
 
+A detail or Related section that *failed* (#348; #275 had judged it
+unreachable) needs the server to die after a list has loaded, so that the
+detail's own watch has no snapshot. Put a TCP forwarder between the app
+and the apiserver and kill it at the right moment (no `socat` on this
+machine; a ten-line Python `socket` forwarder on a spare port, with the
+kind apiserver's port as upstream, passes TLS and client certs through
+untouched). Point a kubeconfig copy at it
+(`kubectl config view --raw --minify --context kind-astrolabe-dev | sed -E
+'s#(server: https://[^:]+):[0-9]+#\1:<port>#'`), start the proxy, wait
+until `KUBECONFIG=<copy> kubectl get ns` answers (the first call races the
+listener), then launch with that kubeconfig:
+
+- Related: open the Deployments list, `kill` the proxy, open `web`. The
+  Pods watch starts fresh and fails: the Pods section reads `Cannot reach
+  the cluster: ...` in red. The Deployment itself still shows, from the
+  list's snapshot.
+- Detail: restart the proxy, open Events, `kill` it again, open a row whose
+  object's kind no list has watched yet (a Job, an HPA; not a Pod, whose
+  watch the Related check already started). The whole tab reads the same
+  text in red.
+
+The workspace banner appears when the proxy dies and goes when it is back,
+moving the sidebar 45pt: Events was at y 804 with the banner and 760
+without, and the first click at the old position hit nothing. Kill the
+proxy and the app when done (#348 retro).
+
+Another worktree's check may kill your app (`dev/shot.sh` then says
+`found 0`): relaunch from `target/debug/astrolabe` with the same
+environment, and do not kill theirs (#348 retro).
+
 Run this check after review fixes. Done when every view the final change touches has been
 opened and screenshotted on `kind-astrolabe-dev` in every state the
 change adds (populated, empty, forbidden), each screenshot has been read
