@@ -18,15 +18,24 @@ runs:
         KIND_SHA256: eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa
       run: |
         set -euo pipefail
+        # Bump KIND_VERSION and KIND_SHA256 together (the sha256 is in the
+        # release's kind-linux-amd64.sha256sum asset).
+        if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
+          echo "setup-kind only supports linux/amd64" >&2
+          exit 1
+        fi
         url="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-amd64"
         for attempt in 1 2 3 4 5; do
-          if curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 -o kind "$url" \
-            && echo "${KIND_SHA256}  kind" | sha256sum --check --status; then
-            sudo install -m 0755 kind /usr/local/bin/kind
-            kind version
-            exit 0
+          if curl -fsSL --connect-timeout 15 --max-time 120 -o kind "$url"; then
+            if echo "${KIND_SHA256}  kind" | sha256sum --check --status; then
+              sudo install -m 0755 kind /usr/local/bin/kind
+              kind version
+              exit 0
+            fi
+            echo "kind checksum mismatch (attempt ${attempt}/5)" >&2
+          else
+            echo "kind download failed (attempt ${attempt}/5)" >&2
           fi
-          echo "kind download or checksum failed (attempt ${attempt}/5)" >&2
           rm -f kind
           sleep $((attempt * 5))
         done

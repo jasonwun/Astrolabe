@@ -109,7 +109,8 @@ rerun each passed. Comment the run links on #354 instead of a new issue
 <id> --failed` each passed, and the three failed runs are on #354 (#344
 retro). #354 fixed it: both e2e jobs install a
 pinned kind through `.github/actions/setup-kind` with a bounded retry, so a
-recurrence is a bug in that action.
+recurrence is a bug in that action. Bump its `KIND_VERSION` and
+`KIND_SHA256` together (#354).
 
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
