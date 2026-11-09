@@ -539,6 +539,14 @@ impl SessionState {
         &self.namespaces
     }
 
+    /// The names in the Namespaces watch, for the namespace menu.
+    pub fn namespace_names(&self) -> Vec<String> {
+        self.namespaces
+            .objects()
+            .filter_map(|namespace| namespace.metadata.name.clone())
+            .collect()
+    }
+
     pub fn namespace_object(&self, name: &str) -> Option<&Namespace> {
         self.namespaces.get(None, name)
     }

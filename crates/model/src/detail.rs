@@ -204,6 +204,17 @@ impl DetailTarget {
 }
 
 impl DetailTarget {
+    /// The detail tab's title, also how the delete question and the
+    /// missing-object notice name the object.
+    pub fn title(&self) -> String {
+        match self {
+            Self::Namespace { name } => format!("Namespace {name}"),
+            Self::Definition { name } => name.clone(),
+            Self::Builtin { kind, key } => format!("{} {key}", kind.kind()),
+            Self::Custom { id, key } => format!("{} {key}", id.kind),
+        }
+    }
+
     /// The object an operation on this target addresses, while it is still
     /// in its watch; `None` while there is none (loading, failed, denied, gone
     /// and the rest: see `resolve`). Looks the object up without

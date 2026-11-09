@@ -7,7 +7,7 @@ use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
 use astrolabe_kube::k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::object::ObjectKey;
-use astrolabe_model::projection::{ResourceRow, project_namespaces};
+use astrolabe_model::projection::{ConditionRow, ReplicaCounts, ResourceRow, project_namespaces};
 
 mod support;
 
@@ -427,4 +427,46 @@ mod custom {
         );
         assert!(detail.yaml.contains("group: stable.example.com"));
     }
+}
+
+fn condition(reason: &str, message: &str) -> ConditionRow {
+    ConditionRow {
+        kind: "Ready".into(),
+        status: "False".into(),
+        reason: reason.into(),
+        message: message.into(),
+    }
+}
+
+#[test]
+fn a_condition_line_carries_reason_and_message() {
+    assert_eq!(
+        condition("Crashed", "back-off").line(),
+        "Ready=False (Crashed): back-off"
+    );
+}
+
+#[test]
+fn a_condition_line_leaves_out_an_empty_reason_or_message() {
+    assert_eq!(condition("", "").line(), "Ready=False");
+    assert_eq!(condition("Crashed", "").line(), "Ready=False (Crashed)");
+    assert_eq!(condition("", "back-off").line(), "Ready=False: back-off");
+}
+
+#[test]
+fn the_replica_summary_lists_the_four_counts() {
+    let counts = ReplicaCounts {
+        desired: 3,
+        updated: 2,
+        available: 1,
+        unavailable: 2,
+    };
+    assert_eq!(
+        counts.summary(),
+        "Replicas: 3 desired, 2 updated, 1 available, 2 unavailable"
+    );
+    assert_eq!(
+        ReplicaCounts::default().summary(),
+        "Replicas: 0 desired, 0 updated, 0 available, 0 unavailable"
+    );
 }

@@ -117,15 +117,6 @@ impl ResourceDetailPanel {
         detail::resolve(&self.target, self.state(cx), clock::now(cx)).shown()
     }
 
-    fn display_name(&self) -> String {
-        match &self.target {
-            DetailTarget::Namespace { name } => format!("Namespace {name}"),
-            DetailTarget::Definition { name } => name.clone(),
-            DetailTarget::Builtin { kind, key } => format!("{} {key}", kind.kind()),
-            DetailTarget::Custom { id, key } => format!("{} {key}", id.kind),
-        }
-    }
-
     fn edit(&mut self, cx: &mut Context<Self>) {
         if let Some(resolved) = self.resolve(cx) {
             cx.emit(OpenTab(TabRequest::Editor {
@@ -338,7 +329,7 @@ impl ResourceDetailPanel {
 
     fn render_confirm(&self, cascade: Notice, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let question = format!("Delete {}?", self.display_name());
+        let question = format!("Delete {}?", self.target.title());
         let action = |id: &'static str, label: &'static str| {
             div()
                 .id(id)
@@ -504,10 +495,7 @@ fn list_field(label: &'static str, values: &[String]) -> Option<AnyElement> {
 /// available, then updated but not yet available, then unavailable.
 fn replica_bar(counts: ReplicaCounts, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let text = format!(
-        "Replicas: {} desired, {} updated, {} available, {} unavailable",
-        counts.desired, counts.updated, counts.available, counts.unavailable
-    );
+    let text = counts.summary();
     let total = counts
         .desired
         .max(counts.available + counts.unavailable)
@@ -602,11 +590,11 @@ impl BasePanel for ResourceDetailPanel {
 
 impl Panel for ResourceDetailPanel {
     fn tab_name(&self, _: &App) -> Option<SharedString> {
-        Some(self.display_name().into())
+        Some(self.target.title().into())
     }
 
     fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.display_name()
+        self.target.title()
     }
 }
 
@@ -627,7 +615,7 @@ impl Render for ResourceDetailPanel {
             DetailOutcome::Shown(resolved) => *resolved,
             absent => {
                 let notice = absent
-                    .notice(&self.display_name())
+                    .notice(&self.target.title())
                     .expect("an outcome that is not shown has a notice");
                 return v_flex()
                     .track_focus(&self.focus_handle)
@@ -661,14 +649,7 @@ impl Render for ResourceDetailPanel {
                 .map(|(label, value)| field(label, value)),
         );
         for condition in &model.conditions {
-            let mut text = format!("{}={}", condition.kind, condition.status);
-            if !condition.reason.is_empty() {
-                text.push_str(&format!(" ({})", condition.reason));
-            }
-            if !condition.message.is_empty() {
-                text.push_str(&format!(": {}", condition.message));
-            }
-            status.push(field("Condition", &text));
+            status.push(field("Condition", &condition.line()));
         }
         status.extend(model.tables.iter().map(|table| summary_table(table, cx)));
         status.extend(self.render_secret_keys(&model.secret_keys, cx));
@@ -727,7 +708,7 @@ impl Render for ResourceDetailPanel {
             // The dock focuses the displayed panel; `cmd-w` dispatches from
             // here.
             .track_focus(&self.focus_handle)
-            .aria_label(self.display_name())
+            .aria_label(self.target.title())
             .test_support()
             .size_full()
             .child(self.render_toolbar(resolved.actions, &model, cx))

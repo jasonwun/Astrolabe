@@ -297,6 +297,22 @@ pub struct ConditionRow {
     pub message: String,
 }
 
+impl ConditionRow {
+    /// The detail's condition line: `kind=status (reason): message`, the
+    /// reason and message left out while empty.
+    pub fn line(&self) -> String {
+        use std::fmt::Write as _;
+        let mut text = format!("{}={}", self.kind, self.status);
+        if !self.reason.is_empty() {
+            let _ = write!(text, " ({})", self.reason);
+        }
+        if !self.message.is_empty() {
+            let _ = write!(text, ": {}", self.message);
+        }
+        text
+    }
+}
+
 /// A small table inside a detail's status summary (e.g. a Pod's
 /// containers).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -361,6 +377,16 @@ pub struct ReplicaCounts {
     pub updated: i32,
     pub available: i32,
     pub unavailable: i32,
+}
+
+impl ReplicaCounts {
+    /// The replica summary drawn above the bar.
+    pub fn summary(&self) -> String {
+        format!(
+            "Replicas: {} desired, {} updated, {} available, {} unavailable",
+            self.desired, self.updated, self.available, self.unavailable
+        )
+    }
 }
 
 /// The containers a Pod's actions run in.
