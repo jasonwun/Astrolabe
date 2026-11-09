@@ -734,3 +734,19 @@ fn only_a_reference_error_has_a_source() {
     };
     assert!(unavailable.source().is_none());
 }
+
+#[test]
+fn the_delete_cascade_is_a_warning_notice() {
+    use astrolabe_model::notice::{Intent, Notice};
+
+    let target = target(BuiltinKind::Deployments, "web");
+    let mut state = state(&target);
+    snapshot(&mut state, BuiltinKind::Deployments, vec![web_deployment()]);
+
+    let resolved = resolved(&target, &state);
+    assert_eq!(
+        resolved.cascade_notice(),
+        Notice::new("delete-cascade", resolved.cascade.clone(), Intent::Warning)
+    );
+    assert_ne!(resolved.cascade, "");
+}

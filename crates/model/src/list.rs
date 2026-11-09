@@ -11,7 +11,7 @@ use astrolabe_kube::k8s_openapi::jiff::Timestamp;
 use astrolabe_kube::kube::ResourceExt;
 
 use crate::catalog::KindResource;
-use crate::detail::forbidden_message;
+use crate::detail::{OpenRowError, forbidden_message};
 use crate::notice::{Intent, Notice, failed_message};
 use crate::projection::{
     ResourceTable, project_custom_resources, project_definitions, project_namespaces,
@@ -21,6 +21,16 @@ use crate::session_state::{SessionState, Viewing};
 
 /// The text shown where listing Definitions is denied.
 pub const CRD_DENIED: &str = "No permission to list CustomResourceDefinitions";
+
+/// The nav's note where listing Definitions is denied.
+pub fn crd_denied_notice() -> Notice {
+    Notice::new("nav-crd-denied", CRD_DENIED, Intent::Muted)
+}
+
+/// The list's note that opening a row failed.
+pub fn open_row_notice(error: &OpenRowError) -> Notice {
+    Notice::new("list-notice", error.to_string(), Intent::Warning)
+}
 
 /// What the viewed list shows.
 #[derive(Debug, PartialEq)]

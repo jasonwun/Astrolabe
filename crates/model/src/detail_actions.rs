@@ -11,7 +11,7 @@ use astrolabe_kube::pod::{ExecRequest, ForwardRequest, ForwardTarget, LogRequest
 
 use crate::builtin::Action;
 use crate::detail::{DetailTarget, Resolved};
-use crate::notice::Intent;
+use crate::notice::{Intent, Notice};
 use crate::operation_text;
 use crate::projection::{Containers, DetailModel, ForwardTo};
 use crate::session::ForwardState;
@@ -136,6 +136,12 @@ pub fn picker_empty(model: &DetailModel, picking: &Picking) -> Option<&'static s
         .then_some("No running container")
 }
 
+/// The muted reason the container picker has nothing to offer: `reason` is
+/// [`picker_empty`]'s or a Forward's.
+pub fn picker_empty_notice(reason: &'static str) -> Notice {
+    Notice::new("picker-empty", reason, Intent::Muted)
+}
+
 /// What Port Forward reaches from the detail of the object at `key`.
 pub fn forward_target(model: &DetailModel, key: &ObjectKey) -> Option<ForwardTarget> {
     Some(match model.forward.as_ref()?.to {
@@ -166,8 +172,11 @@ impl DetailActions {
         self.picking.as_ref()
     }
 
-    pub fn notice(&self) -> Option<&str> {
-        self.notice.as_deref()
+    /// What the last action said, drawn beside the toolbar.
+    pub fn notice(&self) -> Option<Notice> {
+        self.notice
+            .as_deref()
+            .map(|text| Notice::new("detail-notice", text, Intent::Muted))
     }
 
     /// A toolbar action was pressed. Edit YAML opens no flow here: the view

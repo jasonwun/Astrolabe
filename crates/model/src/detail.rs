@@ -376,6 +376,13 @@ pub struct Resolved {
     pub related: Option<RelatedRows>,
 }
 
+impl Resolved {
+    /// What deleting the object takes with it, shown in the confirmation.
+    pub fn cascade_notice(&self) -> Notice {
+        Notice::new("delete-cascade", self.cascade.clone(), Intent::Warning)
+    }
+}
+
 /// A shown Related section as of `now`.
 #[derive(Debug)]
 pub struct RelatedRows {

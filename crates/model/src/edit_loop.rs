@@ -15,6 +15,8 @@ use astrolabe_kube::apply::{
 };
 use astrolabe_kube::cluster::{ClusterError, ClusterErrorKind};
 
+use crate::notice::{Intent, Notice};
+
 /// How a Precheck mark is drawn: an error, or a warning for a field a real
 /// Apply would ignore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,14 +62,14 @@ pub struct ProblemPanel {
 /// Everything the editor draws, as final values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Projection {
-    /// Global notices, one line each: the Apply's, then the manual
-    /// Precheck's. A click dismisses them all.
-    pub notices: Vec<String>,
+    /// The global notice, one line per text: the Apply's, then the manual
+    /// Precheck's. A click dismisses them all. None when there is none.
+    pub notice: Option<Notice>,
     pub panel: Option<ProblemPanel>,
-    pub status: String,
+    pub status: Notice,
     /// The Precheck text of the status bar: empty when there is nothing to
     /// say.
-    pub precheck: String,
+    pub precheck: Notice,
     /// `(1-based line, severity)` of the Precheck's outline marks.
     pub precheck_marks: Vec<(usize, Severity)>,
     /// The 1-based lines of the last Apply's errors.
@@ -426,16 +428,18 @@ impl EditLoop {
             PrecheckStatus::Checking => "checking…".to_string(),
             PrecheckStatus::Unavailable => "● precheck unavailable".to_string(),
         };
+        let lines: Vec<&str> = self
+            .apply_notices
+            .iter()
+            .chain(&self.precheck_notices)
+            .map(String::as_str)
+            .collect();
         Projection {
-            notices: self
-                .apply_notices
-                .iter()
-                .chain(&self.precheck_notices)
-                .cloned()
-                .collect(),
+            notice: (!lines.is_empty())
+                .then(|| Notice::new("global-notice", lines.join("\n"), Intent::Danger)),
             panel,
-            status: self.status.clone(),
-            precheck,
+            status: Notice::new("yaml-status", self.status.clone(), Intent::Muted),
+            precheck: Notice::new("yaml-precheck", precheck, Intent::Muted),
             precheck_marks: self.precheck_marks.clone(),
             apply_lines: self.panel.iter().filter_map(|item| item.line).collect(),
         }
@@ -535,6 +539,15 @@ mod tests {
 
     use super::*;
 
+    /// The lines of the global notice; none when there is none.
+    fn lines(shown: &Projection) -> Vec<String> {
+        shown
+            .notice
+            .iter()
+            .flat_map(|notice| notice.text.split('\n').map(str::to_string))
+            .collect()
+    }
+
     const BUFFER: &str = "kind: ConfigMap\ndata:\n  a: 1\n";
 
     fn ready() -> EditLoop {
@@ -603,13 +616,13 @@ mod tests {
         );
 
         let shown = edit.projection();
-        let panel = shown.panel.unwrap();
+        let panel = shown.panel.clone().unwrap();
         assert!(panel.force_apply);
         assert_eq!(
             panel.header,
             "2 problem(s) from last apply — conflicts with kubectl, helm"
         );
-        assert_eq!(shown.status, "apply failed: 2 problem(s)");
+        assert_eq!(shown.status.text, "apply failed: 2 problem(s)");
         assert_eq!(shown.apply_lines, [3, 3]);
     }
 
@@ -627,10 +640,10 @@ mod tests {
 
         let shown = edit.projection();
         assert_eq!(
-            shown.notices,
+            lines(&shown),
             ["v1 ConfigMap/a: apply conflicted (unparsable details); force apply available"]
         );
-        assert_eq!(shown.status, "apply failed: 0 problem(s)");
+        assert_eq!(shown.status.text, "apply failed: 0 problem(s)");
         // Force Apply stays available but is drawn with the panel only.
         assert!(shown.panel.is_none());
     }
@@ -667,10 +680,10 @@ mod tests {
         );
 
         let shown = edit.projection();
-        let panel = shown.panel.unwrap();
+        let panel = shown.panel.clone().unwrap();
         assert!(!panel.force_apply);
         assert_eq!(panel.header, "3 problem(s) from last apply");
-        assert_eq!(shown.status, "apply failed: 3 problem(s)");
+        assert_eq!(shown.status.text, "apply failed: 3 problem(s)");
         assert_eq!(
             panel.rows,
             [
@@ -692,7 +705,7 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(shown.notices, ["v1 Namespace/n: forbidden"]);
+        assert_eq!(lines(&shown), ["v1 Namespace/n: forbidden"]);
         assert_eq!(shown.apply_lines, [2, 1]);
     }
 
@@ -700,17 +713,17 @@ mod tests {
     fn a_clean_apply_says_applied_and_a_failed_one_its_error() {
         let mut edit = ready();
         let ticket = edit.begin_apply(BUFFER, ApplyMode::Force).unwrap();
-        assert_eq!(edit.projection().status, "force applying…");
+        assert_eq!(edit.projection().status.text, "force applying…");
         edit.finish_apply(ticket, report(Vec::new()), BUFFER);
-        assert_eq!(edit.projection().status, "applied");
+        assert_eq!(edit.projection().status.text, "applied");
 
         let ticket = edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
-        assert_eq!(edit.projection().status, "applying…");
+        assert_eq!(edit.projection().status.text, "applying…");
         edit.finish_apply(ticket, Err(ClusterError::connect("refused")), BUFFER);
         let shown = edit.projection();
-        assert_eq!(shown.status, "apply failed");
+        assert_eq!(shown.status.text, "apply failed");
         assert_eq!(
-            shown.notices,
+            lines(&shown),
             ["cannot apply: cluster unreachable (refused)"]
         );
     }
@@ -720,37 +733,37 @@ mod tests {
         let mut edit = ready();
         edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
         assert!(edit.begin_apply(BUFFER, ApplyMode::Normal).is_none());
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
     fn with_no_cluster_nothing_starts_and_the_notice_says_so() {
         let mut edit = EditLoop::new();
-        assert_eq!(edit.projection().status, "no cluster");
+        assert_eq!(edit.projection().status.text, "no cluster");
 
         assert!(edit.begin_apply(BUFFER, ApplyMode::Normal).is_none());
-        assert_eq!(edit.projection().notices, ["cannot apply: no cluster"]);
+        assert_eq!(lines(&edit.projection()), ["cannot apply: no cluster"]);
 
         edit.dismiss_notices();
         assert!(edit.begin_precheck(BUFFER, false).is_none());
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
 
         assert!(edit.begin_precheck(BUFFER, true).is_none());
-        assert_eq!(edit.projection().notices, ["cannot precheck: no cluster"]);
+        assert_eq!(lines(&edit.projection()), ["cannot precheck: no cluster"]);
     }
 
     #[test]
     fn a_blank_buffer_is_not_prechecked() {
         let mut edit = ready();
         assert!(edit.begin_precheck("  \n", true).is_none());
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
     fn strict_decoding_causes_in_a_precheck_are_warnings() {
         let mut edit = ready();
         let ticket = edit.begin_precheck(BUFFER, false).unwrap();
-        assert_eq!(edit.projection().precheck, "checking…");
+        assert_eq!(edit.projection().precheck.text, "checking…");
         let mut bogus = cause("spec.bogus", "unknown field \"spec.bogus\"");
         bogus.located.location = Location::Exact { line: 2 };
         edit.finish_precheck(
@@ -769,7 +782,7 @@ mod tests {
             [(2, Severity::Warning), (3, Severity::Error)]
         );
         assert_eq!(
-            shown.precheck,
+            shown.precheck.text,
             "1 unknown/duplicate field(s) — apply will ignore them"
         );
         assert!(shown.panel.is_none());
@@ -791,7 +804,7 @@ mod tests {
 
         let shown = edit.projection();
         assert_eq!(shown.precheck_marks, [(3, Severity::Error)]);
-        assert_eq!(shown.precheck, "");
+        assert_eq!(shown.precheck.text, "");
     }
 
     #[test]
@@ -812,7 +825,7 @@ mod tests {
 
         let shown = edit.projection();
         assert!(shown.panel.is_none());
-        assert_eq!(shown.status, "cluster kind-b");
+        assert_eq!(shown.status.text, "cluster kind-b");
         // Not stuck applying: the new Cluster takes an Apply.
         assert!(edit.begin_apply(BUFFER, ApplyMode::Normal).is_some());
     }
@@ -835,7 +848,7 @@ mod tests {
 
         let shown = edit.projection();
         assert_eq!(shown.precheck_marks, Vec::<(usize, Severity)>::new());
-        assert_eq!(shown.precheck, "");
+        assert_eq!(shown.precheck.text, "");
     }
 
     #[test]
@@ -844,7 +857,7 @@ mod tests {
         let ticket = edit.begin_precheck(BUFFER, true).unwrap();
         edit.cluster_changed("kind-b");
         edit.finish_precheck(ticket, true, Err(ClusterError::new("late")));
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
@@ -889,7 +902,7 @@ mod tests {
 
         let shown = edit.projection();
         assert!(shown.panel.is_none());
-        assert_eq!(shown.notices, Vec::<String>::new());
+        assert_eq!(lines(&shown), Vec::<String>::new());
         assert_eq!(shown.apply_lines, Vec::<usize>::new());
     }
 
@@ -910,7 +923,7 @@ mod tests {
         let shown = edit.projection();
         assert!(shown.panel.is_none());
         assert_eq!(shown.apply_lines, Vec::<usize>::new());
-        assert_eq!(shown.status, "cluster kind-b");
+        assert_eq!(shown.status.text, "cluster kind-b");
     }
 
     #[test]
@@ -932,7 +945,7 @@ mod tests {
 
         let shown = edit.projection();
         assert_eq!(shown.precheck_marks, Vec::<(usize, Severity)>::new());
-        assert_eq!(shown.precheck, "");
+        assert_eq!(shown.precheck.text, "");
     }
 
     #[test]
@@ -948,12 +961,12 @@ mod tests {
         );
         let ticket = edit.begin_precheck(BUFFER, false).unwrap();
         edit.finish_precheck(ticket, false, Err(ClusterError::forbidden("rbac")));
-        assert_eq!(edit.projection().precheck, "● precheck unavailable");
+        assert_eq!(edit.projection().precheck.text, "● precheck unavailable");
 
         edit.buffer_changed();
 
         let shown = edit.projection();
-        assert_eq!(shown.precheck, "");
+        assert_eq!(shown.precheck.text, "");
         assert!(shown.panel.is_some());
     }
 
@@ -963,14 +976,14 @@ mod tests {
         let ticket = edit.begin_precheck(BUFFER, false).unwrap();
         edit.finish_precheck(ticket, false, Err(ClusterError::forbidden("rbac")));
         let shown = edit.projection();
-        assert_eq!(shown.precheck, "● precheck unavailable");
-        assert_eq!(shown.notices, Vec::<String>::new());
+        assert_eq!(shown.precheck.text, "● precheck unavailable");
+        assert_eq!(lines(&shown), Vec::<String>::new());
 
         let ticket = edit.begin_precheck(BUFFER, true).unwrap();
         edit.finish_precheck(ticket, true, Err(ClusterError::forbidden("rbac")));
         let shown = edit.projection();
-        assert_eq!(shown.precheck, "");
-        assert_eq!(shown.notices, ["rbac"]);
+        assert_eq!(shown.precheck.text, "");
+        assert_eq!(lines(&shown), ["rbac"]);
     }
 
     #[test]
@@ -989,12 +1002,12 @@ mod tests {
         let ticket = edit.begin_precheck(BUFFER, false).unwrap();
         edit.finish_precheck(ticket, false, global());
         let shown = edit.projection();
-        assert_eq!(shown.precheck, "● precheck unavailable");
-        assert_eq!(shown.notices, Vec::<String>::new());
+        assert_eq!(shown.precheck.text, "● precheck unavailable");
+        assert_eq!(lines(&shown), Vec::<String>::new());
 
         let ticket = edit.begin_precheck(BUFFER, true).unwrap();
         edit.finish_precheck(ticket, true, global());
-        assert_eq!(edit.projection().notices, ["v1 ConfigMap/a: denied"]);
+        assert_eq!(lines(&edit.projection()), ["v1 ConfigMap/a: denied"]);
     }
 
     fn global_outcome() -> Result<ApplyReport, ClusterError> {
@@ -1020,7 +1033,7 @@ mod tests {
 
         manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
 
-        assert_eq!(edit.projection().notices, ["apply broke", "precheck broke"]);
+        assert_eq!(lines(&edit.projection()), ["apply broke", "precheck broke"]);
     }
 
     #[test]
@@ -1031,7 +1044,7 @@ mod tests {
         manual_precheck(&mut edit, global_outcome());
 
         assert_eq!(
-            edit.projection().notices,
+            lines(&edit.projection()),
             ["apply broke", "v1 ConfigMap/a: denied"]
         );
     }
@@ -1045,7 +1058,7 @@ mod tests {
         assert!(edit.begin_precheck(BUFFER, true).is_none());
 
         assert_eq!(
-            edit.projection().notices,
+            lines(&edit.projection()),
             ["apply broke", &no_cluster_notice("precheck")[..]]
         );
     }
@@ -1058,7 +1071,7 @@ mod tests {
 
         manual_precheck(&mut edit, report(Vec::new()));
 
-        assert_eq!(edit.projection().notices, ["apply broke"]);
+        assert_eq!(lines(&edit.projection()), ["apply broke"]);
     }
 
     #[test]
@@ -1068,7 +1081,7 @@ mod tests {
 
         edit.begin_precheck(BUFFER, true).unwrap();
 
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
@@ -1079,7 +1092,7 @@ mod tests {
 
         edit.finish_precheck(ticket, true, Err(ClusterError::new("precheck broke")));
 
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
@@ -1089,7 +1102,7 @@ mod tests {
 
         assert!(edit.begin_precheck("  ", true).is_none());
 
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
@@ -1097,11 +1110,11 @@ mod tests {
         let mut edit = ready();
         apply_with(&mut edit, Err(ClusterError::new("apply broke")));
         manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
-        assert_eq!(edit.projection().notices.len(), 2);
+        assert_eq!(lines(&edit.projection()).len(), 2);
 
         edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
 
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
@@ -1112,7 +1125,7 @@ mod tests {
 
         edit.cluster_changed("other");
 
-        assert_eq!(edit.projection().notices, Vec::<String>::new());
+        assert_eq!(lines(&edit.projection()), Vec::<String>::new());
     }
 
     #[test]
@@ -1125,7 +1138,7 @@ mod tests {
         let ticket = edit.begin_precheck(BUFFER, false).unwrap();
         edit.finish_precheck(ticket, false, global_outcome());
 
-        assert_eq!(edit.projection().notices, ["apply broke"]);
+        assert_eq!(lines(&edit.projection()), ["apply broke"]);
     }
 
     #[test]
@@ -1135,8 +1148,8 @@ mod tests {
         manual_precheck(&mut edit, Err(ClusterError::new("precheck broke")));
         edit.dismiss_notices();
         let shown = edit.projection();
-        assert_eq!(shown.notices, Vec::<String>::new());
-        assert_eq!(shown.status, "apply failed");
+        assert_eq!(lines(&shown), Vec::<String>::new());
+        assert_eq!(shown.status.text, "apply failed");
     }
 
     #[test]
@@ -1160,5 +1173,22 @@ mod tests {
         let ticket = edit.begin_apply("a: 1\n", ApplyMode::Normal).unwrap();
         edit.finish_apply(ticket, on_a(), "x: 0\na: 1\n");
         assert_eq!(edit.projection().apply_lines, [2]);
+    }
+
+    #[test]
+    fn the_projection_names_each_text_by_its_element_and_intent() {
+        let mut edit = ready();
+        edit.begin_apply(BUFFER, ApplyMode::Normal).unwrap();
+        let shown = edit.projection();
+        assert_eq!(shown.status.id, "yaml-status");
+        assert_eq!(shown.status.intent, Intent::Muted);
+        assert_eq!(shown.precheck.id, "yaml-precheck");
+        assert_eq!(shown.precheck.intent, Intent::Muted);
+
+        let mut edit = EditLoop::new();
+        edit.begin_apply(BUFFER, ApplyMode::Normal);
+        let notice = edit.projection().notice.unwrap();
+        assert_eq!(notice.id, "global-notice");
+        assert_eq!(notice.intent, Intent::Danger);
     }
 }

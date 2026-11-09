@@ -3,7 +3,7 @@
 
 use astrolabe_kube::pod::ForwardTarget;
 use astrolabe_model::detail_actions::{
-    Picking, PodAction, SHELLS, containers, forward_row, picker_empty,
+    Picking, PodAction, SHELLS, containers, forward_row, picker_empty, picker_empty_notice,
 };
 use astrolabe_model::notice::Intent;
 use astrolabe_model::projection::{DetailModel, Forward};
@@ -12,7 +12,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::notice_view::intent_color;
+use crate::notice_view::{intent_color, notice_view};
 
 use super::{ResourceDetailPanel, button};
 
@@ -111,13 +111,8 @@ impl ResourceDetailPanel {
 
     /// The muted reason the picker has nothing to offer.
     fn render_empty(&self, text: &'static str, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .id("picker-empty")
-            .aria_label(text)
-            .test_support()
+        notice_view(picker_empty_notice(text), cx)
             .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .child(text)
             .into_any_element()
     }
 

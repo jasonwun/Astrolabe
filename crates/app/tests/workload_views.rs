@@ -167,6 +167,8 @@ fn deployments_show_a_replica_bar(cx: &mut TestAppContext) {
                 .try_find_by_label("Its ReplicaSets and their Pods will be deleted too.")
                 .is_some()
         );
+        // The text is the model's; the id is the view's wiring (#347).
+        assert!(window.try_find("delete-cascade").is_some());
     });
 }
 
@@ -230,6 +232,8 @@ fn deployments_scale_and_rollout_restart_from_the_toolbar(cx: &mut TestAppContex
     ui.settle();
     ui.frame(|window, _| {
         assert!(window.try_find_by_label("Scaled to 5").is_some());
+        // The text is the model's; the id is the view's wiring (#347).
+        assert!(window.try_find("detail-notice").is_some());
         assert!(window.try_find("scale-input").is_none());
     });
 
@@ -826,6 +830,8 @@ fn exec_on_a_crash_looping_pod_says_there_is_no_running_container(cx: &mut TestA
     ui.frame(|window, _| {
         let picker = window.within("container-picker");
         assert!(picker.try_find_by_label("No running container").is_some());
+        // The text is the model's; the id is the view's wiring (#347).
+        assert!(picker.try_find("picker-empty").is_some());
         assert!(picker.try_find("pick-container-app").is_none());
         // No shell tab was opened.
         assert!(

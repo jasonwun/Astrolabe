@@ -24,7 +24,9 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::*;
 
 use astrolabe_model::edit_loop::{EditLoop, ProblemPanel, Severity};
+use astrolabe_model::notice::Notice;
 
+use crate::notice_view::notice_view;
 use crate::session::Session;
 
 gpui_kit::actions!(
@@ -462,8 +464,8 @@ impl YamlEditorView {
 
     fn render_status_bar(
         &self,
-        status: String,
-        precheck: String,
+        status: Notice,
+        precheck: Notice,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
@@ -475,24 +477,8 @@ impl YamlEditorView {
             .justify_between()
             .border_t_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .id("yaml-status")
-                    .aria_label(status.clone())
-                    .test_support()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(status),
-            )
-            .child(
-                div()
-                    .id("yaml-precheck")
-                    .aria_label(precheck.clone())
-                    .test_support()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(precheck),
-            )
+            .child(notice_view(status, cx).text_xs())
+            .child(notice_view(precheck, cx).text_xs())
     }
 
     fn render_palette(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -558,13 +544,11 @@ impl Render for YamlEditorView {
             .on_action(cx.listener(Self::on_precheck))
             .on_action(cx.listener(Self::on_toggle_palette));
         let shown = self.edit.projection();
-        if !shown.notices.is_empty() {
-            let notice = shown.notices.join("\n");
+        if let Some(notice) = shown.notice {
             root = root.child(
-                div()
-                    .id("global-notice")
-                    .aria_label(notice.clone())
-                    .test_support()
+                // The editor's errors are `theme.red`, a shade apart from the
+                // `Danger` intent's `theme.danger`; the colour stays.
+                notice_view(notice, cx)
                     .w_full()
                     .px_2()
                     .py_1()
@@ -573,7 +557,6 @@ impl Render for YamlEditorView {
                     .text_color(theme.red)
                     .border_b_1()
                     .border_color(theme.border)
-                    .children(shown.notices.into_iter().map(|line| div().child(line)))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.edit.dismiss_notices();
                         cx.notify();

@@ -98,3 +98,31 @@ fn health_has_a_label_an_intent_and_a_tooltip() {
         ("Stale", Intent::Danger, STALE_MESSAGE)
     );
 }
+
+#[test]
+fn the_nav_and_row_open_texts_carry_their_element_id_and_intent() {
+    use astrolabe_model::detail::OpenRowError;
+    use astrolabe_model::list::{CRD_DENIED, crd_denied_notice, open_row_notice};
+
+    assert_eq!(
+        crd_denied_notice(),
+        Notice::new("nav-crd-denied", CRD_DENIED, Intent::Muted)
+    );
+    let error = OpenRowError::Reference(astrolabe_model::detail::ReferenceError::MissingName {
+        kind: "Pod".to_string(),
+    });
+    assert_eq!(
+        open_row_notice(&error),
+        Notice::new("list-notice", error.to_string(), Intent::Warning)
+    );
+}
+
+#[test]
+fn the_picker_empty_reason_is_a_muted_notice() {
+    use astrolabe_model::detail_actions::picker_empty_notice;
+
+    assert_eq!(
+        picker_empty_notice("No running container"),
+        Notice::new("picker-empty", "No running container", Intent::Muted)
+    );
+}
