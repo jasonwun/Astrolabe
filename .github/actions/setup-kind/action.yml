@@ -37,7 +37,7 @@ runs:
             echo "kind download failed (attempt ${attempt}/5)" >&2
           fi
           rm -f kind
-          sleep $((attempt * 5))
+          if [ "$attempt" -lt 5 ]; then sleep $((attempt * 5)); fi
         done
         echo "could not install kind ${KIND_VERSION}" >&2
         exit 1
