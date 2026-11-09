@@ -492,19 +492,23 @@ fn a_builtin_detail_denied_after_a_snapshot_still_shows_its_object() {
 }
 
 #[test]
-fn every_absent_detail_is_drawn_muted_with_its_own_id() {
+fn every_absent_detail_has_its_own_id_and_only_a_failure_is_danger() {
     let outcomes = [
-        (DetailOutcome::Loading, "detail-loading"),
-        (DetailOutcome::Failed(None), "detail-failed"),
-        (DetailOutcome::Forbidden, "detail-forbidden"),
-        (DetailOutcome::Undefined, "detail-undefined"),
-        (DetailOutcome::NotServed, "detail-not-served"),
-        (DetailOutcome::Unreadable, "detail-unreadable"),
-        (DetailOutcome::Gone, "detail-gone"),
+        (DetailOutcome::Loading, "detail-loading", Intent::Muted),
+        (DetailOutcome::Failed(None), "detail-failed", Intent::Danger),
+        (DetailOutcome::Forbidden, "detail-forbidden", Intent::Muted),
+        (DetailOutcome::Undefined, "detail-undefined", Intent::Muted),
+        (DetailOutcome::NotServed, "detail-not-served", Intent::Muted),
+        (
+            DetailOutcome::Unreadable,
+            "detail-unreadable",
+            Intent::Muted,
+        ),
+        (DetailOutcome::Gone, "detail-gone", Intent::Muted),
     ];
-    for (outcome, id) in outcomes {
+    for (outcome, id, intent) in outcomes {
         let notice = outcome.notice("Pod web").unwrap();
-        assert_eq!((notice.id, notice.intent), (id, Intent::Muted));
+        assert_eq!((notice.id, notice.intent), (id, intent));
     }
 }
 
@@ -523,25 +527,29 @@ fn a_related_section_without_rows_says_why() {
             RelatedOutcome::Failed(None),
             "related-failed",
             "The watch ended before the object loaded",
+            Intent::Danger,
         ),
         (
             RelatedOutcome::Forbidden("No permission to list pods here".to_string()),
             "related-empty",
             "No permission to list pods here",
+            Intent::Muted,
         ),
         (
             RelatedOutcome::Empty("No pods".to_string()),
             "related-empty",
             "No pods",
+            Intent::Muted,
         ),
         (
             RelatedOutcome::Loading("Loading pods…".to_string()),
             "related-empty",
             "Loading pods…",
+            Intent::Muted,
         ),
     ];
-    for (outcome, id, text) in cases {
-        assert_eq!(outcome.notice(), Some(Notice::new(id, text, Intent::Muted)));
+    for (outcome, id, text, intent) in cases {
+        assert_eq!(outcome.notice(), Some(Notice::new(id, text, intent)));
     }
     assert_eq!(
         RelatedOutcome::Rows(ResourceTable::default()).notice(),
