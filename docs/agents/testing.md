@@ -112,6 +112,16 @@ pinned kind through `.github/actions/setup-kind` with a bounded retry, so a
 recurrence is a bug in that action. Bump its `KIND_VERSION` and
 `KIND_SHA256` together (#354).
 
+A CI-only PR (#354) has no local test: the dev machine is macOS without
+Docker, so the new action's happy path is proven only by the PR's own `e2e`
+jobs (a PR runs its own workflow and local actions), and a transient
+failure cannot be forced there. Check the pieces that run anywhere (a wrong
+sha256 rejected, the pinned sha256 against the release's `.sha256sum`),
+and say in the PR that the retry loop itself is unexercised (#354 retro).
+When scripting a doc edit, assert the anchor string is unique
+(`s.count(old) == 1`): an unanchored `replace(..., 1)` put #354's note in
+the wrong paragraph until the diff showed it (#354 retro).
+
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
 an unbackticked type name in a doc comment trips `doc_markdown`. Return
