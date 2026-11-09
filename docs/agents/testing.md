@@ -598,3 +598,17 @@ push (#347 retro).
 
 A new `assert!(!x.is_empty())` fails `dev/pre-push.sh`'s clippy step
 (`assert_is_empty`); write `assert_ne!(x, "")` (#347 retro).
+
+Two more clippy lints that `dev/pre-push.sh` catches: building a string
+with `text.push_str(&format!(..))` or `text += &format!(..)` trips
+`format_push_string`, so write `let _ = write!(text, ..)` with `use
+std::fmt::Write as _` inside the function. An emptiness assert on a
+`Vec` is `assert_eq!(v, Vec::<String>::new())`, since `assert_ne!(x, "")`
+is for strings (#345 retro).
+
+A PR opened while main keeps merging goes `BEHIND` with no checks reported
+(`gh pr checks` says "no checks reported", `mergeStateStatus` `BEHIND`) and
+auto-merge never starts. Rebase onto `origin/main`, re-run
+`dev/pre-push.sh` and `dev/test-evidence.sh` on the rebased tree, then
+`git push --force-with-lease`: CI started and the PR merged within about
+ten minutes (#345 retro).
