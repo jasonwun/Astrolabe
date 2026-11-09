@@ -1,7 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
 use astrolabe_kube::cluster::ClusterId;
-use astrolabe_kube::object::ObjectKey;
 use astrolabe_model::builtin::BuiltinKind;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::alert::Alert;
@@ -11,14 +10,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::exec::ExecPanel;
-use crate::launch::LaunchTab;
+use crate::launch::{LaunchOpening, LaunchTab};
 use crate::logs::LogsPanel;
 use crate::open_tab::OpenTab;
 use crate::resource_detail::{EditorPanel, ResourceDetailPanel};
 use crate::resource_list::ResourceListPanel;
 use crate::session::{ScriptedCluster, Session};
 use crate::yaml_editor::YamlEditorView;
-use astrolabe_model::detail::DetailTarget;
 use astrolabe_model::list::CRD_DENIED;
 use astrolabe_model::notice::Notice;
 use astrolabe_model::session::{ConnectionHealth, CustomKindId};
@@ -126,16 +124,9 @@ impl SessionView {
     pub fn open_tabs(&mut self, tabs: Vec<LaunchTab>, window: &mut Window, cx: &mut Context<Self>) {
         let namespace = self.session.read(cx).state().namespace().to_string();
         for tab in tabs {
-            match tab {
-                LaunchTab::List(kind) => self.show(Viewing::Builtin(kind), window, cx),
-                LaunchTab::Detail(kind, name) => {
-                    let key = ObjectKey::new(Some(namespace.clone()), name);
-                    self.open_tab(
-                        TabRequest::Detail(DetailTarget::Builtin { kind, key }),
-                        window,
-                        cx,
-                    );
-                }
+            match tab.opening(&namespace) {
+                LaunchOpening::Show(view) => self.show(view, window, cx),
+                LaunchOpening::Open(request) => self.open_tab(request, window, cx),
             }
         }
     }

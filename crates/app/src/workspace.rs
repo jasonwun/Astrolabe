@@ -4,7 +4,7 @@ use futures::channel::mpsc;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::*;
 
-use crate::launch::Preselection;
+use crate::launch::{LaunchResolution, Preselection};
 use crate::notice_view::intent_color;
 use crate::perf;
 use crate::session::{DEFAULT_NAMESPACE, ScriptedCluster};
@@ -123,29 +123,26 @@ impl WorkspaceView {
     /// launch without preselection: the first cluster in its context's
     /// namespace.
     fn select_launch_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Preselection {
-            cluster,
-            namespace,
-            open,
-        } = std::mem::take(&mut self.preselection);
-        let (cluster, namespace) = match cluster {
-            Some(name) => match self.clusters.iter().find(|cluster| cluster.name() == name) {
-                Some(cluster) => (Some(cluster.clone()), namespace),
-                None => {
-                    tracing::warn!(
-                        ASTROLABE_CLUSTER = %name,
-                        "preselected cluster is not a listed cluster; opening the first one"
-                    );
-                    (self.clusters.first().cloned(), None)
-                }
-            },
-            None => (self.clusters.first().cloned(), namespace),
-        };
-        if let Some(cluster) = cluster {
-            self.open_cluster(cluster.clone(), namespace, window, cx);
-            if let Some(session) = self.sessions.get(&cluster) {
-                session.update(cx, |session, cx| session.open_tabs(open, window, cx));
+        let preselection = std::mem::take(&mut self.preselection);
+        let target = match preselection.resolve(&self.clusters) {
+            LaunchResolution::NoCluster => return,
+            LaunchResolution::Open(target) => target,
+            LaunchResolution::Fallback {
+                unlisted: name,
+                target,
+            } => {
+                tracing::warn!(
+                    ASTROLABE_CLUSTER = %name,
+                    "preselected cluster is not a listed cluster; opening the first one"
+                );
+                target
             }
+        };
+        self.open_cluster(target.cluster.clone(), target.namespace, window, cx);
+        if let Some(session) = self.sessions.get(&target.cluster) {
+            session.update(cx, |session, cx| {
+                session.open_tabs(preselection.open, window, cx)
+            });
         }
     }
 
