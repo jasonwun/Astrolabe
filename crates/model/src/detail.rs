@@ -336,7 +336,13 @@ impl DetailOutcome {
         // absent outcome is drawn muted.
         let intent = match self {
             Self::Failed(_) => Intent::Danger,
-            _ => Intent::Muted,
+            Self::Shown(_)
+            | Self::Loading
+            | Self::Forbidden
+            | Self::Undefined
+            | Self::NotServed
+            | Self::Unreadable
+            | Self::Gone => Intent::Muted,
         };
         Some(Notice::new(id, text, intent))
     }
