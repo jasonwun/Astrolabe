@@ -39,6 +39,11 @@ Origin: #149's review fix rewrapped `client_for_context`'s `# Errors`
 to an 82-column line. Only fmt and clippy ran locally, so CI's
 `comment-width.sh` caught it and cost a CI round (#149 retro).
 
+#344 ran fmt, clippy and the tests, then pushed: `dev/layer-check.sh`
+failed `lint` on `ClusterId::named` in `launch.rs`'s `#[cfg(test)]` module,
+because it forbids that call anywhere under `crates/app/src`. A test that
+names a Cluster from a string goes in `crates/app/tests/` (#344 retro).
+
 `dev/pre-push.sh`'s mutants step reads the committed diff: an edit left
 uncommitted fails it with `Diff content doesn't match source file`.
 Commit the fix, then re-run. A hand-written `PartialEq`/`PartialOrd` for a
@@ -99,7 +104,10 @@ and file the issue with both run links (#354) (#343 retro). #353 hit it
 twice in a row (`e2e`, then `e2e-legacy-discovery`, as `kind-linux-amd64:
 FAILED`): the failed job's log has the line, and one more `--failed`
 rerun each passed. Comment the run links on #354 instead of a new issue
-(#341 retro).
+(#341 retro). #344 hit it again on
+`e2e-legacy-discovery`, twice in a row on two pushes: one `gh run rerun
+<id> --failed` each passed, and the three failed runs are on #354 (#344
+retro).
 
 `astrolabe-model`'s tests are linted too (`--all-targets`, pedantic): a
 test helper that always returns `Ok(..)` trips `unnecessary_wraps`, and
