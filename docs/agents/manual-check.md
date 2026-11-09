@@ -293,6 +293,12 @@ path of `<name>.png`, shrunk to one pixel per window point.
   `DIFF` for the `crashy` Pod's Restarts alone (`2 (19s ago)` against
   `3 (56s)`, it crash-loops on purpose): crop the Pods list to the left of
   Restarts or read that cell as the cluster, not the view (#331 retro).
+  #342 (a model-type change behind the same tab opens) repeated that walk
+  and read the same way, plus one new `DIFF`: the Editor crop
+  (`440,85,560,130`) shows the text caret on one side only, because it
+  blinks. Read the pair by eye and call it the caret. No Python imaging
+  module is installed, so there is no pixel-diff of the two crops beyond
+  `dev/shot-same.sh`'s verdict (#342 retro).
 - A tab count cannot be read off a capture: tab titles carry the object's
   namespace (`astrolabe-demo-<worktree>`), so with two or three tabs open the
   tab bar overflows a 1000-wide window and shows only the active title. The
@@ -432,7 +438,11 @@ of context.
    git worktree add --detach "$SCRATCH/base" origin/main
    (cd "$SCRATCH/base" && CARGO_TARGET_DIR="$SCRATCH/base-target" cargo build -p astrolabe)
    ```
-2. Kill every running astrolabe first, the exploration instance included:
+2. Kill this worktree's astrolabe, never by name: `pkill -f
+   target/debug/astrolabe` matches every worktree's app and `cargo run`,
+   and #342's cleanup killed another worktree's run that way. Use
+   `kill "$(dev/shot.sh --pid)"` (#342 retro).
+   Kill every running astrolabe of this worktree first, the exploration instance included:
    a probe app left with a dropdown open made #164's first baseline run
    click into it, and every pair read `DIFF`. Then launch it from this
    worktree's directory
