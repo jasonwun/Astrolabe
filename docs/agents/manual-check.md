@@ -434,6 +434,18 @@ path of `<name>.png`, shrunk to one pixel per window point.
   it lists namespaces alphabetically, and a click at a remembered position
   lands on another namespace once the list changes (#95).
 
+A change to what the launch opens (#344: which Cluster and namespace,
+which tabs) is a "must leave the UI as it was" check on three launches,
+each with a fresh app, the baseline's and then the branch's: a listed
+`ASTROLABE_CLUSTER` with `ASTROLABE_OPEN=Deployment,Secret/db` (a list
+tab and a detail tab), an unlisted `ASTROLABE_CLUSTER=nope` (falls back
+to the first cluster) and no preselection. Put launch, `dev/resize.sh
+1000 1000`, one `dev/shot.sh` and `kill "$(dev/shot.sh --pid)"` of each
+into one script run for both binaries, with `sleep 25` after the launch:
+the window needs it. The unlisted and none launches read `same`; the
+listed one reads `DIFF` for the detail's `Created ... (81s ago)` alone,
+the clock (#344 retro).
+
 Another worktree's retro or cleanup runs `pkill astrolabe`, which kills
 your app between two Bash calls (#341's first two runs died that way, and
 `dev/shot.sh --pid` then says `found 0`). Launch with
