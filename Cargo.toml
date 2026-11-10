@@ -9,6 +9,8 @@ members = [
 ]
 
 [workspace.package]
+# The release version: dev/package.sh stamps it into the .app bundle.
+version = "0.0.1"
 edition = "2024"
 publish = false
 

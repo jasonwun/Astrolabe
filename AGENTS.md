@@ -30,6 +30,10 @@ Coverage, mutation testing, cluster e2e, and the PR's test Evidence: `docs/agent
 
 Before writing a DockArea panel, a `gpui_kit::test` UI test, or an acceptance criterion a UI test must meet: `docs/agents/gpui-kit.md`.
 
+### Releasing
+
+To cut a release or change `dev/package.sh` or the release workflow: `docs/agents/release.md`.
+
 ### Upstream (Freelens)
 
 Before writing columns, fields, or behaviour an issue aligns with Lens/Freelens: fetch the upstream source per `docs/agents/reference-products.md`.

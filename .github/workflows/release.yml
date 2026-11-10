@@ -1,0 +1,46 @@
+name: Release
+
+# Started by hand from the Actions tab (docs/agents/release.md). Nothing is
+# typed in: the version is the workspace `version`.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - name: Run from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "releases are cut from main, not $GITHUB_REF" >&2
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag must not exist
+        id: version
+        run: |
+          version=$(cargo pkgid -p astrolabe --locked | sed 's/.*[#@]//')
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "tag v$version already exists; bump the workspace version first" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+      - run: dev/package.sh
+      - name: Create the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Every Release is a pre-release until the maintainer decides
+          # otherwise: there is deliberately no switch for a full one.
+          gh release create "v$VERSION" "target/package/Astrolabe-$VERSION.dmg" \
+            --target "$GITHUB_SHA" \
+            --title "Astrolabe $VERSION" \
+            --prerelease \
+            --generate-notes \
+            --notes-file .github/release-header.md
