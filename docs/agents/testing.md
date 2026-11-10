@@ -612,3 +612,7 @@ auto-merge never starts. Rebase onto `origin/main`, re-run
 `dev/pre-push.sh` and `dev/test-evidence.sh` on the rebased tree, then
 `git push --force-with-lease`: CI started and the PR merged within about
 ten minutes (#345 retro).
+
+Changing a workspace `version` makes `cargo ... --locked` fail with "cannot
+update the lock file" until `Cargo.lock` follows: run `cargo update -p
+<crate> --offline` once and commit the one-line lock change (#371 retro).
