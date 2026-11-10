@@ -415,6 +415,15 @@ path of `<name>.png`, shrunk to one pixel per window point.
   the detail's `Created ... ago` under the menu, so it read `DIFF` for the
   age alone while the menu was identical by eye: crop `228,40,520,320` to
   stop above it. Tab bar, Status and Delete read `same` (#345 retro).
+- The packaged `.app` (#371): run `dev/package.sh`, then start
+  `target/package/Astrolabe.app/Contents/MacOS/astrolabe` from this
+  worktree in a background shell. The binary inside the bundle is the
+  packaged artifact, and `dev/shot.sh` finds it by its working directory,
+  which `open` would not set. A release build ignores `ASTROLABE_CLUSTER`
+  and `ASTROLABE_NAMESPACE`, so it opens the first kubeconfig context in
+  `default`: the check is that the sidebar lists every context and Pods
+  loads. It is not a Finder launch, which has no shell `KUBECONFIG` or
+  PATH; say so in the PR (#371 retro).
 - A baseline app that was explored by hand keeps its tabs (a detail opened
   by a probe click): its tab bar then differs from the fresh `after`
   launch. Relaunch the baseline before the scripted run, not only the
