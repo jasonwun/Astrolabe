@@ -8,6 +8,8 @@ on:
 permissions:
   contents: write
 
+concurrency: release
+
 jobs:
   release:
     runs-on: macos-latest
@@ -19,6 +21,7 @@ jobs:
           exit 1
       - uses: actions/checkout@v4
         with:
+          # Every tag, for the tag-exists check and the generated notes.
           fetch-depth: 0
       - name: Tag must not exist
         id: version
@@ -30,15 +33,18 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@v2
-      - run: dev/package.sh
+      - name: Build the .dmg
+        id: package
+        run: echo "dmg=$(dev/package.sh | tail -1)" >> "$GITHUB_OUTPUT"
       - name: Create the pre-release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+          DMG: ${{ steps.package.outputs.dmg }}
         run: |
           # Every Release is a pre-release until the maintainer decides
           # otherwise: there is deliberately no switch for a full one.
-          gh release create "v$VERSION" "target/package/Astrolabe-$VERSION.dmg" \
+          gh release create "v$VERSION" "$DMG" \
             --target "$GITHUB_SHA" \
             --title "Astrolabe $VERSION" \
             --prerelease \

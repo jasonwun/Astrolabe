@@ -2,8 +2,8 @@
 # Usage: dev/package.sh
 # Builds the release binary, assembles target/package/Astrolabe.app from it
 # and wraps it in target/package/Astrolabe-<version>.dmg. The version is the
-# workspace `version`. No code signing or notarization (out of scope for
-# 0.0.1). The release workflow runs this same script.
+# workspace `version`. Not signed or notarized. The release workflow runs
+# this same script and takes the .dmg path from the last line of stdout.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,10 +11,11 @@ version=$(cargo pkgid -p astrolabe --locked | sed 's/.*[#@]//')
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "bad version: $version" >&2; exit 1; }
 
 cargo build --release -p astrolabe --locked
-bin=$(cargo metadata --format-version 1 --no-deps --locked |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/release/astrolabe
+target=$(cargo metadata --format-version 1 --no-deps --locked |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')
+bin=$target/release/astrolabe
 
-app=target/package/Astrolabe.app
+app=$target/package/Astrolabe.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp "$bin" "$app/Contents/MacOS/astrolabe"
@@ -37,7 +38,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 PLIST
 plutil -lint "$app/Contents/Info.plist" >&2
 
-dmg=target/package/Astrolabe-$version.dmg
+dmg=$target/package/Astrolabe-$version.dmg
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 cp -R "$app" "$stage/"

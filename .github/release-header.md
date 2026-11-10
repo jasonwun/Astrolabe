@@ -1,6 +1,6 @@
 ## First launch
 
-Download the `.dmg`, open it and drag Astrolabe to Applications.
+This build is for Apple Silicon Macs. Download the `.dmg`, open it and drag Astrolabe to Applications.
 
 Astrolabe is not signed or notarized, so macOS blocks the first launch.
 Either right-click Astrolabe in Applications and choose Open, or run:
