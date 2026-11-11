@@ -19,6 +19,7 @@ Both then mutate the process. Rust 2024 makes `set_var` unsafe, because another 
 - Code that spawns a process outside the kubeconfig exec path (a future terminal, `kubectl` subprocess) does not see the shell's `PATH` unless it asks `shell_env`.
 - The capture runs the user's rc files with stdin null and stdout piped. A slow or hanging rc delays the first cluster list by up to 15 s, then behaves as before (a warning in the log).
 - Tests skip the capture with `ASTROLABE_NO_LOGIN_SHELL_ENV` (set in `.cargo/config.toml`), so a `cargo run` with stdout redirected skips it too: unset it there.
+- The shell's `PATH` replaces, not extends, the one the app was started with, in each exec block. A directory only the app's own `PATH` has is lost to the plugin.
 - A failed capture is only logged, not shown to the user.
 
 ## Revisit when
