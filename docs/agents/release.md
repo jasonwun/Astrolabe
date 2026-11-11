@@ -5,7 +5,9 @@ It builds the `.dmg` on a macOS runner, creates the tag `v<version>` and a
 GitHub **pre-release** with the `.dmg` attached. The notes are
 `.github/release-header.md` (Gatekeeper instructions, permissions
 placeholder) followed by GitHub's generated list of merged PRs since the
-previous release tag.
+previous release tag. Write each paragraph and list item of the header on
+one line: release notes render every single newline as a line break (#380
+found `blocks the first launch.<br>` on the v0.0.1 page).
 
 1. **Bump PR.** Change `version` in `[workspace.package]` of the root
    `Cargo.toml`, run `cargo update -p astrolabe --offline` so `Cargo.lock`

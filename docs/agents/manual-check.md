@@ -649,6 +649,12 @@ state without a connection (#166, #213).
 `dev/resize.sh 2000 800` is capped at the screen: on a 1512pt screen the
 capture is 1512 wide. Say so in the PR rather than call it 2000 (#213).
 
+Read every shot before attaching it. A shot of macOS's own UI can carry
+personal data: #380's System Settings > Privacy & Security shot showed the
+account name in the sidebar, so the PR carries a crop of the Security
+section (`sips -c <h> <w> --cropOffset <y> <x>`). Leave out a shot another
+app's prompt covers and quote the dialog's text instead (#380).
+
 ## 5. Clean up
 
 ```sh
