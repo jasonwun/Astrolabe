@@ -14,6 +14,8 @@ Commit messages created by an agent must end with a `Co-Authored-By:` trailer na
 
 Before any `gh issue` or `gh pr` call: `docs/agents/issue-tracker.md`. Issues and specs are GitHub issues on jasonwun/Astrolabe.
 
+When an issue you open or triage will change the same code as another open issue, add a native dependency (**Blocking** in that doc): the one that should land first blocks the other, so the two are never dispatched in parallel.
+
 ### Triage labels
 
 Default label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
