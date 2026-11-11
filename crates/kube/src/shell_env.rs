@@ -120,28 +120,30 @@ static CAPTURED: OnceLock<ShellEnv> = OnceLock::new();
 
 /// The shell to run: `$SHELL`, else the passwd entry's.
 fn login_shell() -> Option<String> {
-    if let Some(shell) = std::env::var("SHELL")
-        .ok()
-        .filter(|shell| !shell.is_empty())
-    {
-        return Some(shell);
+    shell_from(std::env::var("SHELL").ok()).or_else(passwd_shell)
+}
+
+/// `$SHELL`'s value, when it names a shell.
+fn shell_from(value: Option<String>) -> Option<String> {
+    value.filter(|shell| !shell.is_empty())
+}
+
+/// The shell the passwd entry of the current user names.
+#[cfg(unix)]
+fn passwd_shell() -> Option<String> {
+    use std::ffi::CStr;
+    // SAFETY: `getpwuid` returns null or a pointer to a static passwd
+    // entry, whose `pw_shell` is null or a NUL-terminated string; it is
+    // copied before any other call.
+    unsafe {
+        let entry = libc::getpwuid(libc::getuid()).as_ref()?;
+        let shell = CStr::from_ptr(entry.pw_shell.as_ref()?).to_string_lossy();
+        shell_from(Some(shell.into_owned()))
     }
-    #[cfg(unix)]
-    {
-        use std::ffi::CStr;
-        // SAFETY: `getpwuid` returns null or a pointer to a static passwd
-        // entry, whose `pw_shell` is a NUL-terminated string; it is copied
-        // before any other call.
-        unsafe {
-            let entry = libc::getpwuid(libc::getuid());
-            if entry.is_null() || (*entry).pw_shell.is_null() {
-                return None;
-            }
-            let shell = CStr::from_ptr((*entry).pw_shell).to_string_lossy();
-            (!shell.is_empty()).then(|| shell.into_owned())
-        }
-    }
-    #[cfg(not(unix))]
+}
+
+#[cfg(not(unix))]
+fn passwd_shell() -> Option<String> {
     None
 }
 
@@ -197,7 +199,9 @@ fn capture(shell: Option<String>, timeout: Duration) -> Result<ShellEnv, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{MARKER, ShellEnv, capture};
+    use super::{
+        MARKER, ShellEnv, capture, captured_shell_env, passwd_shell, shell_env, shell_from,
+    };
     use std::os::unix::fs::PermissionsExt as _;
     use std::time::Duration;
 
@@ -220,6 +224,43 @@ mod tests {
         let captured = capture(Some(shell), Duration::from_secs(5)).unwrap();
         assert_eq!(captured.path.as_deref(), Some("/opt/x:/usr/bin"));
         assert_eq!(captured.kubeconfig(), Some("/k"));
+    }
+
+    #[test]
+    fn fish_gets_the_command_after_dash_c_and_csh_on_stdin() {
+        // fish: `-l -c <command>`; the fake runs the command it is given.
+        let fish = fake_shell("fish", r#"PATH=/f /bin/sh -c "$3""#);
+        let captured = capture(Some(fish), Duration::from_secs(5)).unwrap();
+        assert_eq!(captured.path.as_deref(), Some("/f"));
+        // csh: `-l` and the command on stdin.
+        let csh = fake_shell("csh", "PATH=/c /bin/sh");
+        let captured = capture(Some(csh), Duration::from_secs(5)).unwrap();
+        assert_eq!(captured.path.as_deref(), Some("/c"));
+    }
+
+    #[test]
+    fn the_shell_comes_from_shell_then_passwd() {
+        assert_eq!(
+            shell_from(Some("/bin/zsh".into())).as_deref(),
+            Some("/bin/zsh")
+        );
+        assert_eq!(shell_from(Some(String::new())), None);
+        assert_eq!(shell_from(None), None);
+        let passwd = passwd_shell().unwrap();
+        assert!(passwd.starts_with('/'), "{passwd}");
+    }
+
+    #[test]
+    fn tests_skip_the_capture_and_cache_the_answer() {
+        // `.cargo/config.toml` sets the opt-out for every test run.
+        assert_eq!(*shell_env(), ShellEnv::default());
+        assert!(std::ptr::eq(captured_shell_env().unwrap(), shell_env()));
+    }
+
+    #[test]
+    fn empty_values_are_not_taken() {
+        let output = format!("{MARKER}PATH=\0KUBECONFIG=\0{MARKER}");
+        assert_eq!(ShellEnv::parse(output.as_bytes()), ShellEnv::default());
     }
 
     #[test]
