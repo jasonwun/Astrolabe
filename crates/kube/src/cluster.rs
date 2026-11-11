@@ -381,7 +381,7 @@ impl Cluster {
     pub fn connect(cluster: &ClusterId) -> Self {
         let id = cluster.clone();
         let runtime = runtime().handle().clone();
-        let first_read = crate::client::read_kubeconfig();
+        let first_read = crate::client::read_kubeconfig_now();
         let default_namespace = crate::client::default_namespace_for(&first_read, &id);
         let connector = {
             let cluster = cluster.clone();
@@ -402,7 +402,12 @@ impl Cluster {
                     &runtime,
                     async move {
                         let kubeconfig = kubeconfig.unwrap_or_else(crate::client::read_kubeconfig);
-                        crate::client::client_for(&cluster, kubeconfig).await
+                        crate::client::client_for(
+                            &cluster,
+                            kubeconfig,
+                            crate::shell_env::shell_env(),
+                        )
+                        .await
                     },
                     ClusterError::connect("cluster connect task panicked"),
                 )

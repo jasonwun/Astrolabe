@@ -323,6 +323,7 @@ dependencies = [
  "http",
  "k8s-openapi",
  "kube",
+ "libc",
  "saphyr",
  "serde-saphyr 0.0.29",
  "serde_json",

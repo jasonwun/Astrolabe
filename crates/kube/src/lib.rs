@@ -16,6 +16,7 @@ pub mod object;
 pub mod pod;
 mod resource;
 pub mod service;
+mod shell_env;
 pub mod watch;
 
 pub use client::{clusters, default_client};

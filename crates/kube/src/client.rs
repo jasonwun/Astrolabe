@@ -1,6 +1,7 @@
 //! Client construction and the Clusters the kubeconfig names.
 
 use crate::cluster::{ClusterError, ClusterId};
+use crate::shell_env::ShellEnv;
 
 /// Build a client from the ambient environment (KUBECONFIG / in-cluster).
 ///
@@ -20,9 +21,45 @@ pub async fn default_client() -> kube::Result<kube::Client> {
 /// What reading the kubeconfig gave: one connect attempt's only read.
 pub(crate) type KubeconfigRead = Result<kube::config::Kubeconfig, kube::config::KubeconfigError>;
 
-/// Read the kubeconfig, which blocks on a small file.
+/// Read the kubeconfig, which blocks on a small file and, on the first
+/// call, on the login shell (#379): call off the UI thread.
 pub(crate) fn read_kubeconfig() -> KubeconfigRead {
-    kube::config::Kubeconfig::read()
+    read_kubeconfig_in(Some(crate::shell_env::shell_env()))
+}
+
+/// Read the kubeconfig without waiting on the login shell: from the
+/// location it has captured so far, if any. For the caller's thread, which
+/// must not block on it.
+pub(crate) fn read_kubeconfig_now() -> KubeconfigRead {
+    read_kubeconfig_in(crate::shell_env::captured_shell_env())
+}
+
+/// Read the kubeconfig where the process says, or where the login shell
+/// `shell` does when the process names none. `KUBECONFIG` merges as
+/// kube's own handling does.
+fn read_kubeconfig_in(shell: Option<&ShellEnv>) -> KubeconfigRead {
+    match shell
+        .and_then(ShellEnv::kubeconfig)
+        .filter(|_| std::env::var_os("KUBECONFIG").is_none())
+    {
+        Some(paths) => read_kubeconfig_paths(paths),
+        None => kube::config::Kubeconfig::read(),
+    }
+}
+
+/// Merge the kubeconfig files `paths` lists, like a `KUBECONFIG` value.
+fn read_kubeconfig_paths(paths: &str) -> KubeconfigRead {
+    let files: Vec<_> = std::env::split_paths(paths)
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect();
+    if files.is_empty() {
+        return kube::config::Kubeconfig::read();
+    }
+    files
+        .iter()
+        .try_fold(kube::config::Kubeconfig::default(), |merged, file| {
+            merged.merge(kube::config::Kubeconfig::read_from(file)?)
+        })
 }
 
 /// Build a client for `cluster` from `kubeconfig`, whatever its
@@ -38,8 +75,10 @@ pub(crate) fn read_kubeconfig() -> KubeconfigRead {
 pub(crate) async fn client_for(
     cluster: &ClusterId,
     kubeconfig: KubeconfigRead,
+    shell: &ShellEnv,
 ) -> Result<kube::Client, ClusterError> {
     let mut kubeconfig = kubeconfig.map_err(ClusterError::connect_failed)?;
+    shell.apply(&mut kubeconfig);
     for exec in kubeconfig
         .auth_infos
         .iter_mut()
@@ -168,7 +207,7 @@ where
 /// An [`Other`](crate::cluster::ClusterErrorKind::Other) [`ClusterError`]
 /// when the kubeconfig cannot be found, read or parsed.
 pub fn clusters() -> Result<Vec<ClusterId>, ClusterError> {
-    let config = kube::config::Kubeconfig::read().map_err(ClusterError::other)?;
+    let config = read_kubeconfig().map_err(ClusterError::other)?;
     let mut clusters: Vec<ClusterId> = config
         .contexts
         .iter()
@@ -213,7 +252,9 @@ pub(crate) fn default_namespace_for(kubeconfig: &KubeconfigRead, cluster: &Clust
 
 #[cfg(test)]
 mod tests {
-    use super::context_namespace;
+    use super::{context_namespace, read_kubeconfig_paths};
+    use crate::shell_env::ShellEnv;
+    use std::os::unix::fs::PermissionsExt as _;
 
     const KUBECONFIG: &str = r"apiVersion: v1
 kind: Config
@@ -239,6 +280,86 @@ users:
     fn namespace_of(context: &str) -> String {
         let config = kube::config::Kubeconfig::from_yaml(KUBECONFIG).unwrap();
         context_namespace(&config, context)
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("astrolabe-client-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The Finder case: `kubelogin` is bare in the kubeconfig and lives in
+    /// a directory this process's `PATH` lacks; only the shell's has it.
+    #[tokio::test]
+    async fn a_bare_exec_command_resolves_through_the_injected_path() {
+        let bin = temp_dir("bin");
+        let marker = bin.join("ran");
+        let plugin = bin.join("astrolabe-test-plugin-379");
+        std::fs::write(
+            &plugin,
+            format!(
+                "#!/bin/sh\ntouch {}\necho '{{\"apiVersion\":\"client.authentication.k8s.io/v1\",\"kind\":\"ExecCredential\",\"status\":{{\"token\":\"t\"}}}}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let yaml = r"apiVersion: v1
+kind: Config
+clusters:
+- name: c
+  cluster:
+    server: http://127.0.0.1:1
+contexts:
+- name: ctx
+  context: {cluster: c, user: u}
+users:
+- name: u
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1
+      command: astrolabe-test-plugin-379
+      interactiveMode: Never
+";
+        let shell = ShellEnv::parse(
+            format!(
+                "{m}PATH={}:/usr/bin:/bin\0{m}",
+                bin.display(),
+                m = crate::shell_env::MARKER
+            )
+            .as_bytes(),
+        );
+        let cluster = crate::cluster::ClusterId::named("ctx");
+        let read = || kube::config::Kubeconfig::from_yaml(yaml);
+        let _ = super::client_for(&cluster, read(), &ShellEnv::default()).await;
+        assert!(!marker.exists(), "the plugin ran without the shell's PATH");
+        super::client_for(&cluster, read(), &shell).await.unwrap();
+        assert!(marker.exists(), "the bare command did not resolve");
+    }
+
+    #[test]
+    fn a_kubeconfig_location_lists_files_that_merge_first_wins() {
+        let dir = temp_dir("kubeconfigs");
+        let write = |name: &str, current: &str, context: &str| {
+            let path = dir.join(name);
+            std::fs::write(
+                &path,
+                format!(
+                    "apiVersion: v1\nkind: Config\ncurrent-context: {current}\ncontexts:\n- name: {context}\n  context: {{cluster: c, user: u}}\n"
+                ),
+            )
+            .unwrap();
+            path
+        };
+        let first = write("a.yaml", "one", "one");
+        let second = write("b.yaml", "two", "two");
+        let paths = std::env::join_paths([&first, &second]).unwrap();
+        let config = read_kubeconfig_paths(paths.to_str().unwrap()).unwrap();
+        assert_eq!(config.current_context.as_deref(), Some("one"));
+        let names: Vec<_> = config.contexts.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["one", "two"]);
+        assert!(read_kubeconfig_paths(&format!("{}x", first.display())).is_err());
     }
 
     #[test]

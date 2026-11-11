@@ -13,6 +13,7 @@ thiserror.workspace = true
 futures.workspace = true
 tracing.workspace = true
 http.workspace = true
+libc.workspace = true
 tower.workspace = true
 # Exec stream pump and port-forward listener (#17): the IO traits
 # kube-client's streams use, and the local TCP listener. The watch relist
