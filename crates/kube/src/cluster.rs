@@ -381,14 +381,21 @@ impl Cluster {
     pub fn connect(cluster: &ClusterId) -> Self {
         let id = cluster.clone();
         let runtime = runtime().handle().clone();
-        let first_read = crate::client::read_kubeconfig();
+        let first_read = crate::client::read_kubeconfig_now();
         let default_namespace = crate::client::default_namespace_for(&first_read, &id);
         let connector = {
             let cluster = cluster.clone();
             let runtime = runtime.clone();
             // The first attempt takes the read above, every later one
             // reads for itself: a kubeconfig is never kept across attempts.
-            let first_read = Mutex::new(Some(first_read));
+            // The caller's thread read it before any login shell capture
+            // had finished, so it may name the wrong file: keep it only
+            // once the capture is in.
+            let first_read = Mutex::new(
+                crate::shell_env::captured_shell_env()
+                    .is_some()
+                    .then_some(first_read),
+            );
             move || {
                 let cluster = cluster.clone();
                 let kubeconfig = first_read
@@ -402,7 +409,12 @@ impl Cluster {
                     &runtime,
                     async move {
                         let kubeconfig = kubeconfig.unwrap_or_else(crate::client::read_kubeconfig);
-                        crate::client::client_for(&cluster, kubeconfig).await
+                        crate::client::client_for(
+                            &cluster,
+                            kubeconfig,
+                            crate::shell_env::shell_env(),
+                        )
+                        .await
                     },
                     ClusterError::connect("cluster connect task panicked"),
                 )
