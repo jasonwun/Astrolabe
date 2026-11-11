@@ -1,3 +1,5 @@
+use astrolabe::launch::Preselection;
+use astrolabe::session::ScriptedCluster;
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
@@ -95,5 +97,33 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
         assert!(window.try_find_by_label("default").is_some());
         assert!(window.try_find_by_label("other").is_some());
         assert!(window.try_find_by_label("kube-system").is_none());
+    });
+}
+
+/// A Cluster whose first connect failed, as when its credential plugin
+/// fails, never had a Snapshot: its indicator says Failed and no "connection
+/// lost" banner shows, only the Namespaces list's connect error (#378).
+#[gpui_kit::test]
+fn a_cluster_that_never_connected_is_failed_not_stale(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (_sender, receiver) = mpsc::channel(32);
+    let failure =
+        ClusterError::connect("credential plugin \"aws\" failed (exit status: 1): expired");
+    let cluster = ScriptedCluster::new(receiver).connect_fails(failure);
+    let (_workspace, cx) = cx.add_window_view(|window, cx| {
+        WorkspaceView::from_clusters(
+            vec![(ClusterId::named("kind-a"), cluster)],
+            Preselection::default(),
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find_by_label("kind-a: Failed").is_some());
+        assert!(window.try_find("namespace-stale").is_none());
+        assert!(window.try_find("list-error").is_some());
     });
 }

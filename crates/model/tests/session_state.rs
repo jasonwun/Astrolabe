@@ -10,8 +10,10 @@ use astrolabe_kube::pod::{ForwardEvent, ForwardRequest, ForwardTarget};
 use astrolabe_model::builtin::BuiltinKind;
 use astrolabe_model::catalog::KindResource;
 use astrolabe_model::detail::{DetailOutcome, DetailTarget, resolve, watches};
+use astrolabe_model::notice::{Intent, Notice};
 use astrolabe_model::session::{
-    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, SnapshotChange, WatchKey,
+    ConnectionHealth, CustomKindId, ForwardState, HealthIndicator, ResourceKind, STALE_MESSAGE,
+    SnapshotChange, WatchKey,
 };
 use astrolabe_model::session_state::{
     ActiveForward, Command, RESIDENT_WATCH_CAP, SessionState, Viewing, custom_kind,
@@ -486,7 +488,93 @@ fn the_namespaces_watch_ending_before_any_snapshot_is_not_stale() {
     state.namespaces_ended();
 
     assert!(!state.status().namespaces_stale);
-    assert_eq!(state.status().health, ConnectionHealth::Stale);
+    assert_eq!(state.status().health, ConnectionHealth::Failed);
+}
+
+fn indicator(label: &'static str, intent: Intent, tooltip: &str) -> HealthIndicator {
+    HealthIndicator {
+        label,
+        intent,
+        tooltip: tooltip.to_string(),
+    }
+}
+
+#[test]
+fn the_cluster_indicator_follows_the_namespaces_watch() {
+    let mut state = state();
+    assert_eq!(
+        state.health_indicator(),
+        indicator("Connecting", Intent::Warning, "Connecting to cluster")
+    );
+
+    state.namespaces_message(Ok(Event::InitDone));
+    assert_eq!(
+        state.health_indicator(),
+        indicator("Healthy", Intent::Success, "Connected")
+    );
+
+    state.namespaces_ended();
+    assert_eq!(
+        state.health_indicator(),
+        indicator("Stale", Intent::Danger, STALE_MESSAGE)
+    );
+    assert_eq!(
+        state.status().banner(),
+        Some(Notice::new(
+            "namespace-stale",
+            STALE_MESSAGE,
+            Intent::Warning
+        ))
+    );
+}
+
+#[test]
+fn a_namespaces_denial_after_a_snapshot_is_stale_and_before_one_is_not() {
+    let mut denied = state();
+    denied.namespaces_message(Err(ClusterError::forbidden("namespaces is forbidden")));
+    assert_eq!(
+        denied.health_indicator(),
+        indicator(
+            "Failed",
+            Intent::Danger,
+            "No permission to list namespaces here"
+        )
+    );
+    assert_eq!(denied.status().banner(), None);
+
+    let mut revoked = state();
+    revoked.namespaces_message(Ok(Event::InitDone));
+    revoked.namespaces_message(Err(ClusterError::forbidden("namespaces is forbidden")));
+    assert_eq!(revoked.status().health, ConnectionHealth::Stale);
+    assert_eq!(
+        revoked.health_indicator(),
+        indicator("Stale", Intent::Danger, STALE_MESSAGE)
+    );
+}
+
+/// A Session whose first connect failed, as when its credential plugin
+/// fails, never had anything to be stale (#378).
+#[test]
+fn a_session_that_never_connected_says_why_and_shows_no_banner() {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    let failure =
+        ClusterError::connect("credential plugin \"aws\" failed (exit status: 1): expired");
+
+    state.namespaces_message(Err(failure.clone()));
+    state.discovery_finished(run, Err(failure));
+
+    assert_eq!(state.status().health, ConnectionHealth::Failed);
+    assert_eq!(state.status().banner(), None);
+    assert_eq!(
+        state.health_indicator(),
+        indicator(
+            "Failed",
+            Intent::Danger,
+            "Cannot connect to the cluster: credential plugin \"aws\" failed \
+             (exit status: 1): expired"
+        )
+    );
 }
 
 #[test]
@@ -748,6 +836,21 @@ fn a_failed_discovery_keeps_the_kinds_served_behind_the_stale_warning() {
         state.catalog()[0].kinds[0].resource,
         KindResource::Served(_)
     ));
+}
+
+/// "May be stale" needs an earlier result; a first run that failed has
+/// none (#378).
+#[test]
+fn a_first_discovery_run_that_failed_is_not_stale() {
+    let mut state = state();
+    let run = run_of(&state.connected());
+    state.namespaces_message(Ok(Event::InitDone));
+
+    state.discovery_finished(run, Err(ClusterError::new("connection refused")));
+
+    assert!(state.discovery_failure().is_some());
+    assert!(!state.status().discovery_stale);
+    assert_eq!(state.status().banner(), None);
 }
 
 #[test]

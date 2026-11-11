@@ -35,7 +35,7 @@ _Avoid_: resync, reconnect (a reconnect is not a relist)
 A Session trying its Cluster again after a connect failed, on request: every resident watch starts again and Discovery runs again. Not a relist, which one running watch does by itself. A watch whose connect failed, and a failed Discovery run, also try again by themselves, with a growing wait; a reconnect only skips that wait.
 
 **Stale**:
-Showing the previous snapshot while its watch is down, relisting, or denied by RBAC after it had a Snapshot. A list says which: "connection lost" for a failed, ended or relisting watch; "No permission to refresh this list" for a denial, where the connection is fine and the permission is gone. A denial before any Snapshot is not stale; the list shows no rows, only "No permission to list …".
+Showing the previous snapshot while its watch is down, relisting, or denied by RBAC after it had a Snapshot. A list says which: "connection lost" for a failed, ended or relisting watch; "No permission to refresh this list" for a denial, where the connection is fine and the permission is gone. A denial before any Snapshot is not stale; the list shows no rows, only "No permission to list …". A Session that never had a Namespaces Snapshot is not stale either: no banner shows, and its Cluster's indicator says Failed, with why.
 _Avoid_: outdated, offline
 
 **Forward**:

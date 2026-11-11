@@ -31,21 +31,74 @@ pub(crate) fn read_kubeconfig() -> KubeconfigRead {
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when the kubeconfig could not be read or parsed, has
-/// no context for `cluster`, or the client cannot be built from it.
+/// A [`Connect`](crate::cluster::ClusterErrorKind::Connect) failure when
+/// the kubeconfig could not be read or parsed, has no context for
+/// `cluster`, or the client cannot be built from it, as when its
+/// credential plugin fails.
 pub(crate) async fn client_for(
     cluster: &ClusterId,
     kubeconfig: KubeconfigRead,
-) -> kube::Result<kube::Client> {
+) -> Result<kube::Client, ClusterError> {
+    let mut kubeconfig = kubeconfig.map_err(ClusterError::connect_failed)?;
+    for exec in kubeconfig
+        .auth_infos
+        .iter_mut()
+        .filter_map(|user| user.auth_info.as_mut()?.exec.as_mut())
+    {
+        prepare_exec(exec);
+    }
     let options = kube::config::KubeConfigOptions {
         context: Some(cluster.context().to_owned()),
         ..kube::config::KubeConfigOptions::default()
     };
-    let mut config = kube::Config::from_custom_kubeconfig(kubeconfig?, &options).await?;
+    let mut config = kube::Config::from_custom_kubeconfig(kubeconfig, &options)
+        .await
+        .map_err(ClusterError::connect_failed)?;
     config.default_retry = false;
-    Ok(kube::client::ClientBuilder::try_from(config)?
-        .with_layer(&BoundedRetryLayer)
-        .build())
+    let user = config.auth_info.clone();
+    let builder = kube::client::ClientBuilder::try_from(config)
+        .map_err(|error| connect_error(&user, error))?;
+    Ok(builder.with_layer(&BoundedRetryLayer).build())
+}
+
+/// Ready a kubeconfig exec block to run in an app with no terminal.
+///
+/// It never runs interactively, whatever the kubeconfig says, so its
+/// stderr is captured for [`connect_error`] instead of going to a
+/// terminal nobody reads, and it never waits on a stdin nobody types into.
+fn prepare_exec(exec: &mut kube::config::ExecConfig) {
+    exec.interactive_mode = Some(kube::config::ExecInteractiveMode::Never);
+}
+
+/// A failed client build as a Connect failure. A failed credential
+/// plugin says which program it was, its exit status and its stderr, and
+/// keeps no source, as kube-client's error would print its stdout, which
+/// may hold a token.
+fn connect_error(user: &kube::config::AuthInfo, error: kube::Error) -> ClusterError {
+    let kube::Error::Auth(kube::client::AuthError::AuthExecRun { cmd, status, out }) = error else {
+        return ClusterError::connect_failed(error);
+    };
+    let program = plugin_program(user).unwrap_or(&cmd);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = stderr.trim();
+    ClusterError::connect(if stderr.is_empty() {
+        format!("credential plugin \"{program}\" failed ({status}) and printed nothing on stderr")
+    } else {
+        format!("credential plugin \"{program}\" failed ({status}): {stderr}")
+    })
+}
+
+/// The program `user`'s credentials come from: its exec plugin's command,
+/// or its gcp auth-provider's `cmd-path`.
+fn plugin_program(user: &kube::config::AuthInfo) -> Option<&str> {
+    if let Some(command) = user.exec.as_ref().and_then(|exec| exec.command.as_deref()) {
+        return Some(command);
+    }
+    user.auth_provider
+        .as_ref()?
+        .config
+        .get("cmd-path")
+        .map(String::as_str)
 }
 
 /// Retries 429/503/504 up to 3 times, within about a second.

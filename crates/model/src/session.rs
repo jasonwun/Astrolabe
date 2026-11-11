@@ -53,11 +53,16 @@ impl CustomKindId {
     }
 }
 
+/// The coarse health the cluster indicator shows: the Namespaces watch's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionHealth {
     Connecting,
     Healthy,
+    /// The watch had a Snapshot and lost its connection or its permission.
     Stale,
+    /// The watch failed or was denied before any Snapshot: there is
+    /// nothing to be stale (#378).
+    Failed,
 }
 
 /// The banner and the sidebar text of a lost connection.
@@ -67,26 +72,11 @@ pub const STALE_MESSAGE: &str = "connection lost, data may be stale";
 pub const DENIED_STALE_MESSAGE: &str = "No permission to refresh this list, data may be stale";
 
 /// What the sidebar shows beside a cluster whose session is open.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HealthIndicator {
     pub label: &'static str,
     pub intent: Intent,
-    pub tooltip: &'static str,
-}
-
-impl ConnectionHealth {
-    pub fn indicator(self) -> HealthIndicator {
-        let (label, intent, tooltip) = match self {
-            Self::Healthy => ("Healthy", Intent::Success, "Connected"),
-            Self::Connecting => ("Connecting", Intent::Warning, "Connecting to cluster"),
-            Self::Stale => ("Stale", Intent::Danger, STALE_MESSAGE),
-        };
-        HealthIndicator {
-            label,
-            intent,
-            tooltip,
-        }
-    }
+    pub tooltip: String,
 }
 
 /// Why a watch's old snapshot may no longer be true.
@@ -160,7 +150,11 @@ impl WatchStatus {
         match self {
             Self::Connecting | Self::Relisting => ConnectionHealth::Connecting,
             Self::Live => ConnectionHealth::Healthy,
-            Self::Stale | Self::Failed | Self::Forbidden { .. } => ConnectionHealth::Stale,
+            Self::Stale | Self::Forbidden { has_snapshot: true } => ConnectionHealth::Stale,
+            Self::Failed
+            | Self::Forbidden {
+                has_snapshot: false,
+            } => ConnectionHealth::Failed,
         }
     }
 

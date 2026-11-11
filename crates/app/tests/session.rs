@@ -174,12 +174,12 @@ fn session_reconnects_after_a_failed_connect(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let state = session.read(cx).state();
-        assert_eq!(state.status().health, ConnectionHealth::Stale);
+        assert_eq!(state.status().health, ConnectionHealth::Failed);
         assert!(state.discovery_failure().is_some());
         assert!(
             state
                 .builtin_watch(BuiltinKind::Pods, Some("default"))
-                .is_some_and(|watch| watch.status().health() == ConnectionHealth::Stale)
+                .is_some_and(|watch| watch.status().health() == ConnectionHealth::Failed)
         );
     });
 

@@ -396,9 +396,7 @@ impl Cluster {
                     &runtime,
                     async move {
                         let kubeconfig = kubeconfig.unwrap_or_else(crate::client::read_kubeconfig);
-                        crate::client::client_for(&cluster, kubeconfig)
-                            .await
-                            .map_err(ClusterError::connect_failed)
+                        crate::client::client_for(&cluster, kubeconfig).await
                     },
                     ClusterError::connect("cluster connect task panicked"),
                 )

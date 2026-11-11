@@ -30,12 +30,12 @@ fn failed_messages_name_the_kind_of_failure_and_the_noun() {
 fn status(
     health: ConnectionHealth,
     namespaces_stale: bool,
-    discovery_failed: bool,
+    discovery_stale: bool,
 ) -> SessionStatus {
     SessionStatus {
         health,
         namespaces_stale,
-        discovery_failed,
+        discovery_stale,
         crd_access_denied: false,
     }
 }
@@ -77,25 +77,6 @@ fn a_lost_connection_wins_over_a_failed_discovery() {
     assert_eq!(
         status(ConnectionHealth::Stale, true, true).banner(),
         Some(banner(STALE_MESSAGE))
-    );
-}
-
-#[test]
-fn health_has_a_label_an_intent_and_a_tooltip() {
-    let healthy = ConnectionHealth::Healthy.indicator();
-    assert_eq!(
-        (healthy.label, healthy.intent, healthy.tooltip),
-        ("Healthy", Intent::Success, "Connected")
-    );
-    let connecting = ConnectionHealth::Connecting.indicator();
-    assert_eq!(
-        (connecting.label, connecting.intent, connecting.tooltip),
-        ("Connecting", Intent::Warning, "Connecting to cluster")
-    );
-    let stale = ConnectionHealth::Stale.indicator();
-    assert_eq!(
-        (stale.label, stale.intent, stale.tooltip),
-        ("Stale", Intent::Danger, STALE_MESSAGE)
     );
 }
 

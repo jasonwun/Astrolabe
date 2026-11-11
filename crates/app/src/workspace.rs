@@ -205,20 +205,21 @@ impl WorkspaceView {
                     .child("Clusters"),
             );
         for cluster in self.clusters.clone() {
-            let health = self
+            let indicator = self
                 .sessions
                 .get(&cluster)
-                .map(|session| session.read(cx).health(cx));
-            let (health_label, health_color, tooltip) = match health {
-                Some(health) => {
-                    let indicator = health.indicator();
-                    (
-                        indicator.label,
-                        intent_color(indicator.intent, theme),
-                        indicator.tooltip,
-                    )
-                }
-                None => ("Not open", theme.muted_foreground, "Select to open session"),
+                .map(|session| session.read(cx).health_indicator(cx));
+            let (health_label, health_color, tooltip): (_, _, SharedString) = match indicator {
+                Some(indicator) => (
+                    indicator.label,
+                    intent_color(indicator.intent, theme),
+                    indicator.tooltip.into(),
+                ),
+                None => (
+                    "Not open",
+                    theme.muted_foreground,
+                    "Select to open session".into(),
+                ),
             };
             let selected = self.selected_cluster.as_ref() == Some(&cluster) && !self.show_yaml;
             let selected_cluster = cluster.clone();
@@ -252,7 +253,7 @@ impl WorkspaceView {
                             .rounded_full()
                             .bg(health_color)
                             .tooltip(move |window, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(tooltip)
+                                gpui_kit::component::tooltip::Tooltip::new(tooltip.clone())
                                     .build(window, cx)
                             }),
                     )
