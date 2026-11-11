@@ -31,21 +31,93 @@ pub(crate) fn read_kubeconfig() -> KubeconfigRead {
 ///
 /// # Errors
 ///
-/// A [`kube::Error`] when the kubeconfig could not be read or parsed, has
-/// no context for `cluster`, or the client cannot be built from it.
+/// A [`Connect`](crate::cluster::ClusterErrorKind::Connect) failure when
+/// the kubeconfig could not be read or parsed, has no context for
+/// `cluster`, or the client cannot be built from it, as when its
+/// credential plugin fails.
 pub(crate) async fn client_for(
     cluster: &ClusterId,
     kubeconfig: KubeconfigRead,
-) -> kube::Result<kube::Client> {
+) -> Result<kube::Client, ClusterError> {
+    let mut kubeconfig = kubeconfig.map_err(ClusterError::connect_failed)?;
+    for exec in kubeconfig
+        .auth_infos
+        .iter_mut()
+        .filter_map(|user| user.auth_info.as_mut()?.exec.as_mut())
+    {
+        prepare_exec(exec);
+    }
     let options = kube::config::KubeConfigOptions {
         context: Some(cluster.context().to_owned()),
         ..kube::config::KubeConfigOptions::default()
     };
-    let mut config = kube::Config::from_custom_kubeconfig(kubeconfig?, &options).await?;
+    let mut config = kube::Config::from_custom_kubeconfig(kubeconfig, &options)
+        .await
+        .map_err(ClusterError::connect_failed)?;
     config.default_retry = false;
-    Ok(kube::client::ClientBuilder::try_from(config)?
-        .with_layer(&BoundedRetryLayer)
-        .build())
+    let user = config.auth_info.clone();
+    let builder = kube::client::ClientBuilder::try_from(config)
+        .map_err(|error| connect_error(&user, error))?;
+    Ok(builder.with_layer(&BoundedRetryLayer).build())
+}
+
+/// Ready a kubeconfig exec block to run in an app with no terminal.
+///
+/// It never runs interactively, whatever the kubeconfig says, so its
+/// stderr is captured for [`plugin_failure`] instead of going to a
+/// terminal nobody reads, and it never waits on a stdin nobody types into.
+fn prepare_exec(exec: &mut kube::config::ExecConfig) {
+    exec.interactive_mode = Some(kube::config::ExecInteractiveMode::Never);
+}
+
+/// A failed client build as a Connect failure, said as
+/// [`plugin_failure`] says it when its credential plugin failed.
+fn connect_error(user: &kube::config::AuthInfo, error: kube::Error) -> ClusterError {
+    match plugin_failure(plugin_program(user), &error) {
+        Some(message) => ClusterError::connect(message),
+        None => ClusterError::connect_failed(error),
+    }
+}
+
+/// What a credential plugin failure in `error`'s source chain says: the
+/// plugin `program` when known, its exit status and its stderr. The
+/// caller keeps no source, as kube-client's error prints the plugin's
+/// stdout, which may hold a token.
+pub(crate) fn plugin_failure(
+    program: Option<&str>,
+    error: &(dyn std::error::Error + 'static),
+) -> Option<String> {
+    let (status, out) =
+        std::iter::successors(Some(error), |error| error.source()).find_map(|error| {
+            match error.downcast_ref::<kube::client::AuthError>()? {
+                kube::client::AuthError::AuthExecRun { status, out, .. } => Some((status, out)),
+                _ => None,
+            }
+        })?;
+    let plugin = program.map_or_else(
+        || "credential plugin".to_owned(),
+        |program| format!("credential plugin \"{program}\""),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = stderr.trim();
+    Some(if stderr.is_empty() {
+        format!("{plugin} failed ({status}) and printed nothing on stderr")
+    } else {
+        format!("{plugin} failed ({status}): {stderr}")
+    })
+}
+
+/// The program `user`'s credentials come from: its exec plugin's command,
+/// or its gcp auth-provider's `cmd-path`.
+fn plugin_program(user: &kube::config::AuthInfo) -> Option<&str> {
+    if let Some(command) = user.exec.as_ref().and_then(|exec| exec.command.as_deref()) {
+        return Some(command);
+    }
+    user.auth_provider
+        .as_ref()?
+        .config
+        .get("cmd-path")
+        .map(String::as_str)
 }
 
 /// Retries 429/503/504 up to 3 times, within about a second.

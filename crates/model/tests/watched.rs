@@ -119,7 +119,7 @@ fn a_stream_ending_before_any_snapshot_is_unreachable_not_stale() {
     watched.mark_stale();
 
     assert_eq!(watched.status(), WatchStatus::Failed);
-    assert_eq!(watched.status().health(), ConnectionHealth::Stale);
+    assert_eq!(watched.status().health(), ConnectionHealth::Failed);
     assert!(!watched.status().is_stale());
 
     watched.apply(Ok(Event::Init));
@@ -179,7 +179,7 @@ fn a_403_before_any_snapshot_is_not_stale_data() {
         }
     );
     assert!(!watched.status().is_stale());
-    assert_eq!(watched.status().health(), ConnectionHealth::Stale);
+    assert_eq!(watched.status().health(), ConnectionHealth::Failed);
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn events_that_leave_the_snapshot_alone_keep_the_revision() {
 }
 
 #[test]
-fn a_denial_keeps_reading_stale_through_the_retrys_list_start() {
+fn a_denial_before_any_snapshot_stays_through_the_retrys_list_start() {
     let mut watched = namespace_watch();
     watched.apply(Err(ClusterError::forbidden("403")));
 
@@ -258,7 +258,7 @@ fn a_denial_keeps_reading_stale_through_the_retrys_list_start() {
             has_snapshot: false
         }
     );
-    assert_eq!(watched.status().health(), ConnectionHealth::Stale);
+    assert_eq!(watched.status().health(), ConnectionHealth::Failed);
 }
 
 #[test]

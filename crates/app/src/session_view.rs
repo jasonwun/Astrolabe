@@ -18,7 +18,7 @@ use crate::resource_list::ResourceListPanel;
 use crate::session::{ScriptedCluster, Session};
 use crate::yaml_editor::YamlEditorView;
 use astrolabe_model::list::crd_denied_notice;
-use astrolabe_model::session::{ConnectionHealth, CustomKindId};
+use astrolabe_model::session::{CustomKindId, HealthIndicator};
 use astrolabe_model::session_state::Viewing;
 use astrolabe_model::tab::{TabKey, TabRequest};
 
@@ -114,8 +114,9 @@ impl SessionView {
         self.session.clone()
     }
 
-    pub fn health(&self, cx: &App) -> ConnectionHealth {
-        self.session.read(cx).state().status().health
+    /// What the sidebar shows beside this Session's Cluster.
+    pub fn health_indicator(&self, cx: &App) -> HealthIndicator {
+        self.session.read(cx).state().health_indicator()
     }
 
     /// Show the launch's tabs (#106): a list in the list tab, a detail in

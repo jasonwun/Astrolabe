@@ -1,3 +1,4 @@
+use astrolabe::session::ScriptedCluster;
 use astrolabe::workspace::WorkspaceView;
 use astrolabe_kube::cluster::{ClusterError, ClusterId};
 use astrolabe_kube::k8s_openapi::api::core::v1::{Namespace, NamespaceStatus};
@@ -7,6 +8,8 @@ use astrolabe_kube::watch::NamespaceWatchMessage;
 use futures::channel::mpsc;
 use gpui_kit::TestAppContext;
 use gpui_kit::test::{TestQueryExt, TestWindowExt};
+
+mod support;
 
 fn namespace(name: &str) -> Namespace {
     Namespace {
@@ -95,5 +98,27 @@ fn workspace_replaces_namespace_rows_keeps_stale_data_and_retains_sessions(
         assert!(window.try_find_by_label("default").is_some());
         assert!(window.try_find_by_label("other").is_some());
         assert!(window.try_find_by_label("kube-system").is_none());
+    });
+}
+
+/// A Cluster whose first connect failed, as when its credential plugin
+/// fails, never had a Snapshot: its indicator says Failed and no "connection
+/// lost" banner shows, only the Namespaces list's connect error (#378).
+#[gpui_kit::test]
+fn a_cluster_that_never_connected_is_failed_not_stale(cx: &mut TestAppContext) {
+    let (_sender, receiver) = mpsc::channel(32);
+    let failure =
+        ClusterError::connect("credential plugin \"aws\" failed (exit status: 1): expired");
+    let cluster = ScriptedCluster::new(receiver).connect_fails(failure);
+    let cx = support::open_workspace(cx, vec![(ClusterId::named("kind-a"), cluster)]);
+    cx.run_until_parked();
+
+    assert_eq!(
+        support::label(cx, "cluster-health-kind-a"),
+        "kind-a: Failed"
+    );
+    cx.update(|window, _| {
+        assert!(window.try_find("namespace-stale").is_none());
+        assert!(window.try_find("list-error").is_some());
     });
 }

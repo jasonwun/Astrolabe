@@ -22,10 +22,10 @@ use crate::builtin::BuiltinKind;
 use crate::catalog::{self, CustomGroup, CustomKind, KindResource};
 use crate::detail::{self, DetailTarget};
 use crate::discovery_cache::DiscoveryCache;
-use crate::notice::{Intent, Notice};
+use crate::notice::{Intent, Notice, failed_message};
 use crate::session::{
-    ConnectionHealth, CustomKindId, ForwardState, ResourceKind, STALE_MESSAGE, SnapshotChange,
-    WatchKey, Watched,
+    ConnectionHealth, CustomKindId, ForwardState, HealthIndicator, ResourceKind, STALE_MESSAGE,
+    SnapshotChange, WatchKey, Watched,
 };
 
 /// The banner text of a failed Discovery refresh.
@@ -35,12 +35,13 @@ pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource naviga
 /// views.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionStatus {
-    /// The cluster indicator: the Namespaces watch's health.
+    /// The Namespaces watch's health.
     pub health: ConnectionHealth,
     /// The Namespaces watch lost its connection and shows its old snapshot.
     pub namespaces_stale: bool,
-    /// The latest Discovery refresh failed; the old result stays in use.
-    pub discovery_failed: bool,
+    /// The latest Discovery refresh failed and an earlier result stays in
+    /// use. A first run that failed has no result to be stale (#378).
+    pub discovery_stale: bool,
     /// RBAC denies listing CRDs: Custom Resources shows an empty-state hint
     /// (no heuristic reconstruction of kinds, #11).
     pub crd_access_denied: bool,
@@ -48,9 +49,9 @@ pub struct SessionStatus {
 
 impl SessionStatus {
     /// The disconnect banner: the Namespaces watch lost its connection, or
-    /// the latest Discovery refresh failed.
+    /// the latest Discovery refresh failed over an earlier result.
     pub fn show_stale_warning(self) -> bool {
-        self.namespaces_stale || self.discovery_failed
+        self.namespaces_stale || self.discovery_stale
     }
 
     /// The session banner, if one shows. A failed Discovery over a healthy
@@ -59,7 +60,7 @@ impl SessionStatus {
         if !self.show_stale_warning() {
             return None;
         }
-        let text = if self.discovery_failed && self.health != ConnectionHealth::Stale {
+        let text = if self.discovery_stale && self.health != ConnectionHealth::Stale {
             DISCOVERY_STALE_MESSAGE
         } else {
             STALE_MESSAGE
@@ -589,13 +590,44 @@ impl SessionState {
         self.discovery.failure()
     }
 
-    /// What the cluster indicator and the disconnect banner show.
+    /// What the sidebar shows beside this Session's Cluster. A Session
+    /// that never had a Namespaces Snapshot says why, as its Namespaces list
+    /// would.
+    pub fn health_indicator(&self) -> HealthIndicator {
+        let (label, intent, tooltip) = match self.namespaces.status().health() {
+            ConnectionHealth::Healthy => ("Healthy", Intent::Success, "Connected".to_owned()),
+            ConnectionHealth::Connecting => (
+                "Connecting",
+                Intent::Warning,
+                "Connecting to cluster".to_owned(),
+            ),
+            ConnectionHealth::Stale => ("Stale", Intent::Danger, STALE_MESSAGE.to_owned()),
+            ConnectionHealth::Failed => ("Failed", Intent::Danger, self.namespaces_failure()),
+        };
+        HealthIndicator {
+            label,
+            intent,
+            tooltip,
+        }
+    }
+
+    /// Why the Namespaces watch has no Snapshot, in the words its list
+    /// uses: denied, or failed.
+    fn namespaces_failure(&self) -> String {
+        if self.namespaces.status().is_forbidden() {
+            detail::forbidden_message("namespaces")
+        } else {
+            failed_message("list", self.namespaces.last_error())
+        }
+    }
+
+    /// What the disconnect banner shows.
     pub fn status(&self) -> SessionStatus {
         let namespaces = self.namespaces.status();
         SessionStatus {
             health: namespaces.health(),
             namespaces_stale: namespaces.is_stale(),
-            discovery_failed: self.discovery.failure().is_some(),
+            discovery_stale: self.discovery.is_stale(),
             crd_access_denied: self.crds.status().is_forbidden(),
         }
     }

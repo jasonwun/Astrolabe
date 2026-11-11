@@ -1,5 +1,8 @@
 use astrolabe_kube::cluster::{Cluster, ClusterErrorKind, ClusterId};
-use std::{env, ffi::OsString, fs, path::PathBuf};
+use std::fmt::Write as _;
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
+use std::{env, ffi::OsString, fs};
 
 struct KubeconfigGuard {
     path: PathBuf,
@@ -62,6 +65,70 @@ users:
     )
 }
 
+/// A credential plugin named `name` that prints `stderr` there, a token
+/// on stdout, and exits 1.
+fn failing_plugin(name: &str, stderr: &str) -> PathBuf {
+    let path = env::temp_dir().join(format!(
+        "astrolabe-kube-plugin-{}-{name}.sh",
+        std::process::id()
+    ));
+    let script = format!("#!/bin/sh\nprintf '{stderr}' >&2\necho secret-token\nexit 1\n");
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// A kubeconfig with one context per `(name, user)`, each user given as
+/// its YAML body.
+fn users_config(users: &[(&str, String)]) -> String {
+    let mut contexts = String::new();
+    let mut named_users = String::new();
+    for (name, user) in users {
+        write!(
+            contexts,
+            "- name: {name}\n  context:\n    cluster: cluster\n    user: {name}\n"
+        )
+        .unwrap();
+        write!(named_users, "- name: {name}\n  user:\n{user}").unwrap();
+    }
+    format!(
+        "apiVersion: v1\nkind: Config\nclusters:\n- name: cluster\n  cluster:\n    server: http://127.0.0.1:8080\ncontexts:\n{contexts}users:\n{named_users}"
+    )
+}
+
+/// A credential plugin that gives an expired token the first time it
+/// runs, so the client runs it again on its first request, and fails
+/// like [`failing_plugin`] from then on.
+fn expiring_plugin() -> PathBuf {
+    let path = env::temp_dir().join(format!(
+        "astrolabe-kube-plugin-{}-expiring.sh",
+        std::process::id()
+    ));
+    let script = r#"#!/bin/sh
+if [ -e "$0.ran" ]; then printf 'refresh token expired' >&2; echo secret-token; exit 1; fi
+touch "$0.ran"
+echo '{"apiVersion":"client.authentication.k8s.io/v1beta1","kind":"ExecCredential","status":{"token":"first","expirationTimestamp":"2000-01-01T00:00:00Z"}}'
+"#;
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// A user whose exec plugin is `plugin`, with `extra` exec fields.
+fn exec_user(plugin: &Path, extra: &str) -> String {
+    format!(
+        "    exec:\n      apiVersion: client.authentication.k8s.io/v1beta1\n      command: {}\n{extra}",
+        plugin.display()
+    )
+}
+
+async fn discovery_error(context: &str) -> astrolabe_kube::cluster::ClusterError {
+    Cluster::connect(&ClusterId::named(context))
+        .discover()
+        .await
+        .unwrap_err()
+}
+
 fn names(clusters: &[ClusterId]) -> Vec<String> {
     clusters.iter().map(ToString::to_string).collect()
 }
@@ -106,4 +173,67 @@ async fn clusters_are_the_kubeconfig_contexts_current_first() {
     cluster.reconnect();
     let error = cluster.discover().await.unwrap_err();
     assert_ne!(error.kind(), ClusterErrorKind::Connect, "{error}");
+
+    // A failed credential plugin says what it printed on stderr, whatever
+    // the kubeconfig's interactiveMode, and never its stdout (#378).
+    let expired = failing_plugin("expired", "\\n  login expired, run sso login\\n");
+    let silent = failing_plugin("silent", "");
+    kubeconfig.replace(&users_config(&[
+        ("plain", exec_user(&expired, "")),
+        (
+            "always",
+            exec_user(&expired, "      interactiveMode: Always\n"),
+        ),
+        ("silent", exec_user(&silent, "")),
+        (
+            "gcp",
+            format!(
+                "    auth-provider:\n      name: gcp\n      config:\n        cmd-path: {}\n",
+                expired.display()
+            ),
+        ),
+    ]));
+    let failed = format!(
+        "credential plugin \"{}\" failed (exit status: 1): login expired, run sso login",
+        expired.display()
+    );
+    for context in ["plain", "always", "gcp"] {
+        let error = discovery_error(context).await;
+        assert_eq!(
+            error.kind(),
+            ClusterErrorKind::Connect,
+            "{context}: {error}"
+        );
+        assert_eq!(error.to_string(), failed, "{context}");
+    }
+    let error = discovery_error("silent").await;
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "credential plugin \"{}\" failed (exit status: 1) and printed nothing on stderr",
+            silent.display()
+        )
+    );
+    // Nothing in the source chain prints the plugin's stdout either.
+    assert!(
+        std::error::Error::source(&error).is_none(),
+        "{:?}",
+        std::error::Error::source(&error)
+    );
+
+    // So does one that fails when the client runs it again for a fresh
+    // token, after the client was built.
+    let expiring = expiring_plugin();
+    kubeconfig.replace(&users_config(&[("expiring", exec_user(&expiring, ""))]));
+    let error = discovery_error("expiring").await;
+    assert_eq!(
+        error.to_string(),
+        "credential plugin failed (exit status: 1): refresh token expired"
+    );
+    assert!(std::error::Error::source(&error).is_none());
+
+    fs::remove_file(expired).ok();
+    fs::remove_file(silent).ok();
+    fs::remove_file(&expiring).ok();
+    fs::remove_file(expiring.with_extension("sh.ran")).ok();
 }

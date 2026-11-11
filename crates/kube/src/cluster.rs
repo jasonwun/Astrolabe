@@ -131,10 +131,16 @@ impl ClusterError {
     }
 
     /// A failure of `kind` caused by `source`, whose text is the error's.
+    /// A credential plugin that failed in `source`, as when the client
+    /// runs it again for a fresh token, says why as a failed client build
+    /// does, with no source that would print its stdout.
     pub(crate) fn caused_by(
         kind: ClusterErrorKind,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
+        if let Some(message) = crate::client::plugin_failure(None, &source) {
+            return Self::message_only(kind, message);
+        }
         Self {
             kind,
             message: source.to_string(),
@@ -396,9 +402,7 @@ impl Cluster {
                     &runtime,
                     async move {
                         let kubeconfig = kubeconfig.unwrap_or_else(crate::client::read_kubeconfig);
-                        crate::client::client_for(&cluster, kubeconfig)
-                            .await
-                            .map_err(ClusterError::connect_failed)
+                        crate::client::client_for(&cluster, kubeconfig).await
                     },
                     ClusterError::connect("cluster connect task panicked"),
                 )

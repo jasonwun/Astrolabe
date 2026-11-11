@@ -30,4 +30,9 @@ impl DiscoveryCache {
     pub fn failure(&self) -> Option<&ClusterError> {
         self.failure.as_ref()
     }
+
+    /// The latest refresh failed and an earlier result stays in use.
+    pub fn is_stale(&self) -> bool {
+        self.failure.is_some() && self.served.is_some()
+    }
 }

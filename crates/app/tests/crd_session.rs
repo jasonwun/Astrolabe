@@ -415,8 +415,8 @@ fn recovering(cx: &mut TestAppContext) -> Recovering {
 
 /// The rules live in `SessionState` and the retry in `Cluster`; this pins
 /// that a Session whose first connect failed brings back its built-in list,
-/// its custom-kind list and the stale-discovery banner without a call to
-/// `reconnect` (#277).
+/// its custom-kind list and its health without a call to `reconnect`
+/// (#277). Until then it has nothing to be stale, so no banner shows (#378).
 #[gpui_kit::test]
 fn a_session_recovers_by_itself_from_a_failed_first_connect(cx: &mut TestAppContext) {
     let mut h = recovering(cx);
@@ -428,8 +428,8 @@ fn a_session_recovers_by_itself_from_a_failed_first_connect(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.read(|cx| {
         let state = h.session.read(cx).state();
-        assert_eq!(state.status().health, ConnectionHealth::Stale);
-        assert!(state.status().show_stale_warning());
+        assert_eq!(state.status().health, ConnectionHealth::Failed);
+        assert!(!state.status().show_stale_warning());
         assert!(state.discovery_failure().is_some());
     });
 
