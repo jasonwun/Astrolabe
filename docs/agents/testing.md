@@ -616,3 +616,15 @@ ten minutes (#345 retro).
 Changing a workspace `version` makes `cargo ... --locked` fail with "cannot
 update the lock file" until `Cargo.lock` follows: run `cargo update -p
 <crate> --offline` once and commit the one-line lock change (#371 retro).
+
+Code that runs a subprocess or reads the process environment (#379's login
+shell capture) needs its seams before the first `dev/pre-push.sh`: the
+program and the timeout as parameters, `$SHELL`'s value as an argument,
+and a fake shell script in the temp dir for the success, fish, csh, hang and
+failure paths. The first push had 14 MISSED mutants on `login_shell`, the
+`fish`/`csh` match arms and empty-value guards. A lib that skips the work in
+tests needs an opt-out the test run sets for itself, here
+`ASTROLABE_NO_LOGIN_SHELL_ENV` in `.cargo/config.toml`: a `cargo test` with
+piped stdout is not a TTY and would run the developer's shell. A
+`#[cfg(not(unix))]` twin of a function shows up as its own MISSED mutants on
+macOS: put the `cfg` on the call instead (#379 retro).

@@ -101,6 +101,18 @@ as a path relative to the kubeconfig's directory, and the absolute
 scratchpad path filled the screenshot's error line. Grep the app's log
 for the fake token afterwards; it must not appear (#378 retro).
 
+A Finder launch with an exec plugin outside launchd's PATH (#379) needs a
+plugin in a directory only the login shell's PATH has: `~/.local/bin` was in
+it (`$SHELL -l -i -c 'echo $PATH'`) and not in launchd's, so no rc file is
+edited. Write a bare-named plugin there that calls a second tool from the
+same directory and prints the kind client cert and key as an `ExecCredential`
+(`kubectl config view --raw --minify -o json`, base64-decode the two
+`*-data` fields). Back up `~/.kube/config`, replace it with a copy whose user
+is that exec block, launch with `osascript ... open POSIX file
+"<worktree>/target/package/Astrolabe.app"` and `ASTROLABE_PID=$(pgrep -nx
+astrolabe)` for `dev/shot.sh`. Afterwards `cmp` the backup back and delete the
+two scripts (#379 retro).
+
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
 Copy the kubeconfig into the scratchpad, set the namespace on the copy and
