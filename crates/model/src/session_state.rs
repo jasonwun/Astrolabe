@@ -35,7 +35,7 @@ pub const DISCOVERY_STALE_MESSAGE: &str = "API discovery failed, resource naviga
 /// views.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionStatus {
-    /// The cluster indicator: the Namespaces watch's health.
+    /// The Namespaces watch's health.
     pub health: ConnectionHealth,
     /// The Namespaces watch lost its connection and shows its old snapshot.
     pub namespaces_stale: bool,
@@ -611,16 +611,17 @@ impl SessionState {
         }
     }
 
-    /// Why the Namespaces watch has no Snapshot: denied, or failed.
+    /// Why the Namespaces watch has no Snapshot, in the words its list
+    /// uses: denied, or failed.
     fn namespaces_failure(&self) -> String {
         if self.namespaces.status().is_forbidden() {
             detail::forbidden_message("namespaces")
         } else {
-            failed_message("namespaces", self.namespaces.last_error())
+            failed_message("list", self.namespaces.last_error())
         }
     }
 
-    /// What the cluster indicator and the disconnect banner show.
+    /// What the disconnect banner shows.
     pub fn status(&self) -> SessionStatus {
         let namespaces = self.namespaces.status();
         SessionStatus {

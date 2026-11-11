@@ -53,7 +53,8 @@ impl CustomKindId {
     }
 }
 
-/// The coarse health the cluster indicator shows: the Namespaces watch's.
+/// A watch's coarse health. The cluster indicator shows the Namespaces
+/// watch's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConnectionHealth {
     Connecting,
@@ -145,7 +146,7 @@ pub enum WatchStatus {
 }
 
 impl WatchStatus {
-    /// The coarse health the cluster indicator shows.
+    /// The watch's coarse health.
     pub fn health(self) -> ConnectionHealth {
         match self {
             Self::Connecting | Self::Relisting => ConnectionHealth::Connecting,

@@ -64,27 +64,46 @@ pub(crate) async fn client_for(
 /// Ready a kubeconfig exec block to run in an app with no terminal.
 ///
 /// It never runs interactively, whatever the kubeconfig says, so its
-/// stderr is captured for [`connect_error`] instead of going to a
+/// stderr is captured for [`plugin_failure`] instead of going to a
 /// terminal nobody reads, and it never waits on a stdin nobody types into.
 fn prepare_exec(exec: &mut kube::config::ExecConfig) {
     exec.interactive_mode = Some(kube::config::ExecInteractiveMode::Never);
 }
 
-/// A failed client build as a Connect failure. A failed credential
-/// plugin says which program it was, its exit status and its stderr, and
-/// keeps no source, as kube-client's error would print its stdout, which
-/// may hold a token.
+/// A failed client build as a Connect failure, said as
+/// [`plugin_failure`] says it when its credential plugin failed.
 fn connect_error(user: &kube::config::AuthInfo, error: kube::Error) -> ClusterError {
-    let kube::Error::Auth(kube::client::AuthError::AuthExecRun { cmd, status, out }) = error else {
-        return ClusterError::connect_failed(error);
-    };
-    let program = plugin_program(user).unwrap_or(&cmd);
+    match plugin_failure(plugin_program(user), &error) {
+        Some(message) => ClusterError::connect(message),
+        None => ClusterError::connect_failed(error),
+    }
+}
+
+/// What a credential plugin failure in `error`'s source chain says: the
+/// plugin `program` when known, its exit status and its stderr. The
+/// caller keeps no source, as kube-client's error prints the plugin's
+/// stdout, which may hold a token.
+pub(crate) fn plugin_failure(
+    program: Option<&str>,
+    error: &(dyn std::error::Error + 'static),
+) -> Option<String> {
+    let (status, out) =
+        std::iter::successors(Some(error), |error| error.source()).find_map(|error| {
+            match error.downcast_ref::<kube::client::AuthError>()? {
+                kube::client::AuthError::AuthExecRun { status, out, .. } => Some((status, out)),
+                _ => None,
+            }
+        })?;
+    let plugin = program.map_or_else(
+        || "credential plugin".to_owned(),
+        |program| format!("credential plugin \"{program}\""),
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stderr = stderr.trim();
-    ClusterError::connect(if stderr.is_empty() {
-        format!("credential plugin \"{program}\" failed ({status}) and printed nothing on stderr")
+    Some(if stderr.is_empty() {
+        format!("{plugin} failed ({status}) and printed nothing on stderr")
     } else {
-        format!("credential plugin \"{program}\" failed ({status}): {stderr}")
+        format!("{plugin} failed ({status}): {stderr}")
     })
 }
 

@@ -489,6 +489,15 @@ fn the_namespaces_watch_ending_before_any_snapshot_is_not_stale() {
 
     assert!(!state.status().namespaces_stale);
     assert_eq!(state.status().health, ConnectionHealth::Failed);
+    // The indicator says it as the Namespaces list does.
+    assert_eq!(
+        state.health_indicator(),
+        indicator(
+            "Failed",
+            Intent::Danger,
+            "The watch ended before the list loaded"
+        )
+    );
 }
 
 fn indicator(label: &'static str, intent: Intent, tooltip: &str) -> HealthIndicator {
