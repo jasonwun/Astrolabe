@@ -120,7 +120,10 @@ static CAPTURED: OnceLock<ShellEnv> = OnceLock::new();
 
 /// The shell to run: `$SHELL`, else the passwd entry's.
 fn login_shell() -> Option<String> {
-    shell_from(std::env::var("SHELL").ok()).or_else(passwd_shell)
+    let shell = shell_from(std::env::var("SHELL").ok());
+    #[cfg(unix)]
+    let shell = shell.or_else(passwd_shell);
+    shell
 }
 
 /// `$SHELL`'s value, when it names a shell.
@@ -140,11 +143,6 @@ fn passwd_shell() -> Option<String> {
         let shell = CStr::from_ptr(entry.pw_shell.as_ref()?).to_string_lossy();
         shell_from(Some(shell.into_owned()))
     }
-}
-
-#[cfg(not(unix))]
-fn passwd_shell() -> Option<String> {
-    None
 }
 
 /// Run the login shell from `$HOME`, interactive and login, so the rc files
@@ -247,7 +245,10 @@ mod tests {
         assert_eq!(shell_from(Some(String::new())), None);
         assert_eq!(shell_from(None), None);
         let passwd = passwd_shell().unwrap();
-        assert!(passwd.starts_with('/'), "{passwd}");
+        assert!(std::path::Path::new(&passwd).exists(), "{passwd}");
+        let expected = shell_from(std::env::var("SHELL").ok()).or_else(passwd_shell);
+        assert_eq!(super::login_shell(), expected);
+        assert!(expected.is_some());
     }
 
     #[test]
