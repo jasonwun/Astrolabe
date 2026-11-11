@@ -423,7 +423,9 @@ path of `<name>.png`, shrunk to one pixel per window point.
   and `ASTROLABE_NAMESPACE`, so it opens the first kubeconfig context in
   `default`: the check is that the sidebar lists every context and Pods
   loads. It is not a Finder launch, which has no shell `KUBECONFIG` or
-  PATH; say so in the PR (#371 retro).
+  PATH; say so in the PR (#371 retro). A Finder launch of the installed app
+  is in `docs/agents/release.md` (Check a downloaded .dmg): it runs from
+  `/`, so `dev/shot.sh` needs `ASTROLABE_PID` to find it.
 - A baseline app that was explored by hand keeps its tabs (a detail opened
   by a probe click): its tab bar then differs from the fresh `after`
   launch. Relaunch the baseline before the scripted run, not only the

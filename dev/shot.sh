@@ -8,10 +8,18 @@
 # window points) when given. Prints the latter path.
 # --pid prints that astrolabe's pid. Other worktrees run their own
 # astrolabe, so targeting the process name would drive theirs.
+# ASTROLABE_PID=<pid> targets that process instead, for an astrolabe not
+# started from this worktree, such as the .app launched from Finder
+# (working directory /).
 set -euo pipefail
 
-# The astrolabe whose working directory is inside this worktree.
+# ASTROLABE_PID, else the astrolabe whose working directory is inside this
+# worktree.
 own_pid() {
+    if [ -n "${ASTROLABE_PID:-}" ]; then
+        echo "$ASTROLABE_PID"
+        return
+    fi
     local top pid cwd found=()
     top=$(git rev-parse --show-toplevel)
     for pid in $(pgrep -x astrolabe || true); do
@@ -25,6 +33,11 @@ own_pid() {
         exit 1
     fi
     echo "${found[0]}"
+}
+
+# pixels Width|Height <png>
+pixels() {
+    sips -g "pixel$1" "$2" | awk "/pixel$1/ {print \$2}"
 }
 
 if [ "${1:-}" = --pid ]; then
@@ -59,11 +72,21 @@ scale=$(jq -r .result.screenshot.scale <<<"$json")
 cp "$path" "$dir/$name-orig.png"
 if [ -n "$crop" ]; then
     IFS=, read -r x y w h <<<"$crop"
-    sips -c $((h * scale)) $((w * scale)) --cropOffset $((y * scale)) $((x * scale)) \
-        "$path" --out "$dir/$name.png" >/dev/null
+    if [ "$x" -eq 0 ] && [ "$y" -eq 0 ]; then
+        # sips centres a crop whose offset is 0 0, so crop the opposite
+        # corner of the image turned 180 degrees, then turn it back.
+        sips -r 180 "$path" --out "$dir/$name.png" >/dev/null
+        sips -c $((h * scale)) $((w * scale)) \
+            --cropOffset $(($(pixels Height "$path") - h * scale)) $(($(pixels Width "$path") - w * scale)) \
+            "$dir/$name.png" >/dev/null
+        sips -r 180 "$dir/$name.png" >/dev/null
+    else
+        sips -c $((h * scale)) $((w * scale)) --cropOffset $((y * scale)) $((x * scale)) \
+            "$path" --out "$dir/$name.png" >/dev/null
+    fi
     sips --resampleWidth "$w" "$dir/$name.png" >/dev/null
 else
-    width=$(sips -g pixelWidth "$path" | awk '/pixelWidth/ {print $2}')
+    width=$(pixels Width "$path")
     sips --resampleWidth $((width / scale)) "$path" --out "$dir/$name.png" >/dev/null
 fi
 echo "$dir/$name.png"
