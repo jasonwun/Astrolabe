@@ -95,6 +95,20 @@ before the run, with a grep for the old text and element id across
 Origin: #275 hit both failures one at a time, each costing a test run
 (#275 retro).
 
+## Every path a library error comes back on
+
+A ticket that changes how a third-party error reads covers every place
+that library raises it, not only the one the report shows. Find them in
+the pinned version's source, and put the rewrite where all of them pass
+(for a `kube::Error`, `ClusterError::caused_by`), with a test for each
+path that can be driven.
+
+Origin: #378 rewrote kube-client 4.2.0's `AuthExecRun` for a failed
+client build, the path the bug report showed. kube-client also runs the
+plugin again when its token expires (`RefreshableToken::to_header`), and
+that error still printed the plugin's stdout. Only the spec review found
+it (#378 retro).
+
 ## Docs that name a return's meaning
 
 A change to what a function returns (#275: `object` still said "`None`
