@@ -50,9 +50,9 @@ cp -R "$app" "$stage/"
 ln -s /Applications "$stage/Applications"
 rm -f "$dmg"
 hdiutil create -quiet -volname "Astrolabe $version" -srcfolder "$stage" -format UDZO "$dmg"
-# Both the bundle and the copy that went into the .dmg must verify. A failure
-# deletes the .dmg and exits before its path is printed.
-for bundle in "$app" "$stage/Astrolabe.app"; do
+# Both the bundle and the staged copy the .dmg was built from must verify. A
+# failure deletes the .dmg and exits before its path is printed.
+for bundle in "$app" "$stage/$(basename "$app")"; do
     codesign --verify --deep --strict "$bundle" >&2 || { rm -f "$dmg"; exit 1; }
 done
 echo "$app"

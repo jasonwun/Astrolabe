@@ -24,7 +24,7 @@ previous release tag.
    same dialog; Privacy & Security then offers Open Anyway, which asks to
    confirm, then for Touch ID or the admin password, and launches the app.
    A bundle without its ad-hoc bundle signature is called "damaged" instead,
-   with no Open Anyway; `dev/package.sh` now fails on such a bundle.
+   with no Open Anyway; `dev/package.sh` fails on such a bundle (#380).
 
 Making a Release stable is a manual edit of it on GitHub. The workflow has no
 switch for that.
@@ -52,15 +52,16 @@ How #377 drove the downloaded app the way a user starts it.
   xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" dl.dmg
   ```
 
-  An app copied with `cp` rather than dragged in Finder runs from an
-  AppTranslocation path after Open Anyway; that does not change the dialogs.
+  In #380 the app copied with `cp -R` ran from an AppTranslocation path
+  after Open Anyway, with the dialogs as above; a Finder drag was not tried.
   Back up the `/Applications/Astrolabe.app` already there and restore it
   afterwards.
-- **Right-click > Open needs foreground input.** A background `orca computer`
-  click or key closes Finder's context menu without choosing an item. Open
+- **Right-click > Open needs foreground input.** In #380 a background
+  `orca computer` click closed Finder's context menu without choosing an
+  item, and background Down and Return keys did nothing. Open
   the menu with `click --mouse-button right --restore-window` on the row and
   click Open with `--restore-window`; tell the user first, it takes over the
-  pointer. System Settings ignores `orca computer scroll`: scroll to
+  pointer. `orca computer scroll` did not move System Settings: scroll to
   Security with `target/dev/scroll` (built by `dev/scroll.sh`) at a screen
   point after `activate` (#380).
 - **Open Anyway asks for Touch ID or the admin password.** That is the
