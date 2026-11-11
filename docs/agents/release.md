@@ -18,9 +18,13 @@ previous release tag.
    `v<version>` already exists.
 4. **Check the Release.** It is marked Pre-release, carries the `.dmg`, and
    the notes show the header and the PR list. Download the `.dmg` on another
-   Mac and launch the app from Finder, as below. Until #380 lands, Gatekeeper
-   calls the app "damaged" and offers no Open button, so right-click > Open
-   fails and only the `xattr` line in the notes gets it running.
+   Mac and launch the app from Finder, as below, and follow the notes'
+   First launch steps. #380 measured them on macOS 27.0.1: the first launch
+   shows "Not Opened" (Move to Trash, Done) and right-click > Open shows the
+   same dialog; Privacy & Security then offers Open Anyway, which asks to
+   confirm, then for Touch ID or the admin password, and launches the app.
+   A bundle without its ad-hoc bundle signature is called "damaged" instead,
+   with no Open Anyway; `dev/package.sh` now fails on such a bundle.
 
 Making a Release stable is a manual edit of it on GitHub. The workflow has no
 switch for that.
@@ -40,6 +44,27 @@ How #377 drove the downloaded app the way a user starts it.
   not Astrolabe: `orca computer get-app-state --app "pid:$(pgrep -x CoreServicesUIAgent)"`.
   For the verdict, read syspolicyd with `/usr/bin/log show --last 5m
   --predicate 'process == "syspolicyd"'`. A bare `log` is zsh's builtin.
+- **Quarantine a local build like a download.** Without a browser, write the
+  flag on a copy of the `.dmg`, mount it and copy the app out: the copy in
+  `/Applications` inherits the flag (#380).
+
+  ```sh
+  xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" dl.dmg
+  ```
+
+  An app copied with `cp` rather than dragged in Finder runs from an
+  AppTranslocation path after Open Anyway; that does not change the dialogs.
+  Back up the `/Applications/Astrolabe.app` already there and restore it
+  afterwards.
+- **Right-click > Open needs foreground input.** A background `orca computer`
+  click or key closes Finder's context menu without choosing an item. Open
+  the menu with `click --mouse-button right --restore-window` on the row and
+  click Open with `--restore-window`; tell the user first, it takes over the
+  pointer. System Settings ignores `orca computer scroll`: scroll to
+  Security with `target/dev/scroll` (built by `dev/scroll.sh`) at a screen
+  point after `activate` (#380).
+- **Open Anyway asks for Touch ID or the admin password.** That is the
+  user's decision: ask them to answer it, never type a password (#380).
 - **Give it the test cluster in `~/.kube/config`.** A Finder launch gets no
   shell `KUBECONFIG`, has `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and a working
   directory of `/`, so it reads only `~/.kube/config` and finds no exec
