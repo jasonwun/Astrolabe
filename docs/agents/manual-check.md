@@ -77,6 +77,30 @@ banner appeared only after the watch timed out and its relist got the 403,
 about 5 minutes, so `sleep 290` once instead of poking the pod. Delete the
 ClusterRole and binding afterwards, they are cluster-scoped (#282 retro).
 
+A credential plugin failure (#378) needs a context whose user is an exec
+plugin. Write a script that prints a reason on stderr and a fake token on
+stdout, then exits 1, and name it in a copy of the kubeconfig:
+
+```sh
+mkdir -p "$SCRATCH/bin"
+printf '%s\n' '#!/bin/sh' "echo 'error: SSO session expired' >&2" \
+  "echo '{\"apiVersion\":\"client.authentication.k8s.io/v1beta1\",\"kind\":\"ExecCredential\",\"status\":{\"token\":\"must-not-show\"}}'" \
+  'exit 1' > "$SCRATCH/bin/sso-token"
+chmod +x "$SCRATCH/bin/sso-token"
+kubectl config view --raw --minify --context kind-astrolabe-dev > "$SCRATCH/exec.kubeconfig"
+KUBECONFIG="$SCRATCH/exec.kubeconfig" kubectl config set-credentials kind-astrolabe-dev \
+  --exec-command=sso-token --exec-api-version=client.authentication.k8s.io/v1beta1 \
+  --exec-interactive-mode=IfAvailable
+```
+
+Then delete the user's `client-certificate-data` and `client-key-data`
+from the copy, so only the plugin authenticates, and launch with
+`PATH="$SCRATCH/bin:$PATH" KUBECONFIG="$SCRATCH/exec.kubeconfig"`. Use
+a bare command name on `PATH`: `--exec-command=<absolute path>` came out
+as a path relative to the kubeconfig's directory, and the absolute
+scratchpad path filled the screenshot's error line. Grep the app's log
+for the fake token afterwards; it must not appear (#378 retro).
+
 A change to which namespace a Session starts in needs a context that names
 one, and no `ASTROLABE_NAMESPACE`: that variable overrides the context.
 Copy the kubeconfig into the scratchpad, set the namespace on the copy and
@@ -445,8 +469,10 @@ path of `<name>.png`, shrunk to one pixel per window point.
   `crashy` Pod reads `DIFF` (`3` against `4`) on every refactor check.
   #346 saw it again and read the pair by eye. Crop Pods to `440,85,230,320`
   (Name to Status) when Restarts is not under test (#346 retro).
-- To hover (tooltips), click the element and read the screenshot about
-  two seconds later; the pointer stays where it clicked.
+- To hover (tooltips), drag onto the element from beside it and read the
+  screenshot about three seconds later: `drag --from-x 120 --from-y 89
+  --to-x 20 --to-y 89` showed the sidebar health dot's tooltip. A
+  `click` on the dot showed none, twice (#378 retro).
 - A view that changes with time (ages): `dev/demo.yaml` objects keep
   their first creation time, so delete and re-apply the object for a
   young age. Record its `resourceVersion`
